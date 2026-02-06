@@ -34,3 +34,4 @@ crossterm = { version = "0.28", optional = true }
 tempfile = "3"
 regex = "1"
 serde_yaml = "0.9"
+jugar-probar = { version = "1.0.2", default-features = false, features = ["tui"] }

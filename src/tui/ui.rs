@@ -63,6 +63,8 @@ fn draw_graph(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_node_list(f: &mut Frame, app: &mut App, area: Rect) {
+    app.last_node_list_area = Some(area);
+
     let items: Vec<ListItem> = app
         .node_list_entries
         .iter()

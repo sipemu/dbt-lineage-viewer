@@ -1,3 +1,4 @@
+use petgraph::stable_graph::NodeIndex;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -277,6 +278,33 @@ fn truncate_label(s: &str, max_len: usize) -> String {
     } else {
         format!("{}…", &s[..max_len - 1])
     }
+}
+
+/// Hit-test a screen coordinate against all node boxes.
+/// Returns the NodeIndex of the first node whose bounding box contains the point.
+pub fn hit_test_node(app: &App, screen_x: u16, screen_y: u16) -> Option<NodeIndex> {
+    let area = app.last_graph_area?;
+
+    let eff_lg = (LAYER_GAP as f64 * app.zoom).max(4.0) as u16;
+    let eff_ng = (NODE_GAP as f64 * app.zoom).max(1.0) as u16;
+
+    // Convert screen coords to world coords
+    let wx = (screen_x as i32 - area.x as i32) + app.viewport_x;
+    let wy = (screen_y as i32 - area.y as i32) + app.viewport_y;
+
+    for (&node_idx, &(layer, pos)) in &app.layout.positions {
+        let node_wx = layer as i32 * (NODE_BOX_WIDTH as i32 + eff_lg as i32);
+        let node_wy = pos as i32 * (NODE_BOX_HEIGHT as i32 + eff_ng as i32);
+
+        if wx >= node_wx
+            && wx < node_wx + NODE_BOX_WIDTH as i32
+            && wy >= node_wy
+            && wy < node_wy + NODE_BOX_HEIGHT as i32
+        {
+            return Some(node_idx);
+        }
+    }
+    None
 }
 
 /// Compute world-space center of a node given its layout position.

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
-    event::{poll, read, Event},
+    event::{poll, read, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -21,7 +21,7 @@ use crate::graph::types::LineageGraph;
 use crate::parser::artifacts;
 
 use app::App;
-use event::handle_key_event;
+use event::{handle_key_event, handle_mouse_event};
 use ui::draw_ui;
 
 /// Launch the interactive TUI
@@ -35,7 +35,7 @@ pub fn run_tui(graph: LineageGraph, project_dir: PathBuf) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -50,17 +50,27 @@ pub fn run_tui(graph: LineageGraph, project_dir: PathBuf) -> Result<()> {
 
         // Poll with 50ms timeout so we can check subprocess output frequently
         if poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = read()? {
-                if handle_key_event(&mut app, key) {
-                    break;
+            match read()? {
+                Event::Key(key) => {
+                    if handle_key_event(&mut app, key) {
+                        break;
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    handle_mouse_event(&mut app, mouse);
+                }
+                _ => {}
             }
         }
     }
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
 
     Ok(())

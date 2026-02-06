@@ -1,15 +1,10 @@
-mod cli;
-mod error;
-mod graph;
-mod parser;
-mod render;
-#[cfg(feature = "tui")]
-mod tui;
-
 use anyhow::Result;
 use clap::Parser;
 
-use cli::Cli;
+use dbt_lineage::cli::{self, Cli};
+use dbt_lineage::graph;
+use dbt_lineage::parser;
+use dbt_lineage::render;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -43,7 +38,7 @@ fn main() -> Result<()> {
     // Render
     #[cfg(feature = "tui")]
     if cli.interactive {
-        tui::run_tui(filtered, project_dir.clone())?;
+        dbt_lineage::tui::run_tui(filtered, project_dir.clone())?;
         return Ok(());
     }
 

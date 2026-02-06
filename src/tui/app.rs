@@ -51,6 +51,14 @@ pub enum NodeListEntry {
     Node(NodeIndex),
 }
 
+/// Tracks an in-progress mouse drag for viewport panning
+pub struct DragState {
+    pub start_x: u16,
+    pub start_y: u16,
+    pub viewport_x0: i32,
+    pub viewport_y0: i32,
+}
+
 pub struct App {
     pub graph: LineageGraph,
     pub layout: LayoutResult,
@@ -75,6 +83,10 @@ pub struct App {
     pub node_groups: Vec<NodeGroup>,
     pub collapsed_groups: HashSet<String>,
     pub node_list_entries: Vec<NodeListEntry>,
+
+    // Mouse interaction state
+    pub drag_state: Option<DragState>,
+    pub last_node_list_area: Option<Rect>,
 
     // Run execution state
     pub project_dir: PathBuf,
@@ -132,6 +144,8 @@ impl App {
             node_groups,
             collapsed_groups,
             node_list_entries,
+            drag_state: None,
+            last_node_list_area: None,
             project_dir,
             run_status,
             run_state: DbtRunState::Idle,
@@ -332,6 +346,29 @@ impl App {
                 self.node_list_state.select(Some(flat_idx));
             }
         }
+    }
+
+    /// Select a node without centering the viewport (used for mouse clicks on the graph)
+    pub fn select_node_no_center(&mut self, idx: NodeIndex) {
+        self.selected_node = Some(idx);
+        self.sync_cycle_index();
+        self.sync_node_list_state();
+    }
+
+    /// Toggle collapse state of a group by its index (used for mouse clicks on group headers)
+    pub fn toggle_group_collapse_by_index(&mut self, group_idx: usize) {
+        if group_idx >= self.node_groups.len() {
+            return;
+        }
+        let key = self.node_groups[group_idx].key.clone();
+
+        if self.collapsed_groups.contains(&key) {
+            self.collapsed_groups.remove(&key);
+        } else {
+            self.collapsed_groups.insert(key);
+        }
+        self.node_list_entries =
+            build_node_list_entries(&self.node_groups, &self.collapsed_groups);
     }
 
     /// Center the viewport on the currently selected node

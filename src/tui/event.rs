@@ -1,6 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use super::app::{App, AppMode, DbtRunState};
+use super::app::{App, AppMode, DbtRunState, DragState, NodeListEntry};
+use super::graph_widget::hit_test_node;
 use super::runner::{detect_use_uv, DbtCommand, DbtRunRequest, SelectionScope};
 
 const PAN_AMOUNT: i32 = 3;
@@ -201,6 +202,108 @@ fn handle_run_confirm_mode(app: &mut App, key: KeyEvent) -> bool {
             app.pending_run = None;
             app.mode = AppMode::Normal;
         }
+        _ => {}
+    }
+
+    false
+}
+
+/// Handle a mouse event. Returns true if the app should quit (never does).
+pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
+    // Only handle mouse in Normal mode
+    if app.mode != AppMode::Normal {
+        return false;
+    }
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Check if click is in the node list area
+            if let Some(list_area) = app.last_node_list_area {
+                if mouse.column >= list_area.x
+                    && mouse.column < list_area.x + list_area.width
+                    && mouse.row >= list_area.y
+                    && mouse.row < list_area.y + list_area.height
+                {
+                    // Map click row to node list entry (account for border)
+                    let row_in_list = mouse.row.saturating_sub(list_area.y + 1) as usize;
+                    if row_in_list < app.node_list_entries.len() {
+                        match app.node_list_entries[row_in_list] {
+                            NodeListEntry::GroupHeader(gi) => {
+                                app.toggle_group_collapse_by_index(gi);
+                            }
+                            NodeListEntry::Node(idx) => {
+                                app.selected_node = Some(idx);
+                                app.node_list_state.select(Some(row_in_list));
+                                // Sync cycle index and center
+                                app.center_on_selected();
+                            }
+                        }
+                    }
+                    return false;
+                }
+            }
+
+            // Check if click is in the graph area
+            if let Some(graph_area) = app.last_graph_area {
+                if mouse.column >= graph_area.x
+                    && mouse.column < graph_area.x + graph_area.width
+                    && mouse.row >= graph_area.y
+                    && mouse.row < graph_area.y + graph_area.height
+                {
+                    if let Some(node_idx) = hit_test_node(app, mouse.column, mouse.row) {
+                        app.select_node_no_center(node_idx);
+                    } else {
+                        // Start drag for panning
+                        app.drag_state = Some(DragState {
+                            start_x: mouse.column,
+                            start_y: mouse.row,
+                            viewport_x0: app.viewport_x,
+                            viewport_y0: app.viewport_y,
+                        });
+                    }
+                }
+            }
+        }
+
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(ref drag) = app.drag_state {
+                // Natural pan direction: dragging right moves viewport left
+                app.viewport_x =
+                    drag.viewport_x0 - (mouse.column as i32 - drag.start_x as i32);
+                app.viewport_y =
+                    drag.viewport_y0 - (mouse.row as i32 - drag.start_y as i32);
+            }
+        }
+
+        MouseEventKind::Up(MouseButton::Left) => {
+            app.drag_state = None;
+        }
+
+        MouseEventKind::ScrollUp => {
+            // Only zoom if over the graph area
+            if let Some(graph_area) = app.last_graph_area {
+                if mouse.column >= graph_area.x
+                    && mouse.column < graph_area.x + graph_area.width
+                    && mouse.row >= graph_area.y
+                    && mouse.row < graph_area.y + graph_area.height
+                {
+                    app.zoom = (app.zoom + ZOOM_STEP).min(3.0);
+                }
+            }
+        }
+
+        MouseEventKind::ScrollDown => {
+            if let Some(graph_area) = app.last_graph_area {
+                if mouse.column >= graph_area.x
+                    && mouse.column < graph_area.x + graph_area.width
+                    && mouse.row >= graph_area.y
+                    && mouse.row < graph_area.y + graph_area.height
+                {
+                    app.zoom = (app.zoom - ZOOM_STEP).max(0.3);
+                }
+            }
+        }
+
         _ => {}
     }
 
