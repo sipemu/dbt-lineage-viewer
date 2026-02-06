@@ -407,7 +407,13 @@ mod tests {
         let args = req.args();
         assert_eq!(
             args,
-            vec!["test", "--select", "+orders+", "--project-dir", "/tmp/project"]
+            vec![
+                "test",
+                "--select",
+                "+orders+",
+                "--project-dir",
+                "/tmp/project"
+            ]
         );
     }
 

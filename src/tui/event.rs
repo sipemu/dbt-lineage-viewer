@@ -633,9 +633,27 @@ mod tests {
             file_path: None,
             description: None,
         });
-        graph.add_edge(src, stg, EdgeData { edge_type: EdgeType::Source });
-        graph.add_edge(stg, mart, EdgeData { edge_type: EdgeType::Ref });
-        graph.add_edge(mart, exp, EdgeData { edge_type: EdgeType::Exposure });
+        graph.add_edge(
+            src,
+            stg,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            stg,
+            mart,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            mart,
+            exp,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
         graph
     }
 
@@ -918,10 +936,7 @@ mod tests {
         app.mode = AppMode::RunMenu;
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('t'))));
         assert_eq!(app.mode, AppMode::RunConfirm);
-        assert_eq!(
-            app.pending_run.as_ref().unwrap().command,
-            DbtCommand::Test
-        );
+        assert_eq!(app.pending_run.as_ref().unwrap().command, DbtCommand::Test);
     }
 
     #[test]
@@ -1025,10 +1040,7 @@ mod tests {
         app.context_menu_pos = Some((10, 10));
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('t'))));
         assert_eq!(app.mode, AppMode::RunConfirm);
-        assert_eq!(
-            app.pending_run.as_ref().unwrap().command,
-            DbtCommand::Test
-        );
+        assert_eq!(app.pending_run.as_ref().unwrap().command, DbtCommand::Test);
     }
 
     // ─── RunConfirm mode tests ───

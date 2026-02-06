@@ -312,9 +312,8 @@ mod tests {
     #[test]
     fn test_build_run_status_map_success() {
         let graph = make_test_graph();
-        let results = make_run_results(vec![
-            ("model.my_project.stg_orders", "success", Some("OK")),
-        ]);
+        let results =
+            make_run_results(vec![("model.my_project.stg_orders", "success", Some("OK"))]);
         let tmp = tempfile::tempdir().unwrap();
         let map = build_run_status_map(&results, &graph, tmp.path());
         assert!(matches!(
@@ -326,9 +325,11 @@ mod tests {
     #[test]
     fn test_build_run_status_map_error() {
         let graph = make_test_graph();
-        let results = make_run_results(vec![
-            ("model.my_project.stg_orders", "error", Some("Compile error")),
-        ]);
+        let results = make_run_results(vec![(
+            "model.my_project.stg_orders",
+            "error",
+            Some("Compile error"),
+        )]);
         let tmp = tempfile::tempdir().unwrap();
         let map = build_run_status_map(&results, &graph, tmp.path());
         match map.get("model.stg_orders") {
@@ -342,9 +343,7 @@ mod tests {
     #[test]
     fn test_build_run_status_map_skipped() {
         let graph = make_test_graph();
-        let results = make_run_results(vec![
-            ("model.my_project.stg_orders", "skipped", None),
-        ]);
+        let results = make_run_results(vec![("model.my_project.stg_orders", "skipped", None)]);
         let tmp = tempfile::tempdir().unwrap();
         let map = build_run_status_map(&results, &graph, tmp.path());
         assert!(matches!(
@@ -356,9 +355,7 @@ mod tests {
     #[test]
     fn test_build_run_status_map_unknown_status() {
         let graph = make_test_graph();
-        let results = make_run_results(vec![
-            ("model.my_project.stg_orders", "weird_status", None),
-        ]);
+        let results = make_run_results(vec![("model.my_project.stg_orders", "weird_status", None)]);
         let tmp = tempfile::tempdir().unwrap();
         let map = build_run_status_map(&results, &graph, tmp.path());
         assert!(matches!(
@@ -384,15 +381,16 @@ mod tests {
         let graph = make_test_graph();
         let tmp = tempfile::tempdir().unwrap();
 
-        let initial = make_run_results(vec![
-            ("model.my_project.stg_orders", "success", Some("OK")),
-        ]);
+        let initial =
+            make_run_results(vec![("model.my_project.stg_orders", "success", Some("OK"))]);
         let mut map = build_run_status_map(&initial, &graph, tmp.path());
 
         // Merge with new results — only stg_orders changes to error
-        let updated = make_run_results(vec![
-            ("model.my_project.stg_orders", "error", Some("Failed")),
-        ]);
+        let updated = make_run_results(vec![(
+            "model.my_project.stg_orders",
+            "error",
+            Some("Failed"),
+        )]);
         merge_run_status_map(&mut map, &updated, &graph, tmp.path());
 
         assert!(matches!(
@@ -400,10 +398,7 @@ mod tests {
             Some(RunStatus::Error { .. })
         ));
         // orders was NeverRun and stays NeverRun (not in new results)
-        assert!(matches!(
-            map.get("model.orders"),
-            Some(RunStatus::NeverRun)
-        ));
+        assert!(matches!(map.get("model.orders"), Some(RunStatus::NeverRun)));
     }
 
     #[test]

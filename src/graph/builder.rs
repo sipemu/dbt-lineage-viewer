@@ -476,10 +476,7 @@ models:
         assert_eq!(graph.node_count(), 3);
 
         // Check node types
-        let mut types: Vec<NodeType> = graph
-            .node_indices()
-            .map(|i| graph[i].node_type)
-            .collect();
+        let mut types: Vec<NodeType> = graph.node_indices().map(|i| graph[i].node_type).collect();
         types.sort_by_key(|t| format!("{:?}", t));
         assert!(types.contains(&NodeType::Source));
         assert!(types.iter().filter(|t| **t == NodeType::Model).count() == 2);
@@ -664,10 +661,7 @@ exposures:
             .node_indices()
             .find(|&i| graph[i].label == "stg_orders")
             .unwrap();
-        assert_eq!(
-            graph[stg].description.as_deref(),
-            Some("Staged orders")
-        );
+        assert_eq!(graph[stg].description.as_deref(), Some("Staged orders"));
     }
 
     #[test]

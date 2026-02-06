@@ -123,11 +123,7 @@ seed-paths: ["data"]
     #[test]
     fn test_load_from_file() {
         let tmp = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp.path().join("dbt_project.yml"),
-            "name: test_project\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("dbt_project.yml"), "name: test_project\n").unwrap();
 
         let project = DbtProject::load(tmp.path()).unwrap();
         assert_eq!(project.name, "test_project");

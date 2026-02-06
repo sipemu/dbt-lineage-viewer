@@ -121,9 +121,19 @@ mod tests {
     #[test]
     fn test_edge_styles() {
         let mut graph = LineageGraph::new();
-        let a = graph.add_node(make_node("source.raw.orders", "raw.orders", NodeType::Source));
+        let a = graph.add_node(make_node(
+            "source.raw.orders",
+            "raw.orders",
+            NodeType::Source,
+        ));
         let b = graph.add_node(make_node("model.stg_orders", "stg_orders", NodeType::Model));
-        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Source });
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
 
         let output = render_to_string(&graph);
         assert!(output.contains("style=dashed"));
@@ -157,7 +167,11 @@ mod tests {
         ];
         for nt in types {
             let (color, fontcolor) = node_colors(nt);
-            assert!(color.starts_with('#'), "Color for {:?} should start with #", nt);
+            assert!(
+                color.starts_with('#'),
+                "Color for {:?} should start with #",
+                nt
+            );
             assert!(!fontcolor.is_empty());
         }
     }
@@ -170,9 +184,27 @@ mod tests {
         let c = graph.add_node(make_node("test.t", "t", NodeType::Test));
         let d = graph.add_node(make_node("exposure.e", "e", NodeType::Exposure));
 
-        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
-        graph.add_edge(b, c, EdgeData { edge_type: EdgeType::Test });
-        graph.add_edge(b, d, EdgeData { edge_type: EdgeType::Exposure });
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+        graph.add_edge(
+            b,
+            d,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
 
         let output = render_to_string(&graph);
         // Ref edges have no extra style

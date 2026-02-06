@@ -689,9 +689,27 @@ mod tests {
             file_path: None,
             description: None,
         });
-        graph.add_edge(src, stg, EdgeData { edge_type: EdgeType::Source });
-        graph.add_edge(stg, mart, EdgeData { edge_type: EdgeType::Ref });
-        graph.add_edge(mart, exp, EdgeData { edge_type: EdgeType::Exposure });
+        graph.add_edge(
+            src,
+            stg,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            stg,
+            mart,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            mart,
+            exp,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
         graph
     }
 
@@ -728,10 +746,7 @@ mod tests {
         let first = app.selected_node;
         app.cycle_prev_node();
         // Should wrap to last
-        assert_eq!(
-            app.selected_node,
-            Some(*app.node_order.last().unwrap())
-        );
+        assert_eq!(app.selected_node, Some(*app.node_order.last().unwrap()));
         // Cycle back to first
         app.cycle_next_node();
         assert_eq!(app.selected_node, first);
@@ -1044,10 +1059,7 @@ mod tests {
         app.drain_run_messages();
         assert!(matches!(
             app.run_state,
-            DbtRunState::Finished {
-                success: false,
-                ..
-            }
+            DbtRunState::Finished { success: false, .. }
         ));
     }
 
@@ -1103,8 +1115,20 @@ mod tests {
             description: None,
         });
         // src → a, src → b — a and b end up in the same layer
-        graph.add_edge(src, a, EdgeData { edge_type: EdgeType::Source });
-        graph.add_edge(src, b, EdgeData { edge_type: EdgeType::Source });
+        graph.add_edge(
+            src,
+            a,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            src,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
         graph
     }
 
@@ -1208,7 +1232,9 @@ mod tests {
         let app = test_app();
         let entries = build_node_list_entries(&app.node_groups, &app.collapsed_groups);
         // Should have at least one group header
-        assert!(entries.iter().any(|e| matches!(e, NodeListEntry::GroupHeader(_))));
+        assert!(entries
+            .iter()
+            .any(|e| matches!(e, NodeListEntry::GroupHeader(_))));
         // Should have node entries
         assert!(entries.iter().any(|e| matches!(e, NodeListEntry::Node(_))));
     }

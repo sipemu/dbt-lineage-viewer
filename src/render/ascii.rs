@@ -268,9 +268,19 @@ mod tests {
     #[test]
     fn test_edges_section() {
         let mut graph = LineageGraph::new();
-        let a = graph.add_node(make_node("source.raw.orders", "raw.orders", NodeType::Source));
+        let a = graph.add_node(make_node(
+            "source.raw.orders",
+            "raw.orders",
+            NodeType::Source,
+        ));
         let b = graph.add_node(make_node("model.stg_orders", "stg_orders", NodeType::Model));
-        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Source });
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
 
         let output = render_to_string(&graph);
         assert!(output.contains("Edges:"));
@@ -312,8 +322,18 @@ mod tests {
     fn test_column_widths() {
         let mut graph = LineageGraph::new();
         let a = graph.add_node(make_node("model.short", "short", NodeType::Model));
-        let b = graph.add_node(make_node("model.very_long_name", "very_long_name", NodeType::Model));
-        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
+        let b = graph.add_node(make_node(
+            "model.very_long_name",
+            "very_long_name",
+            NodeType::Model,
+        ));
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
 
         let layout = sugiyama_layout(&graph);
         let widths = calculate_column_widths(&graph, &layout);
@@ -327,7 +347,13 @@ mod tests {
         let mut graph = LineageGraph::new();
         let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
         let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
-        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
 
         let output = render_to_string(&graph);
         assert!(output.contains("[ a ]"), "Output:\n{}", output);
