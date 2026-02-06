@@ -129,52 +129,60 @@ fn build_dbt_lookup(run_results: &RunResults) -> HashMap<String, &RunResult> {
     dbt_lookup
 }
 
+/// Check if a node's source file has been modified after the last run.
+/// Returns `Some(Outdated)` if the file is newer, `None` otherwise.
+fn check_freshness(
+    node: &crate::graph::types::NodeData,
+    project_dir: &Path,
+    completed: DateTime<Utc>,
+) -> Option<RunStatus> {
+    let file_path = node.file_path.as_ref()?;
+    let full_path = project_dir.join(file_path);
+    let modified = fs::metadata(&full_path).ok()?.modified().ok()?;
+    let mod_dt: DateTime<Utc> = modified.into();
+    if mod_dt > completed {
+        Some(RunStatus::Outdated {
+            run_at: completed,
+            modified_at: modified,
+        })
+    } else {
+        None
+    }
+}
+
+/// Resolve a successful run result, checking for staleness
+fn resolve_success(
+    result: &RunResult,
+    node: &crate::graph::types::NodeData,
+    project_dir: &Path,
+) -> RunStatus {
+    let completed = result.completed_at().unwrap_or_else(Utc::now);
+    check_freshness(node, project_dir, completed).unwrap_or(RunStatus::Success {
+        completed_at: completed,
+    })
+}
+
 fn resolve_run_status(
     result: Option<&RunResult>,
     node: &crate::graph::types::NodeData,
     project_dir: &Path,
 ) -> RunStatus {
-    match result {
-        None => RunStatus::NeverRun,
-        Some(result) => match result.status.as_str() {
-            "success" | "pass" => {
-                if let Some(completed) = result.completed_at() {
-                    // Check freshness for nodes with file_path
-                    if let Some(ref file_path) = node.file_path {
-                        let full_path = project_dir.join(file_path);
-                        if let Ok(metadata) = fs::metadata(&full_path) {
-                            if let Ok(modified) = metadata.modified() {
-                                let mod_dt: DateTime<Utc> = modified.into();
-                                if mod_dt > completed {
-                                    return RunStatus::Outdated {
-                                        run_at: completed,
-                                        modified_at: modified,
-                                    };
-                                }
-                            }
-                        }
-                    }
-                    RunStatus::Success {
-                        completed_at: completed,
-                    }
-                } else {
-                    RunStatus::Success {
-                        completed_at: Utc::now(),
-                    }
-                }
-            }
-            "error" | "fail" => RunStatus::Error {
-                completed_at: result.completed_at(),
-                message: result
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "Unknown error".to_string()),
-            },
-            "skipped" | "skip" => RunStatus::Skipped {
-                completed_at: result.completed_at(),
-            },
-            _ => RunStatus::NeverRun,
+    let Some(result) = result else {
+        return RunStatus::NeverRun;
+    };
+    match result.status.as_str() {
+        "success" | "pass" => resolve_success(result, node, project_dir),
+        "error" | "fail" => RunStatus::Error {
+            completed_at: result.completed_at(),
+            message: result
+                .message
+                .clone()
+                .unwrap_or_else(|| "Unknown error".to_string()),
         },
+        "skipped" | "skip" => RunStatus::Skipped {
+            completed_at: result.completed_at(),
+        },
+        _ => RunStatus::NeverRun,
     }
 }
 
