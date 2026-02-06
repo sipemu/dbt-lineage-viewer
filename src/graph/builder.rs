@@ -99,6 +99,30 @@ fn file_stem_str(path: &Path) -> String {
         .to_string()
 }
 
+/// Create source nodes from a single schema file's source definitions
+fn add_source_nodes(
+    gb: &mut GraphBuilder,
+    schema: &crate::parser::yaml_schema::SchemaFile,
+    yaml_path: &Path,
+) {
+    for source_def in &schema.sources {
+        for table in &source_def.tables {
+            let unique_id = format!("source.{}.{}", source_def.name, table.name);
+            let label = format!("{}.{}", source_def.name, table.name);
+            gb.add_node(NodeData {
+                unique_id,
+                label,
+                node_type: NodeType::Source,
+                file_path: Some(yaml_path.to_path_buf()),
+                description: table
+                    .description
+                    .clone()
+                    .or_else(|| source_def.description.clone()),
+            });
+        }
+    }
+}
+
 /// Parse YAML schema files: create source nodes, collect model descriptions and exposures
 fn process_yaml_files(
     gb: &mut GraphBuilder,
@@ -114,22 +138,7 @@ fn process_yaml_files(
             Err(_) => continue,
         };
 
-        for source_def in &schema.sources {
-            for table in &source_def.tables {
-                let unique_id = format!("source.{}.{}", source_def.name, table.name);
-                let label = format!("{}.{}", source_def.name, table.name);
-                gb.add_node(NodeData {
-                    unique_id,
-                    label,
-                    node_type: NodeType::Source,
-                    file_path: Some(yaml_path.clone()),
-                    description: table
-                        .description
-                        .clone()
-                        .or_else(|| source_def.description.clone()),
-                });
-            }
-        }
+        add_source_nodes(gb, &schema, yaml_path);
 
         for model_def in &schema.models {
             if let Some(desc) = &model_def.description {

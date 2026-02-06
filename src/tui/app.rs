@@ -75,8 +75,6 @@ pub struct App {
     /// Ordered list of all node indices for Tab cycling
     pub node_order: Vec<NodeIndex>,
     pub node_cycle_index: usize,
-    #[allow(dead_code)]
-    pub should_quit: bool,
 
     // Node list panel
     pub show_node_list: bool,
@@ -145,7 +143,6 @@ impl App {
             search_cursor: 0,
             node_order,
             node_cycle_index: 0,
-            should_quit: false,
             show_node_list: false,
             node_list_state,
             node_groups,

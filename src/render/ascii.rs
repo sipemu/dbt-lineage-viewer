@@ -7,32 +7,34 @@ use crate::graph::types::*;
 
 use super::layout::{sugiyama_layout, LayoutResult};
 
+/// Warn if the graph layout is wider than the terminal
+#[cfg(not(tarpaulin_include))]
+fn warn_if_too_wide(graph: &LineageGraph) {
+    if graph.node_count() == 0 {
+        return;
+    }
+    let layout = sugiyama_layout(graph);
+    if layout.num_layers == 0 {
+        return;
+    }
+    let col_widths = calculate_column_widths(graph, &layout);
+    let col_spacing = 4;
+    let total_width: usize =
+        col_widths.iter().sum::<usize>() + col_spacing * col_widths.len().saturating_sub(1);
+    if let Some((term_width, _)) = term_size() {
+        if total_width > term_width {
+            eprintln!(
+                "Warning: graph width ({}) exceeds terminal width ({}). Consider using --output dot or filtering with -u/-d.",
+                total_width, term_width
+            );
+        }
+    }
+}
+
 /// Render the lineage graph as ASCII art to stdout
 #[cfg(not(tarpaulin_include))]
 pub fn render_ascii(graph: &LineageGraph) {
-    // Check terminal width for warning
-    if graph.node_count() > 0 {
-        let layout = sugiyama_layout(graph);
-        if layout.num_layers > 0 {
-            let col_widths = calculate_column_widths(graph, &layout);
-            let col_spacing = 4;
-            let mut total_width = 0;
-            for (i, w) in col_widths.iter().enumerate() {
-                if i > 0 {
-                    total_width += col_spacing;
-                }
-                total_width += w;
-            }
-            if let Some((term_width, _)) = term_size() {
-                if total_width > term_width {
-                    eprintln!(
-                        "Warning: graph width ({}) exceeds terminal width ({}). Consider using --output dot or filtering with -u/-d.",
-                        total_width, term_width
-                    );
-                }
-            }
-        }
-    }
+    warn_if_too_wide(graph);
     render_ascii_to_writer(graph, &mut std::io::stdout().lock());
 }
 

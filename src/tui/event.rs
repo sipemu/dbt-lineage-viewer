@@ -95,99 +95,57 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
     }
 }
 
-fn handle_normal_mode(app: &mut App, key: KeyEvent) -> bool {
-    // Ctrl+C always quits
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return true;
+/// Handle Shift+HJKL camera panning. Returns Some(false) if handled.
+fn handle_shift_pan(app: &mut App, code: KeyCode) -> Option<bool> {
+    match code {
+        KeyCode::Char('H') => app.viewport_x -= PAN_AMOUNT,
+        KeyCode::Char('J') => app.viewport_y += PAN_AMOUNT,
+        KeyCode::Char('K') => app.viewport_y -= PAN_AMOUNT,
+        KeyCode::Char('L') => app.viewport_x += PAN_AMOUNT,
+        _ => return None,
     }
+    Some(false)
+}
 
-    // Shift+HJKL for camera panning
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
-        match key.code {
-            KeyCode::Char('H') => {
-                app.viewport_x -= PAN_AMOUNT;
-                return false;
-            }
-            KeyCode::Char('J') => {
-                app.viewport_y += PAN_AMOUNT;
-                return false;
-            }
-            KeyCode::Char('K') => {
-                app.viewport_y -= PAN_AMOUNT;
-                return false;
-            }
-            KeyCode::Char('L') => {
-                app.viewport_x += PAN_AMOUNT;
-                return false;
-            }
-            _ => {}
-        }
-    }
-
-    match key.code {
+/// Handle unmodified normal mode keys. Returns true to quit.
+fn handle_normal_key(app: &mut App, code: KeyCode) -> bool {
+    match code {
         KeyCode::Char('q') => return true,
-
-        // Graph navigation: hjkl or arrow keys
         KeyCode::Char('h') | KeyCode::Left => app.navigate_left(),
         KeyCode::Char('l') | KeyCode::Right => app.navigate_right(),
         KeyCode::Char('k') | KeyCode::Up => app.navigate_up(),
         KeyCode::Char('j') | KeyCode::Down => app.navigate_down(),
-
-        // Zoom
-        KeyCode::Char('+') | KeyCode::Char('=') => {
-            app.zoom = (app.zoom + ZOOM_STEP).min(3.0);
-        }
-        KeyCode::Char('-') => {
-            app.zoom = (app.zoom - ZOOM_STEP).max(0.3);
-        }
-
-        // Cycle nodes sequentially
+        KeyCode::Char('+') | KeyCode::Char('=') => app.zoom = (app.zoom + ZOOM_STEP).min(3.0),
+        KeyCode::Char('-') => app.zoom = (app.zoom - ZOOM_STEP).max(0.3),
         KeyCode::Tab => app.cycle_next_node(),
         KeyCode::BackTab => app.cycle_prev_node(),
-
-        // Enter search mode
         KeyCode::Char('/') => {
             app.mode = AppMode::Search;
             app.search_query.clear();
         }
-
-        // Reset view
         KeyCode::Char('r') => app.reset_view(),
-
-        // Toggle node list panel
-        KeyCode::Char('n') => {
-            app.show_node_list = !app.show_node_list;
+        KeyCode::Char('n') => app.show_node_list = !app.show_node_list,
+        KeyCode::Char('c') if app.show_node_list => app.toggle_group_collapse(),
+        KeyCode::Char('x') if app.selected_node.is_some() && !app.is_run_in_progress() => {
+            app.menu_hover_index = None;
+            app.mode = AppMode::RunMenu;
         }
-
-        // Collapse/expand group in node list
-        KeyCode::Char('c') => {
-            if app.show_node_list {
-                app.toggle_group_collapse();
-            }
-        }
-
-        // Open run menu
-        KeyCode::Char('x') => {
-            if app.selected_node.is_some() && !app.is_run_in_progress() {
-                app.menu_hover_index = None;
-                app.mode = AppMode::RunMenu;
-            }
-        }
-
-        // View run output
-        KeyCode::Char('o') => {
-            if app.has_run_output() {
-                app.mode = AppMode::RunOutput;
-            }
-        }
-
-        // Enter on a node
-        KeyCode::Enter => {}
-
+        KeyCode::Char('o') if app.has_run_output() => app.mode = AppMode::RunOutput,
         _ => {}
     }
-
     false
+}
+
+fn handle_normal_mode(app: &mut App, key: KeyEvent) -> bool {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        return true;
+    }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        if let Some(result) = handle_shift_pan(app, key.code) {
+            return result;
+        }
+    }
+    handle_normal_key(app, key.code)
 }
 
 fn handle_search_mode(app: &mut App, key: KeyEvent) -> bool {
