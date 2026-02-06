@@ -33,10 +33,10 @@ pub fn render_dot(graph: &LineageGraph) {
             EdgeType::Exposure => ", style=bold",
         };
         println!(
-            "  \"{}\" -> \"{}\" [{}];",
+            "  \"{}\" -> \"{}\" [label=\"{}\"{style}];",
             source.unique_id,
             target.unique_id,
-            format!("label=\"{}\"{}", edge.weight().edge_type_label(), style),
+            edge.weight().edge_type_label(),
         );
     }
 

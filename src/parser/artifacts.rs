@@ -119,7 +119,7 @@ pub fn merge_run_status_map(
     }
 }
 
-fn build_dbt_lookup<'a>(run_results: &'a RunResults) -> HashMap<String, &'a RunResult> {
+fn build_dbt_lookup(run_results: &RunResults) -> HashMap<String, &RunResult> {
     let mut dbt_lookup: HashMap<String, &RunResult> = HashMap::new();
     for result in &run_results.results {
         if let Some(simplified) = simplify_dbt_unique_id(&result.unique_id) {

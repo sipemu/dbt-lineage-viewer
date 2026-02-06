@@ -71,6 +71,7 @@ impl<'a> GraphWidget<'a> {
     }
 
     /// Draw a horizontal run of a character
+    #[allow(clippy::too_many_arguments)]
     fn draw_hline(
         &self,
         buf: &mut Buffer,
@@ -92,6 +93,7 @@ impl<'a> GraphWidget<'a> {
     }
 
     /// Draw a vertical run of a character
+    #[allow(clippy::too_many_arguments)]
     fn draw_vline(
         &self,
         buf: &mut Buffer,
