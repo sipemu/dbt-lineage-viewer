@@ -3,6 +3,12 @@ name = "dbt-lineage"
 version = "0.1.0"
 edition = "2021"
 description = "A Rust CLI tool for visualizing dbt model lineage"
+license = "MIT"
+repository = "https://github.com/sipemu/dbt-lineage-viewer"
+homepage = "https://github.com/sipemu/dbt-lineage-viewer"
+readme = "README.md"
+keywords = ["dbt", "lineage", "dag", "sql", "tui"]
+categories = ["command-line-utilities", "visualization"]
 
 [[bin]]
 name = "dbt-lineage"
