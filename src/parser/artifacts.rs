@@ -204,6 +204,8 @@ fn simplify_graph_unique_id(unique_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::types::*;
+    use chrono::Utc;
 
     #[test]
     fn test_simplify_dbt_unique_id() {
@@ -269,5 +271,288 @@ mod tests {
         assert_eq!(results.results[0].status, "success");
         assert!(results.results[0].completed_at().is_some());
         assert_eq!(results.results[1].status, "error");
+    }
+
+    fn make_test_graph() -> LineageGraph {
+        let mut graph = LineageGraph::new();
+        graph.add_node(NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: NodeType::Model,
+            file_path: Some(std::path::PathBuf::from("models/stg_orders.sql")),
+            description: None,
+        });
+        graph.add_node(NodeData {
+            unique_id: "model.orders".into(),
+            label: "orders".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+        });
+        graph
+    }
+
+    fn make_run_results(results: Vec<(&str, &str, Option<&str>)>) -> RunResults {
+        RunResults {
+            results: results
+                .into_iter()
+                .map(|(unique_id, status, message)| RunResult {
+                    unique_id: unique_id.to_string(),
+                    status: status.to_string(),
+                    message: message.map(|m| m.to_string()),
+                    timing: Some(vec![TimingEntry {
+                        name: "execute".to_string(),
+                        completed_at: Some(Utc::now()),
+                    }]),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_build_run_status_map_success() {
+        let graph = make_test_graph();
+        let results = make_run_results(vec![
+            ("model.my_project.stg_orders", "success", Some("OK")),
+        ]);
+        let tmp = tempfile::tempdir().unwrap();
+        let map = build_run_status_map(&results, &graph, tmp.path());
+        assert!(matches!(
+            map.get("model.stg_orders"),
+            Some(RunStatus::Success { .. })
+        ));
+    }
+
+    #[test]
+    fn test_build_run_status_map_error() {
+        let graph = make_test_graph();
+        let results = make_run_results(vec![
+            ("model.my_project.stg_orders", "error", Some("Compile error")),
+        ]);
+        let tmp = tempfile::tempdir().unwrap();
+        let map = build_run_status_map(&results, &graph, tmp.path());
+        match map.get("model.stg_orders") {
+            Some(RunStatus::Error { message, .. }) => {
+                assert_eq!(message, "Compile error");
+            }
+            other => panic!("Expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_run_status_map_skipped() {
+        let graph = make_test_graph();
+        let results = make_run_results(vec![
+            ("model.my_project.stg_orders", "skipped", None),
+        ]);
+        let tmp = tempfile::tempdir().unwrap();
+        let map = build_run_status_map(&results, &graph, tmp.path());
+        assert!(matches!(
+            map.get("model.stg_orders"),
+            Some(RunStatus::Skipped { .. })
+        ));
+    }
+
+    #[test]
+    fn test_build_run_status_map_unknown_status() {
+        let graph = make_test_graph();
+        let results = make_run_results(vec![
+            ("model.my_project.stg_orders", "weird_status", None),
+        ]);
+        let tmp = tempfile::tempdir().unwrap();
+        let map = build_run_status_map(&results, &graph, tmp.path());
+        assert!(matches!(
+            map.get("model.stg_orders"),
+            Some(RunStatus::NeverRun)
+        ));
+    }
+
+    #[test]
+    fn test_build_run_status_map_never_run() {
+        let graph = make_test_graph();
+        let results = RunResults { results: vec![] };
+        let tmp = tempfile::tempdir().unwrap();
+        let map = build_run_status_map(&results, &graph, tmp.path());
+        assert!(matches!(
+            map.get("model.stg_orders"),
+            Some(RunStatus::NeverRun)
+        ));
+    }
+
+    #[test]
+    fn test_merge_run_status_map() {
+        let graph = make_test_graph();
+        let tmp = tempfile::tempdir().unwrap();
+
+        let initial = make_run_results(vec![
+            ("model.my_project.stg_orders", "success", Some("OK")),
+        ]);
+        let mut map = build_run_status_map(&initial, &graph, tmp.path());
+
+        // Merge with new results — only stg_orders changes to error
+        let updated = make_run_results(vec![
+            ("model.my_project.stg_orders", "error", Some("Failed")),
+        ]);
+        merge_run_status_map(&mut map, &updated, &graph, tmp.path());
+
+        assert!(matches!(
+            map.get("model.stg_orders"),
+            Some(RunStatus::Error { .. })
+        ));
+        // orders was NeverRun and stays NeverRun (not in new results)
+        assert!(matches!(
+            map.get("model.orders"),
+            Some(RunStatus::NeverRun)
+        ));
+    }
+
+    #[test]
+    fn test_completed_at_from_timing() {
+        let result = RunResult {
+            unique_id: "model.x".into(),
+            status: "success".into(),
+            message: None,
+            timing: Some(vec![
+                TimingEntry {
+                    name: "compile".into(),
+                    completed_at: None,
+                },
+                TimingEntry {
+                    name: "execute".into(),
+                    completed_at: Some(Utc::now()),
+                },
+            ]),
+        };
+        assert!(result.completed_at().is_some());
+    }
+
+    #[test]
+    fn test_completed_at_no_timing() {
+        let result = RunResult {
+            unique_id: "model.x".into(),
+            status: "success".into(),
+            message: None,
+            timing: None,
+        };
+        assert!(result.completed_at().is_none());
+    }
+
+    #[test]
+    fn test_build_dbt_lookup() {
+        let results = make_run_results(vec![
+            ("model.my_project.stg_orders", "success", None),
+            ("model.my_project.orders", "error", None),
+        ]);
+        let lookup = build_dbt_lookup(&results);
+        assert!(lookup.contains_key("model.stg_orders"));
+        assert!(lookup.contains_key("model.orders"));
+        assert!(!lookup.contains_key("model.my_project.stg_orders"));
+    }
+
+    #[test]
+    fn test_resolve_run_status_no_timing_success() {
+        let result = RunResult {
+            unique_id: "model.x".into(),
+            status: "success".into(),
+            message: None,
+            timing: Some(vec![]),
+        };
+        let node = NodeData {
+            unique_id: "model.x".into(),
+            label: "x".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let status = resolve_run_status(Some(&result), &node, tmp.path());
+        // No completed_at from empty timing → falls through to Success with Utc::now()
+        assert!(matches!(status, RunStatus::Success { .. }));
+    }
+
+    #[test]
+    fn test_resolve_run_status_pass() {
+        let result = RunResult {
+            unique_id: "test.x".into(),
+            status: "pass".into(),
+            message: None,
+            timing: Some(vec![TimingEntry {
+                name: "execute".into(),
+                completed_at: Some(Utc::now()),
+            }]),
+        };
+        let node = NodeData {
+            unique_id: "test.x".into(),
+            label: "x".into(),
+            node_type: NodeType::Test,
+            file_path: None,
+            description: None,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let status = resolve_run_status(Some(&result), &node, tmp.path());
+        assert!(matches!(status, RunStatus::Success { .. }));
+    }
+
+    #[test]
+    fn test_resolve_run_status_fail() {
+        let result = RunResult {
+            unique_id: "test.x".into(),
+            status: "fail".into(),
+            message: Some("assertion failed".into()),
+            timing: Some(vec![]),
+        };
+        let node = NodeData {
+            unique_id: "test.x".into(),
+            label: "x".into(),
+            node_type: NodeType::Test,
+            file_path: None,
+            description: None,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let status = resolve_run_status(Some(&result), &node, tmp.path());
+        assert!(matches!(status, RunStatus::Error { .. }));
+    }
+
+    #[test]
+    fn test_resolve_run_status_skip() {
+        let result = RunResult {
+            unique_id: "model.x".into(),
+            status: "skip".into(),
+            message: None,
+            timing: Some(vec![]),
+        };
+        let node = NodeData {
+            unique_id: "model.x".into(),
+            label: "x".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let status = resolve_run_status(Some(&result), &node, tmp.path());
+        assert!(matches!(status, RunStatus::Skipped { .. }));
+    }
+
+    #[test]
+    fn test_resolve_run_status_error_no_message() {
+        let result = RunResult {
+            unique_id: "model.x".into(),
+            status: "error".into(),
+            message: None,
+            timing: Some(vec![]),
+        };
+        let node = NodeData {
+            unique_id: "model.x".into(),
+            label: "x".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let status = resolve_run_status(Some(&result), &node, tmp.path());
+        match status {
+            RunStatus::Error { message, .. } => assert_eq!(message, "Unknown error"),
+            other => panic!("Expected Error, got {:?}", other),
+        }
     }
 }

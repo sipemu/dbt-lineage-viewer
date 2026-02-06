@@ -94,6 +94,7 @@ pub struct ResolvedPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_defaults() {
@@ -117,5 +118,47 @@ seed-paths: ["data"]
         assert_eq!(project.model_paths, vec!["models", "extra_models"]);
         assert_eq!(project.seed_paths, vec!["data"]);
         assert_eq!(project.snapshot_paths, vec!["snapshots"]); // default
+    }
+
+    #[test]
+    fn test_load_from_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("dbt_project.yml"),
+            "name: test_project\n",
+        )
+        .unwrap();
+
+        let project = DbtProject::load(tmp.path()).unwrap();
+        assert_eq!(project.name, "test_project");
+        assert_eq!(project.model_paths, vec!["models"]);
+    }
+
+    #[test]
+    fn test_load_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = DbtProject::load(tmp.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("dbt project not found"), "Got: {}", msg);
+    }
+
+    #[test]
+    fn test_load_invalid_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("dbt_project.yml"), ": : : bad yaml").unwrap();
+        let err = DbtProject::load(tmp.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Failed to parse"), "Got: {}", msg);
+    }
+
+    #[test]
+    fn test_resolve_paths() {
+        let yaml = "name: my_project\n";
+        let project: DbtProject = serde_yaml::from_str(yaml).unwrap();
+        let paths = project.resolve_paths(Path::new("/proj"));
+        assert_eq!(paths.model_paths, vec![PathBuf::from("/proj/models")]);
+        assert_eq!(paths.seed_paths, vec![PathBuf::from("/proj/seeds")]);
+        assert_eq!(paths.snapshot_paths, vec![PathBuf::from("/proj/snapshots")]);
+        assert_eq!(paths.test_paths, vec![PathBuf::from("/proj/tests")]);
     }
 }

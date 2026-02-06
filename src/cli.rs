@@ -49,3 +49,68 @@ pub enum OutputFormat {
     Ascii,
     Dot,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_default_args() {
+        let cli = Cli::try_parse_from(["dbt-lineage"]).unwrap();
+        assert!(cli.model.is_none());
+        assert!(!cli.interactive);
+        assert!(cli.upstream.is_none());
+        assert!(cli.downstream.is_none());
+        assert!(!cli.include_tests);
+        assert!(!cli.include_seeds);
+        assert!(!cli.include_snapshots);
+        assert!(!cli.include_exposures);
+        assert!(matches!(cli.output, OutputFormat::Ascii));
+    }
+
+    #[test]
+    fn test_all_flags() {
+        let cli = Cli::try_parse_from([
+            "dbt-lineage",
+            "my_model",
+            "-p",
+            "/path/to/project",
+            "-u",
+            "2",
+            "-d",
+            "3",
+            "-i",
+            "-o",
+            "dot",
+            "--include-tests",
+            "--include-seeds",
+            "--include-snapshots",
+            "--include-exposures",
+        ])
+        .unwrap();
+        assert_eq!(cli.model.as_deref(), Some("my_model"));
+        assert_eq!(cli.project_dir, PathBuf::from("/path/to/project"));
+        assert_eq!(cli.upstream, Some(2));
+        assert_eq!(cli.downstream, Some(3));
+        assert!(cli.interactive);
+        assert!(matches!(cli.output, OutputFormat::Dot));
+        assert!(cli.include_tests);
+        assert!(cli.include_seeds);
+        assert!(cli.include_snapshots);
+        assert!(cli.include_exposures);
+    }
+
+    #[test]
+    fn test_output_format_parsing() {
+        let cli = Cli::try_parse_from(["dbt-lineage", "-o", "ascii"]).unwrap();
+        assert!(matches!(cli.output, OutputFormat::Ascii));
+
+        let cli = Cli::try_parse_from(["dbt-lineage", "-o", "dot"]).unwrap();
+        assert!(matches!(cli.output, OutputFormat::Dot));
+
+        // Invalid format
+        let result = Cli::try_parse_from(["dbt-lineage", "-o", "json"]);
+        assert!(result.is_err());
+    }
+}

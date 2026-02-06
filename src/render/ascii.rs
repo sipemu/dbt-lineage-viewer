@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use colored::Colorize;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
@@ -6,9 +8,37 @@ use crate::graph::types::*;
 use super::layout::{sugiyama_layout, LayoutResult};
 
 /// Render the lineage graph as ASCII art to stdout
+#[cfg(not(tarpaulin_include))]
 pub fn render_ascii(graph: &LineageGraph) {
+    // Check terminal width for warning
+    if graph.node_count() > 0 {
+        let layout = sugiyama_layout(graph);
+        if layout.num_layers > 0 {
+            let col_widths = calculate_column_widths(graph, &layout);
+            let col_spacing = 4;
+            let mut total_width = 0;
+            for (i, w) in col_widths.iter().enumerate() {
+                if i > 0 {
+                    total_width += col_spacing;
+                }
+                total_width += w;
+            }
+            if let Some((term_width, _)) = term_size() {
+                if total_width > term_width {
+                    eprintln!(
+                        "Warning: graph width ({}) exceeds terminal width ({}). Consider using --output dot or filtering with -u/-d.",
+                        total_width, term_width
+                    );
+                }
+            }
+        }
+    }
+    render_ascii_to_writer(graph, &mut std::io::stdout().lock());
+}
+
+fn render_ascii_to_writer<W: Write>(graph: &LineageGraph, w: &mut W) {
     if graph.node_count() == 0 {
-        println!("(empty graph — no nodes to display)");
+        writeln!(w, "(empty graph — no nodes to display)").unwrap();
         return;
     }
 
@@ -34,22 +64,6 @@ pub fn render_ascii(graph: &LineageGraph) {
         }
         offsets
     };
-
-    let total_width = if layout.num_layers > 0 {
-        col_offsets[layout.num_layers - 1] + col_widths[layout.num_layers - 1]
-    } else {
-        0
-    };
-
-    // Check terminal width
-    if let Some((term_width, _)) = term_size() {
-        if total_width > term_width {
-            eprintln!(
-                "Warning: graph width ({}) exceeds terminal width ({}). Consider using --output dot or filtering with -u/-d.",
-                total_width, term_width
-            );
-        }
-    }
 
     // Build a 2D grid of strings (row x cols as characters)
     // For simplicity, render line by line
@@ -98,12 +112,12 @@ pub fn render_ascii(graph: &LineageGraph) {
             }
         }
 
-        println!("{}", line.trim_end());
+        writeln!(w, "{}", line.trim_end()).unwrap();
     }
 
     // Print edges below the graph as a summary
-    println!();
-    println!("{}", "Edges:".bold());
+    writeln!(w).unwrap();
+    writeln!(w, "{}", "Edges:".bold()).unwrap();
     for edge in graph.edge_references() {
         let source = &graph[edge.source()];
         let target = &graph[edge.target()];
@@ -113,17 +127,19 @@ pub fn render_ascii(graph: &LineageGraph) {
             EdgeType::Test => "──test─>",
             EdgeType::Exposure => "──exp──>",
         };
-        println!(
+        writeln!(
+            w,
             "  {} {} {}",
             colorize_node(&source.display_name(), source.node_type),
             arrow,
             colorize_node(&target.display_name(), target.node_type),
-        );
+        )
+        .unwrap();
     }
 
     // Print legend
-    println!();
-    print_legend();
+    writeln!(w).unwrap();
+    print_legend_to_writer(w);
 }
 
 /// Calculate the width needed for each column (layer)
@@ -158,9 +174,10 @@ fn colorize_node(text: &str, node_type: NodeType) -> String {
     }
 }
 
-fn print_legend() {
-    println!("{}", "Legend:".bold());
-    println!(
+fn print_legend_to_writer<W: Write>(w: &mut W) {
+    writeln!(w, "{}", "Legend:".bold()).unwrap();
+    writeln!(
+        w,
         "  {} {} {} {} {} {} {}",
         "model".blue().bold(),
         "source".green(),
@@ -169,9 +186,11 @@ fn print_legend() {
         "test".cyan(),
         "exposure".red(),
         "phantom".dimmed(),
-    );
+    )
+    .unwrap();
 }
 
+#[cfg(not(tarpaulin_include))]
 fn term_size() -> Option<(usize, usize)> {
     // Try to get terminal size from environment
     #[cfg(unix)]
@@ -188,6 +207,7 @@ fn term_size() -> Option<(usize, usize)> {
     None
 }
 
+#[cfg(not(tarpaulin_include))]
 #[cfg(unix)]
 #[repr(C)]
 struct libc_winsize {
@@ -200,10 +220,118 @@ struct libc_winsize {
 #[cfg(unix)]
 const TIOCGWINSZ: u64 = 0x5413;
 
+#[cfg(not(tarpaulin_include))]
 #[cfg(unix)]
 unsafe fn libc_ioctl(fd: i32, request: u64, arg: *mut libc_winsize) -> i32 {
     extern "C" {
         fn ioctl(fd: i32, request: u64, ...) -> i32;
     }
     unsafe { ioctl(fd, request, arg) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_node(unique_id: &str, label: &str, node_type: NodeType) -> NodeData {
+        NodeData {
+            unique_id: unique_id.into(),
+            label: label.into(),
+            node_type,
+            file_path: None,
+            description: None,
+        }
+    }
+
+    fn render_to_string(graph: &LineageGraph) -> String {
+        let mut buf = Vec::new();
+        render_ascii_to_writer(graph, &mut buf);
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn test_empty_graph() {
+        let graph = LineageGraph::new();
+        let output = render_to_string(&graph);
+        assert!(output.contains("empty graph"));
+    }
+
+    #[test]
+    fn test_single_node() {
+        let mut graph = LineageGraph::new();
+        graph.add_node(make_node("model.orders", "orders", NodeType::Model));
+        let output = render_to_string(&graph);
+        assert!(output.contains("orders"));
+        assert!(output.contains("Legend:"));
+    }
+
+    #[test]
+    fn test_edges_section() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("source.raw.orders", "raw.orders", NodeType::Source));
+        let b = graph.add_node(make_node("model.stg_orders", "stg_orders", NodeType::Model));
+        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Source });
+
+        let output = render_to_string(&graph);
+        assert!(output.contains("Edges:"));
+        // Should contain arrow
+        assert!(
+            output.contains("──src──>"),
+            "Output should contain src arrow: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_legend() {
+        let mut buf = Vec::new();
+        print_legend_to_writer(&mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("Legend:"));
+    }
+
+    #[test]
+    fn test_colorize_all_types() {
+        let types = [
+            NodeType::Model,
+            NodeType::Source,
+            NodeType::Seed,
+            NodeType::Snapshot,
+            NodeType::Test,
+            NodeType::Exposure,
+            NodeType::Phantom,
+        ];
+        for nt in types {
+            let result = colorize_node("test", nt);
+            // colorize_node always returns a non-empty string
+            assert!(!result.is_empty(), "colorize_node failed for {:?}", nt);
+        }
+    }
+
+    #[test]
+    fn test_column_widths() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("model.short", "short", NodeType::Model));
+        let b = graph.add_node(make_node("model.very_long_name", "very_long_name", NodeType::Model));
+        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
+
+        let layout = sugiyama_layout(&graph);
+        let widths = calculate_column_widths(&graph, &layout);
+        // Each column width should be at least label.len() + 4
+        assert!(widths[0] >= 9); // "short" + 4
+        assert!(widths[1] >= 18); // "very_long_name" + 4
+    }
+
+    #[test]
+    fn test_two_nodes_with_edge() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
+        let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
+        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
+
+        let output = render_to_string(&graph);
+        assert!(output.contains("[ a ]"), "Output:\n{}", output);
+        assert!(output.contains("[ b ]"), "Output:\n{}", output);
+        assert!(output.contains("──ref──>"));
+    }
 }

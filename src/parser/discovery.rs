@@ -116,4 +116,97 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(yaml.len(), 1);
     }
+
+    #[test]
+    fn test_walk_csv_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seeds_dir = tmp.path().join("seeds");
+        fs::create_dir_all(&seeds_dir).unwrap();
+        fs::write(seeds_dir.join("countries.csv"), "id,name\n1,US").unwrap();
+        fs::write(seeds_dir.join("schema.yml"), "version: 2").unwrap();
+        fs::write(seeds_dir.join("notes.txt"), "notes").unwrap();
+
+        let csv_files = walk_csv_files(&seeds_dir);
+        assert_eq!(csv_files.len(), 1);
+        assert!(csv_files[0].ends_with("countries.csv"));
+    }
+
+    #[test]
+    fn test_walk_csv_files_nonexistent() {
+        let csv_files = walk_csv_files(Path::new("/nonexistent/path"));
+        assert!(csv_files.is_empty());
+    }
+
+    #[test]
+    fn test_walk_directory_nested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models_dir = tmp.path().join("models");
+        let staging_dir = models_dir.join("staging");
+        fs::create_dir_all(&staging_dir).unwrap();
+        fs::write(staging_dir.join("stg_a.sql"), "SELECT 1").unwrap();
+        fs::write(staging_dir.join("stg_b.sql"), "SELECT 2").unwrap();
+        fs::write(models_dir.join("schema.yaml"), "version: 2").unwrap();
+
+        let (sql, yaml) = walk_directory(&models_dir);
+        assert_eq!(sql.len(), 2);
+        assert_eq!(yaml.len(), 1);
+    }
+
+    #[test]
+    fn test_discover_files_full() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path();
+
+        // Models
+        let models_dir = project_dir.join("models");
+        fs::create_dir_all(&models_dir).unwrap();
+        fs::write(models_dir.join("model_a.sql"), "SELECT 1").unwrap();
+        fs::write(models_dir.join("schema.yml"), "version: 2").unwrap();
+
+        // Seeds
+        let seeds_dir = project_dir.join("seeds");
+        fs::create_dir_all(&seeds_dir).unwrap();
+        fs::write(seeds_dir.join("seed.csv"), "a,b\n1,2").unwrap();
+
+        // Snapshots
+        let snap_dir = project_dir.join("snapshots");
+        fs::create_dir_all(&snap_dir).unwrap();
+        fs::write(snap_dir.join("snap.sql"), "SELECT 1").unwrap();
+
+        // Tests
+        let test_dir = project_dir.join("tests");
+        fs::create_dir_all(&test_dir).unwrap();
+        fs::write(test_dir.join("test_a.sql"), "SELECT 1").unwrap();
+
+        let paths = ResolvedPaths {
+            model_paths: vec![models_dir],
+            seed_paths: vec![seeds_dir],
+            snapshot_paths: vec![snap_dir],
+            test_paths: vec![test_dir],
+        };
+
+        let discovered = discover_files(&paths).unwrap();
+        assert_eq!(discovered.model_sql_files.len(), 1);
+        assert_eq!(discovered.seed_files.len(), 1);
+        assert_eq!(discovered.snapshot_sql_files.len(), 1);
+        assert_eq!(discovered.test_sql_files.len(), 1);
+        assert_eq!(discovered.yaml_files.len(), 1);
+    }
+
+    #[test]
+    fn test_discover_files_missing_dirs() {
+        let paths = ResolvedPaths {
+            model_paths: vec![PathBuf::from("/nonexistent/models")],
+            seed_paths: vec![PathBuf::from("/nonexistent/seeds")],
+            snapshot_paths: vec![PathBuf::from("/nonexistent/snapshots")],
+            test_paths: vec![PathBuf::from("/nonexistent/tests")],
+        };
+
+        let discovered = discover_files(&paths).unwrap();
+        assert!(discovered.model_sql_files.is_empty());
+        assert!(discovered.seed_files.is_empty());
+        assert!(discovered.snapshot_sql_files.is_empty());
+        assert!(discovered.test_sql_files.is_empty());
+        assert!(discovered.yaml_files.is_empty());
+    }
 }

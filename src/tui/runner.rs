@@ -138,6 +138,7 @@ pub enum DbtRunMessage {
 
 /// Spawn a dbt run in a background thread.
 /// Returns a receiver for progress messages.
+#[cfg(not(tarpaulin_include))]
 pub fn spawn_dbt_run(request: DbtRunRequest) -> mpsc::Receiver<DbtRunMessage> {
     let (tx, rx) = mpsc::channel();
 
@@ -350,12 +351,87 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         // No marker files: result depends on what's on PATH.
-        // If dbt is on PATH → false (use dbt directly).
-        // If dbt is NOT on PATH but uv IS → true (fallback to uv run dbt).
-        // If neither is on PATH → false.
         // We can't assert a fixed value, but we can verify it doesn't panic.
         let _result = detect_use_uv(&dir);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_dbt_command_as_str() {
+        assert_eq!(DbtCommand::Run.as_str(), "run");
+        assert_eq!(DbtCommand::Test.as_str(), "test");
+    }
+
+    #[test]
+    fn test_selection_scope_label() {
+        assert_eq!(SelectionScope::Single.label(), "this model");
+        assert_eq!(SelectionScope::WithUpstream.label(), "+upstream");
+        assert_eq!(SelectionScope::WithDownstream.label(), "downstream+");
+        assert_eq!(SelectionScope::FullLineage.label(), "+full lineage+");
+    }
+
+    #[test]
+    fn test_program_dbt() {
+        let req = DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".to_string(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        };
+        assert_eq!(req.program(), "dbt");
+    }
+
+    #[test]
+    fn test_program_uv() {
+        let req = DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".to_string(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: true,
+        };
+        assert_eq!(req.program(), "uv");
+    }
+
+    #[test]
+    fn test_args_test_command() {
+        let req = DbtRunRequest {
+            command: DbtCommand::Test,
+            scope: SelectionScope::FullLineage,
+            model_name: "orders".to_string(),
+            project_dir: PathBuf::from("/tmp/project"),
+            use_uv: false,
+        };
+        let args = req.args();
+        assert_eq!(
+            args,
+            vec!["test", "--select", "+orders+", "--project-dir", "/tmp/project"]
+        );
+    }
+
+    #[test]
+    fn test_args_uv_test_command() {
+        let req = DbtRunRequest {
+            command: DbtCommand::Test,
+            scope: SelectionScope::Single,
+            model_name: "orders".to_string(),
+            project_dir: PathBuf::from("/tmp/project"),
+            use_uv: true,
+        };
+        let args = req.args();
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "dbt",
+                "test",
+                "--select",
+                "orders",
+                "--project-dir",
+                "/tmp/project"
+            ]
+        );
     }
 }

@@ -25,6 +25,7 @@ use event::{handle_key_event, handle_mouse_event};
 use ui::draw_ui;
 
 /// Launch the interactive TUI
+#[cfg(not(tarpaulin_include))]
 pub fn run_tui(graph: LineageGraph, project_dir: PathBuf) -> Result<()> {
     // Load initial run status
     let run_status = match artifacts::load_run_results(&project_dir)? {

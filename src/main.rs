@@ -6,6 +6,7 @@ use dbt_lineage::graph;
 use dbt_lineage::parser;
 use dbt_lineage::render;
 
+#[cfg(not(tarpaulin_include))]
 fn main() -> Result<()> {
     let cli = Cli::parse();
 

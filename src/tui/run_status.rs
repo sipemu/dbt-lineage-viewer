@@ -69,6 +69,15 @@ mod tests {
     }
 
     #[test]
+    fn test_status_symbol_outdated() {
+        let status = RunStatus::Outdated {
+            run_at: Utc::now(),
+            modified_at: std::time::SystemTime::now(),
+        };
+        assert_eq!(status_symbol(&status), "~");
+    }
+
+    #[test]
     fn test_status_colors() {
         assert_eq!(status_color(&RunStatus::NeverRun), Color::DarkGray);
         assert_eq!(
@@ -84,5 +93,55 @@ mod tests {
             }),
             Color::Red
         );
+        assert_eq!(
+            status_color(&RunStatus::Skipped { completed_at: None }),
+            Color::DarkGray
+        );
+        assert_eq!(
+            status_color(&RunStatus::Outdated {
+                run_at: Utc::now(),
+                modified_at: std::time::SystemTime::now(),
+            }),
+            Color::Yellow
+        );
+    }
+
+    #[test]
+    fn test_status_label_never_run() {
+        assert_eq!(status_label(&RunStatus::NeverRun), "Never run");
+    }
+
+    #[test]
+    fn test_status_label_success() {
+        let label = status_label(&RunStatus::Success {
+            completed_at: Utc::now(),
+        });
+        assert!(label.starts_with("Success ("));
+    }
+
+    #[test]
+    fn test_status_label_error() {
+        let label = status_label(&RunStatus::Error {
+            completed_at: None,
+            message: "compile error".into(),
+        });
+        assert!(label.contains("compile error"));
+    }
+
+    #[test]
+    fn test_status_label_skipped() {
+        assert_eq!(
+            status_label(&RunStatus::Skipped { completed_at: None }),
+            "Skipped"
+        );
+    }
+
+    #[test]
+    fn test_status_label_outdated() {
+        let label = status_label(&RunStatus::Outdated {
+            run_at: Utc::now(),
+            modified_at: std::time::SystemTime::now(),
+        });
+        assert!(label.starts_with("Outdated"));
     }
 }

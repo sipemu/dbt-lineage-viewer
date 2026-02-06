@@ -594,3 +594,1010 @@ fn handle_run_output_mode(app: &mut App, key: KeyEvent) -> bool {
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::types::*;
+    use crate::parser::artifacts::RunStatusMap;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn make_test_graph() -> LineageGraph {
+        let mut graph = LineageGraph::new();
+        let src = graph.add_node(NodeData {
+            unique_id: "source.raw.orders".into(),
+            label: "raw.orders".into(),
+            node_type: NodeType::Source,
+            file_path: Some(PathBuf::from("models/schema.yml")),
+            description: None,
+        });
+        let stg = graph.add_node(NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: NodeType::Model,
+            file_path: Some(PathBuf::from("models/staging/stg_orders.sql")),
+            description: None,
+        });
+        let mart = graph.add_node(NodeData {
+            unique_id: "model.orders".into(),
+            label: "orders".into(),
+            node_type: NodeType::Model,
+            file_path: Some(PathBuf::from("models/marts/orders.sql")),
+            description: None,
+        });
+        let exp = graph.add_node(NodeData {
+            unique_id: "exposure.dashboard".into(),
+            label: "dashboard".into(),
+            node_type: NodeType::Exposure,
+            file_path: None,
+            description: None,
+        });
+        graph.add_edge(src, stg, EdgeData { edge_type: EdgeType::Source });
+        graph.add_edge(stg, mart, EdgeData { edge_type: EdgeType::Ref });
+        graph.add_edge(mart, exp, EdgeData { edge_type: EdgeType::Exposure });
+        graph
+    }
+
+    fn test_app() -> App {
+        let run_status: RunStatusMap = HashMap::new();
+        App::new(make_test_graph(), PathBuf::from("/tmp"), run_status)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn key_shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn key_ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    // ─── Normal mode tests ───
+
+    #[test]
+    fn test_normal_q_quits() {
+        let mut app = test_app();
+        assert!(handle_key_event(&mut app, key(KeyCode::Char('q'))));
+    }
+
+    #[test]
+    fn test_normal_ctrl_c_quits() {
+        let mut app = test_app();
+        assert!(handle_key_event(&mut app, key_ctrl('c')));
+    }
+
+    #[test]
+    fn test_normal_hjkl_navigate() {
+        let mut app = test_app();
+        let initial = app.selected_node;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('l'))));
+        // May or may not change depending on graph structure
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('h'))));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('j'))));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('k'))));
+        // Arrow keys
+        assert!(!handle_key_event(&mut app, key(KeyCode::Right)));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Left)));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Down)));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Up)));
+        let _ = initial; // suppress unused
+    }
+
+    #[test]
+    fn test_normal_shift_hjkl_pan() {
+        let mut app = test_app();
+        let vx = app.viewport_x;
+        assert!(!handle_key_event(&mut app, key_shift(KeyCode::Char('H'))));
+        assert!(app.viewport_x < vx);
+        let vy = app.viewport_y;
+        assert!(!handle_key_event(&mut app, key_shift(KeyCode::Char('J'))));
+        assert!(app.viewport_y > vy);
+        let vy2 = app.viewport_y;
+        assert!(!handle_key_event(&mut app, key_shift(KeyCode::Char('K'))));
+        assert!(app.viewport_y < vy2);
+        let vx2 = app.viewport_x;
+        assert!(!handle_key_event(&mut app, key_shift(KeyCode::Char('L'))));
+        assert!(app.viewport_x > vx2);
+    }
+
+    #[test]
+    fn test_normal_zoom() {
+        let mut app = test_app();
+        let z = app.zoom;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('+'))));
+        assert!(app.zoom > z);
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('-'))));
+        assert!((app.zoom - z).abs() < 0.001);
+        // '=' also zooms in
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('='))));
+        assert!(app.zoom > z);
+    }
+
+    #[test]
+    fn test_normal_tab_cycle() {
+        let mut app = test_app();
+        let first = app.selected_node;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Tab)));
+        assert_ne!(app.selected_node, first);
+        assert!(!handle_key_event(&mut app, key(KeyCode::BackTab)));
+        assert_eq!(app.selected_node, first);
+    }
+
+    #[test]
+    fn test_normal_slash_enters_search() {
+        let mut app = test_app();
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('/'))));
+        assert_eq!(app.mode, AppMode::Search);
+        assert!(app.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_normal_r_reset() {
+        let mut app = test_app();
+        app.viewport_x = 50;
+        app.viewport_y = 30;
+        app.zoom = 2.0;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('r'))));
+        assert_eq!(app.viewport_x, 0);
+        assert_eq!(app.viewport_y, 0);
+        assert_eq!(app.zoom, 1.0);
+    }
+
+    #[test]
+    fn test_normal_n_toggle_node_list() {
+        let mut app = test_app();
+        assert!(!app.show_node_list);
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('n'))));
+        assert!(app.show_node_list);
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('n'))));
+        assert!(!app.show_node_list);
+    }
+
+    #[test]
+    fn test_normal_c_collapse() {
+        let mut app = test_app();
+        app.show_node_list = true;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('c'))));
+        // Should toggle collapse for selected node's group
+    }
+
+    #[test]
+    fn test_normal_c_no_node_list() {
+        let mut app = test_app();
+        app.show_node_list = false;
+        // 'c' with no node list should be a no-op
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('c'))));
+    }
+
+    #[test]
+    fn test_normal_x_opens_run_menu() {
+        let mut app = test_app();
+        assert!(app.selected_node.is_some());
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('x'))));
+        assert_eq!(app.mode, AppMode::RunMenu);
+    }
+
+    #[test]
+    fn test_normal_x_no_selection() {
+        let mut app = test_app();
+        app.selected_node = None;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('x'))));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_normal_o_view_output() {
+        let mut app = test_app();
+        app.run_state = DbtRunState::Finished {
+            output_lines: vec!["done".into()],
+            success: true,
+        };
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('o'))));
+        assert_eq!(app.mode, AppMode::RunOutput);
+    }
+
+    #[test]
+    fn test_normal_o_no_output() {
+        let mut app = test_app();
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('o'))));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    // ─── Search mode tests ───
+
+    #[test]
+    fn test_search_char_input() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('o'))));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('r'))));
+        assert_eq!(app.search_query, "or");
+    }
+
+    #[test]
+    fn test_search_backspace() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        app.search_query = "ord".into();
+        assert!(!handle_key_event(&mut app, key(KeyCode::Backspace)));
+        assert_eq!(app.search_query, "or");
+    }
+
+    #[test]
+    fn test_search_tab_next() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        app.search_query = "orders".into();
+        app.update_search();
+        let first = app.selected_node;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Tab)));
+        if app.search_results.len() > 1 {
+            assert_ne!(app.selected_node, first);
+        }
+    }
+
+    #[test]
+    fn test_search_esc_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Esc)));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_search_enter_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Enter)));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_search_ctrl_c_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        assert!(!handle_key_event(&mut app, key_ctrl('c')));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    // ─── RunMenu mode tests ───
+
+    #[test]
+    fn test_run_menu_r() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('r'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert!(app.pending_run.is_some());
+    }
+
+    #[test]
+    fn test_run_menu_u() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('u'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert!(app.pending_run.is_some());
+        assert_eq!(
+            app.pending_run.as_ref().unwrap().scope,
+            SelectionScope::WithUpstream
+        );
+    }
+
+    #[test]
+    fn test_run_menu_d() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('d'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert_eq!(
+            app.pending_run.as_ref().unwrap().scope,
+            SelectionScope::WithDownstream
+        );
+    }
+
+    #[test]
+    fn test_run_menu_a() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('a'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert_eq!(
+            app.pending_run.as_ref().unwrap().scope,
+            SelectionScope::FullLineage
+        );
+    }
+
+    #[test]
+    fn test_run_menu_t() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('t'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert_eq!(
+            app.pending_run.as_ref().unwrap().command,
+            DbtCommand::Test
+        );
+    }
+
+    #[test]
+    fn test_run_menu_esc() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Esc)));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_run_menu_no_selection() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        app.selected_node = None;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('r'))));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_run_menu_ctrl_c() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        assert!(!handle_key_event(&mut app, key_ctrl('c')));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    // ─── ContextMenu mode tests ───
+
+    #[test]
+    fn test_context_menu_r() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('r'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert!(app.context_menu_pos.is_none());
+    }
+
+    #[test]
+    fn test_context_menu_esc() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Esc)));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.context_menu_pos.is_none());
+    }
+
+    #[test]
+    fn test_context_menu_no_selection() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.selected_node = None;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('r'))));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_context_menu_ctrl_c() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key_ctrl('c')));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.context_menu_pos.is_none());
+    }
+
+    #[test]
+    fn test_context_menu_u() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('u'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert!(app.context_menu_pos.is_none());
+    }
+
+    #[test]
+    fn test_context_menu_d() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('d'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+    }
+
+    #[test]
+    fn test_context_menu_a() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('a'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+    }
+
+    #[test]
+    fn test_context_menu_t() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.context_menu_pos = Some((10, 10));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('t'))));
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert_eq!(
+            app.pending_run.as_ref().unwrap().command,
+            DbtCommand::Test
+        );
+    }
+
+    // ─── RunConfirm mode tests ───
+
+    #[test]
+    fn test_run_confirm_n_cancels() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('n'))));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.pending_run.is_none());
+    }
+
+    #[test]
+    fn test_run_confirm_esc_cancels() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        assert!(!handle_key_event(&mut app, key(KeyCode::Esc)));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.pending_run.is_none());
+    }
+
+    #[test]
+    fn test_run_confirm_ctrl_c_cancels() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        assert!(!handle_key_event(&mut app, key_ctrl('c')));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.pending_run.is_none());
+    }
+
+    // ─── RunOutput mode tests ───
+
+    #[test]
+    fn test_run_output_scroll_down() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        app.run_state = DbtRunState::Finished {
+            output_lines: vec!["a".into(), "b".into(), "c".into()],
+            success: true,
+        };
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('j'))));
+        assert_eq!(app.run_output_scroll, 1);
+        assert!(!handle_key_event(&mut app, key(KeyCode::Down)));
+        assert_eq!(app.run_output_scroll, 2);
+    }
+
+    #[test]
+    fn test_run_output_scroll_up() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        app.run_output_scroll = 3;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('k'))));
+        assert_eq!(app.run_output_scroll, 2);
+        assert!(!handle_key_event(&mut app, key(KeyCode::Up)));
+        assert_eq!(app.run_output_scroll, 1);
+    }
+
+    #[test]
+    fn test_run_output_jump_bottom() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        app.run_state = DbtRunState::Finished {
+            output_lines: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            success: true,
+        };
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('G'))));
+        assert_eq!(app.run_output_scroll, 3);
+    }
+
+    #[test]
+    fn test_run_output_esc_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Esc)));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_run_output_q_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('q'))));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_run_output_ctrl_c_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        assert!(!handle_key_event(&mut app, key_ctrl('c')));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    // ─── Mouse tests ───
+
+    #[test]
+    fn test_mouse_scroll_zoom() {
+        let mut app = test_app();
+        app.last_graph_area = Some(Rect::new(0, 0, 80, 24));
+
+        let scroll_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        let z = app.zoom;
+        handle_mouse_event(&mut app, scroll_up);
+        assert!(app.zoom > z);
+
+        let scroll_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, scroll_down);
+        assert!((app.zoom - z).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mouse_scroll_outside_graph() {
+        let mut app = test_app();
+        app.last_graph_area = Some(Rect::new(0, 0, 40, 20));
+
+        let scroll = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 60, // outside
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        let z = app.zoom;
+        handle_mouse_event(&mut app, scroll);
+        assert_eq!(app.zoom, z);
+    }
+
+    #[test]
+    fn test_mouse_drag_pan() {
+        let mut app = test_app();
+        app.last_graph_area = Some(Rect::new(0, 0, 80, 24));
+
+        // Left click on empty space to start drag
+        let down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 70, // likely empty space
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, down);
+
+        if app.drag_state.is_some() {
+            // Drag
+            let drag = MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 75,
+                row: 22,
+                modifiers: KeyModifiers::NONE,
+            };
+            handle_mouse_event(&mut app, drag);
+
+            // Release
+            let up = MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 75,
+                row: 22,
+                modifiers: KeyModifiers::NONE,
+            };
+            handle_mouse_event(&mut app, up);
+            assert!(app.drag_state.is_none());
+        }
+    }
+
+    #[test]
+    fn test_mouse_not_in_normal_mode() {
+        let mut app = test_app();
+        app.mode = AppMode::Search;
+        let scroll = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        let z = app.zoom;
+        handle_mouse_event(&mut app, scroll);
+        assert_eq!(app.zoom, z); // Should not zoom in search mode
+    }
+
+    #[test]
+    fn test_menu_item_at_pos() {
+        let area = Some(Rect::new(10, 5, 30, 10));
+        // items_y_offset = 2 for run menu, first item at y=7
+        assert_eq!(menu_item_at_pos(area, 2, 15, 7), Some(0));
+        assert_eq!(menu_item_at_pos(area, 2, 15, 8), Some(1));
+        assert_eq!(menu_item_at_pos(area, 2, 15, 11), Some(4));
+        assert_eq!(menu_item_at_pos(area, 2, 15, 12), None); // past items
+        assert_eq!(menu_item_at_pos(area, 2, 5, 7), None); // outside x
+        assert_eq!(menu_item_at_pos(None, 2, 15, 7), None);
+    }
+
+    #[test]
+    fn test_confirm_button_at_pos() {
+        let area = Some(Rect::new(10, 5, 60, 8));
+        // Button row is at y = 5 + 6 = 11
+        // Execute: inner_x+2 to inner_x+14 = 13..25
+        assert_eq!(confirm_button_at_pos(area, 13, 11), Some(true));
+        // Cancel: inner_x+17 to inner_x+28 = 28..39
+        assert_eq!(confirm_button_at_pos(area, 28, 11), Some(false));
+        // Between buttons
+        assert_eq!(confirm_button_at_pos(area, 26, 11), None);
+        // Wrong row
+        assert_eq!(confirm_button_at_pos(area, 13, 10), None);
+        // No area
+        assert_eq!(confirm_button_at_pos(None, 13, 11), None);
+    }
+
+    #[test]
+    fn test_context_menu_mouse_dismiss() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.last_context_menu_area = Some(Rect::new(10, 10, 30, 10));
+
+        // Click outside menu
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_run_menu_mouse_hover() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        app.last_run_menu_area = Some(Rect::new(10, 5, 30, 14));
+
+        let moved = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 15,
+            row: 7, // items_y_offset=2 → first item at y=7
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, moved);
+        assert_eq!(app.menu_hover_index, Some(0));
+    }
+
+    #[test]
+    fn test_confirm_dialog_mouse_cancel() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        app.last_confirm_area = Some(Rect::new(10, 5, 60, 8));
+
+        // Click Cancel button: inner_x+17=28, row=11
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 28,
+            row: 11,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.pending_run.is_none());
+    }
+
+    #[test]
+    fn test_confirm_dialog_mouse_dismiss() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        app.last_confirm_area = Some(Rect::new(10, 5, 60, 8));
+
+        // Click outside buttons
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_confirm_dialog_mouse_hover() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.last_confirm_area = Some(Rect::new(10, 5, 60, 8));
+
+        let moved = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 13, // Execute button
+            row: 11,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, moved);
+        assert_eq!(app.confirm_hover, Some(true));
+    }
+
+    #[test]
+    fn test_confirm_dialog_right_click_dismisses() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        app.last_confirm_area = Some(Rect::new(10, 5, 60, 8));
+
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 15,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_make_run_request_for_item() {
+        let app = test_app();
+        // Item 0 = run single
+        let req = make_run_request_for_item(&app, 0);
+        assert!(req.is_some());
+        let req = req.unwrap();
+        assert_eq!(req.command, DbtCommand::Run);
+        assert_eq!(req.scope, SelectionScope::Single);
+
+        // Item 1 = run +upstream
+        let req = make_run_request_for_item(&app, 1).unwrap();
+        assert_eq!(req.scope, SelectionScope::WithUpstream);
+
+        // Item 2 = run downstream+
+        let req = make_run_request_for_item(&app, 2).unwrap();
+        assert_eq!(req.scope, SelectionScope::WithDownstream);
+
+        // Item 3 = run +all+
+        let req = make_run_request_for_item(&app, 3).unwrap();
+        assert_eq!(req.scope, SelectionScope::FullLineage);
+
+        // Item 4 = test
+        let req = make_run_request_for_item(&app, 4).unwrap();
+        assert_eq!(req.command, DbtCommand::Test);
+
+        // Item 5 = out of range
+        assert!(make_run_request_for_item(&app, 5).is_none());
+    }
+
+    #[test]
+    fn test_make_run_request_no_selection() {
+        let mut app = test_app();
+        app.selected_node = None;
+        assert!(make_run_request_for_item(&app, 0).is_none());
+    }
+
+    #[test]
+    fn test_clear_menu_state() {
+        let mut app = test_app();
+        app.context_menu_pos = Some((10, 10));
+        app.last_context_menu_area = Some(Rect::new(0, 0, 30, 10));
+        app.last_run_menu_area = Some(Rect::new(0, 0, 30, 10));
+        app.menu_hover_index = Some(2);
+        clear_menu_state(&mut app);
+        assert!(app.context_menu_pos.is_none());
+        assert!(app.last_context_menu_area.is_none());
+        assert!(app.last_run_menu_area.is_none());
+        assert!(app.menu_hover_index.is_none());
+    }
+
+    #[test]
+    fn test_run_menu_mouse_click_item() {
+        let mut app = test_app();
+        app.mode = AppMode::RunMenu;
+        app.last_run_menu_area = Some(Rect::new(10, 5, 30, 14));
+
+        // Click on first item (y=7, items_y_offset=2)
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 15,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::RunConfirm);
+        assert!(app.pending_run.is_some());
+    }
+
+    #[test]
+    fn test_context_menu_mouse_click_item() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.last_context_menu_area = Some(Rect::new(10, 5, 30, 10));
+
+        // Click on first item (y=6, items_y_offset=1 for context menu)
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 15,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::RunConfirm);
+    }
+
+    #[test]
+    fn test_context_menu_right_click_dismiss() {
+        let mut app = test_app();
+        app.mode = AppMode::ContextMenu;
+        app.last_context_menu_area = Some(Rect::new(10, 5, 30, 10));
+
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_node_list_click_node() {
+        use ratatui::layout::Rect;
+        let mut app = test_app();
+        app.show_node_list = true;
+        app.last_graph_area = Some(Rect::new(20, 0, 60, 24));
+        app.last_node_list_area = Some(Rect::new(0, 0, 20, 24));
+
+        // Click on a node entry (row 2 = first node after group header at row 0+1=1 border)
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 2, // border(1) + second entry
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        // Should have selected a node (or toggled group)
+    }
+
+    #[test]
+    fn test_confirm_execute_click() {
+        let mut app = test_app();
+        app.mode = AppMode::RunConfirm;
+        app.pending_run = Some(DbtRunRequest {
+            command: DbtCommand::Run,
+            scope: SelectionScope::Single,
+            model_name: "orders".into(),
+            project_dir: PathBuf::from("/tmp"),
+            use_uv: false,
+        });
+        app.last_confirm_area = Some(Rect::new(10, 5, 60, 8));
+
+        // Click Execute button: inner_x+2=13, row=11
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 13,
+            row: 11,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        // Should have started the run (mode goes to RunOutput)
+        assert_eq!(app.mode, AppMode::RunOutput);
+    }
+
+    #[test]
+    fn test_run_output_jump_bottom_running() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        let (_tx, rx) = std::sync::mpsc::channel::<super::super::runner::DbtRunMessage>();
+        app.run_state = DbtRunState::Running {
+            receiver: rx,
+            output_lines: vec!["a".into(), "b".into(), "c".into()],
+        };
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('G'))));
+        assert_eq!(app.run_output_scroll, 2);
+    }
+
+    #[test]
+    fn test_run_output_jump_bottom_idle() {
+        let mut app = test_app();
+        app.mode = AppMode::RunOutput;
+        // Idle state has 0 lines
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('G'))));
+        assert_eq!(app.run_output_scroll, 0);
+    }
+
+    #[test]
+    fn test_right_click_outside_graph_area() {
+        let mut app = test_app();
+        app.last_graph_area = Some(Rect::new(10, 5, 60, 20));
+
+        // Right-click outside graph area
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 5, // outside x
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, mouse);
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_left_click_node_in_graph() {
+        use crate::tui::graph_widget::GraphWidget;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = test_app();
+        // Render graph to set last_graph_area and positions
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                app.last_graph_area = Some(area);
+                f.render_widget(GraphWidget::new(&app), area);
+            })
+            .unwrap();
+
+        // Left-click on a node area (first node at ~(5,1))
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse_event(&mut app, click);
+        // Should select the node without starting a drag
+        assert!(app.drag_state.is_none());
+    }
+}

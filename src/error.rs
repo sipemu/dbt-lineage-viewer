@@ -38,3 +38,39 @@ pub enum DbtLineageError {
         source: serde_json::Error,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn test_error_display() {
+        let err = DbtLineageError::ProjectNotFound(PathBuf::from("/foo"));
+        assert_eq!(
+            err.to_string(),
+            "dbt project not found: no dbt_project.yml in /foo"
+        );
+
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let err = DbtLineageError::FileReadError {
+            path: PathBuf::from("/bar.sql"),
+            source: io_err,
+        };
+        assert!(err.to_string().contains("/bar.sql"));
+
+        let err = DbtLineageError::ModelNotFound("orders".into());
+        assert_eq!(err.to_string(), "model not found: orders");
+
+        let err = DbtLineageError::CycleDetected;
+        assert_eq!(err.to_string(), "cycle detected in lineage graph");
+
+        let err = DbtLineageError::DuplicateModel {
+            name: "orders".into(),
+            path1: PathBuf::from("a.sql"),
+            path2: PathBuf::from("b.sql"),
+        };
+        assert!(err.to_string().contains("duplicate model name"));
+        assert!(err.to_string().contains("orders"));
+    }
+}

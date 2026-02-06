@@ -519,3 +519,53 @@ fn node_color(node_type: NodeType) -> Color {
         NodeType::Phantom => Color::DarkGray,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_node_color_all_types() {
+        assert_eq!(node_color(NodeType::Model), Color::Blue);
+        assert_eq!(node_color(NodeType::Source), Color::Green);
+        assert_eq!(node_color(NodeType::Seed), Color::Yellow);
+        assert_eq!(node_color(NodeType::Snapshot), Color::Magenta);
+        assert_eq!(node_color(NodeType::Test), Color::Cyan);
+        assert_eq!(node_color(NodeType::Exposure), Color::Red);
+        assert_eq!(node_color(NodeType::Phantom), Color::DarkGray);
+    }
+
+    #[test]
+    fn test_centered_rect() {
+        let area = Rect::new(0, 0, 100, 50);
+        let popup = centered_rect(40, 20, area);
+        assert_eq!(popup.width, 40);
+        assert_eq!(popup.height, 20);
+        assert_eq!(popup.x, 30);
+        assert_eq!(popup.y, 15);
+    }
+
+    #[test]
+    fn test_centered_rect_larger_than_area() {
+        let area = Rect::new(0, 0, 30, 10);
+        let popup = centered_rect(50, 20, area);
+        // Should clamp to area dimensions
+        assert_eq!(popup.width, 30);
+        assert_eq!(popup.height, 10);
+    }
+
+    #[test]
+    fn test_menu_item_line_normal() {
+        let line = menu_item_line("  r", "  dbt run", false);
+        // Just verify it returns a Line without panicking
+        assert_eq!(line.spans.len(), 2);
+    }
+
+    #[test]
+    fn test_menu_item_line_hovered() {
+        let line = menu_item_line("  r", "  dbt run", true);
+        assert_eq!(line.spans.len(), 2);
+        // Hovered lines have a background style
+        assert_eq!(line.style.bg, Some(Color::DarkGray));
+    }
+}

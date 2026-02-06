@@ -89,3 +89,75 @@ pub enum EdgeType {
 pub struct EdgeData {
     pub edge_type: EdgeType,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prefix_all_variants() {
+        assert_eq!(NodeType::Model.prefix(), "");
+        assert_eq!(NodeType::Source.prefix(), "src:");
+        assert_eq!(NodeType::Seed.prefix(), "seed:");
+        assert_eq!(NodeType::Snapshot.prefix(), "snap:");
+        assert_eq!(NodeType::Test.prefix(), "test:");
+        assert_eq!(NodeType::Exposure.prefix(), "exp:");
+        assert_eq!(NodeType::Phantom.prefix(), "?:");
+    }
+
+    #[test]
+    fn test_label_all_variants() {
+        assert_eq!(NodeType::Model.label(), "model");
+        assert_eq!(NodeType::Source.label(), "source");
+        assert_eq!(NodeType::Seed.label(), "seed");
+        assert_eq!(NodeType::Snapshot.label(), "snapshot");
+        assert_eq!(NodeType::Test.label(), "test");
+        assert_eq!(NodeType::Exposure.label(), "exposure");
+        assert_eq!(NodeType::Phantom.label(), "phantom");
+    }
+
+    #[test]
+    fn test_display_name_model() {
+        let node = NodeData {
+            unique_id: "model.orders".into(),
+            label: "orders".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+        };
+        assert_eq!(node.display_name(), "orders");
+    }
+
+    #[test]
+    fn test_display_name_source() {
+        let node = NodeData {
+            unique_id: "source.raw.orders".into(),
+            label: "raw.orders".into(),
+            node_type: NodeType::Source,
+            file_path: None,
+            description: None,
+        };
+        assert_eq!(node.display_name(), "src:raw.orders");
+    }
+
+    #[test]
+    fn test_display_name_all_prefixed_types() {
+        let types = [
+            (NodeType::Seed, "seed:x"),
+            (NodeType::Snapshot, "snap:x"),
+            (NodeType::Test, "test:x"),
+            (NodeType::Exposure, "exp:x"),
+            (NodeType::Phantom, "?:x"),
+        ];
+        for (nt, expected) in types {
+            let node = NodeData {
+                unique_id: "id".into(),
+                label: "x".into(),
+                node_type: nt,
+                file_path: None,
+                description: None,
+            };
+            assert_eq!(node.display_name(), expected, "Failed for {:?}", nt);
+        }
+    }
+}
