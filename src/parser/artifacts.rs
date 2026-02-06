@@ -33,12 +33,7 @@ impl RunResult {
     pub fn completed_at(&self) -> Option<DateTime<Utc>> {
         self.timing
             .as_ref()
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .rev()
-                    .find_map(|t| t.completed_at)
-            })
+            .and_then(|entries| entries.iter().rev().find_map(|t| t.completed_at))
     }
 }
 
@@ -159,7 +154,9 @@ fn resolve_run_status(
                             }
                         }
                     }
-                    RunStatus::Success { completed_at: completed }
+                    RunStatus::Success {
+                        completed_at: completed,
+                    }
                 } else {
                     RunStatus::Success {
                         completed_at: Utc::now(),

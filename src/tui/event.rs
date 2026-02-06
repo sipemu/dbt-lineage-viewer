@@ -67,11 +67,7 @@ fn clear_menu_state(app: &mut App) {
 /// Button layout on the last inner row (popup.y + 6):
 ///   "  " + " Execute (y) " + "  " + " Cancel (n) "
 ///   cols:  0-1  2-14          15-16  17-28  (relative to inner x)
-fn confirm_button_at_pos(
-    confirm_area: Option<Rect>,
-    column: u16,
-    row: u16,
-) -> Option<bool> {
+fn confirm_button_at_pos(confirm_area: Option<Rect>, column: u16, row: u16) -> Option<bool> {
     let area = confirm_area?;
     let button_row = area.y + 6; // border(1) + 5 inner rows
     if row != button_row {
@@ -108,10 +104,22 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> bool {
     // Shift+HJKL for camera panning
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
-            KeyCode::Char('H') => { app.viewport_x -= PAN_AMOUNT; return false; }
-            KeyCode::Char('J') => { app.viewport_y += PAN_AMOUNT; return false; }
-            KeyCode::Char('K') => { app.viewport_y -= PAN_AMOUNT; return false; }
-            KeyCode::Char('L') => { app.viewport_x += PAN_AMOUNT; return false; }
+            KeyCode::Char('H') => {
+                app.viewport_x -= PAN_AMOUNT;
+                return false;
+            }
+            KeyCode::Char('J') => {
+                app.viewport_y += PAN_AMOUNT;
+                return false;
+            }
+            KeyCode::Char('K') => {
+                app.viewport_y -= PAN_AMOUNT;
+                return false;
+            }
+            KeyCode::Char('L') => {
+                app.viewport_x += PAN_AMOUNT;
+                return false;
+            }
             _ => {}
         }
     }
@@ -249,7 +257,10 @@ fn handle_run_menu_mode(app: &mut App, key: KeyEvent) -> bool {
             app.mode = AppMode::RunConfirm;
         }
         KeyCode::Char('d') => {
-            app.pending_run = Some(make_request(DbtCommand::Run, SelectionScope::WithDownstream));
+            app.pending_run = Some(make_request(
+                DbtCommand::Run,
+                SelectionScope::WithDownstream,
+            ));
             app.mode = AppMode::RunConfirm;
         }
         KeyCode::Char('a') => {
@@ -309,7 +320,10 @@ fn handle_context_menu_mode(app: &mut App, key: KeyEvent) -> bool {
             app.mode = AppMode::RunConfirm;
         }
         KeyCode::Char('d') => {
-            app.pending_run = Some(make_request(DbtCommand::Run, SelectionScope::WithDownstream));
+            app.pending_run = Some(make_request(
+                DbtCommand::Run,
+                SelectionScope::WithDownstream,
+            ));
             app.context_menu_pos = None;
             app.mode = AppMode::RunConfirm;
         }
@@ -510,10 +524,8 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some(ref drag) = app.drag_state {
                 // Natural pan direction: dragging right moves viewport left
-                app.viewport_x =
-                    drag.viewport_x0 - (mouse.column as i32 - drag.start_x as i32);
-                app.viewport_y =
-                    drag.viewport_y0 - (mouse.row as i32 - drag.start_y as i32);
+                app.viewport_x = drag.viewport_x0 - (mouse.column as i32 - drag.start_x as i32);
+                app.viewport_y = drag.viewport_y0 - (mouse.row as i32 - drag.start_y as i32);
             }
         }
 

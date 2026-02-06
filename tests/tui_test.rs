@@ -29,7 +29,13 @@ fn build_two_node_graph() -> LineageGraph {
         file_path: Some(PathBuf::from("models/marts/orders.sql")),
         description: None,
     });
-    graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
+    graph.add_edge(
+        a,
+        b,
+        EdgeData {
+            edge_type: EdgeType::Ref,
+        },
+    );
     graph
 }
 
@@ -226,12 +232,18 @@ fn test_toggle_group_collapse_by_index() {
     // Collapse the group
     app.toggle_group_collapse_by_index(group_idx);
     let collapsed_count = app.node_list_entries.len();
-    assert!(collapsed_count < initial_count, "Collapsing should reduce entry count");
+    assert!(
+        collapsed_count < initial_count,
+        "Collapsing should reduce entry count"
+    );
 
     // Expand again
     app.toggle_group_collapse_by_index(group_idx);
     let expanded_count = app.node_list_entries.len();
-    assert_eq!(expanded_count, initial_count, "Re-expanding should restore entry count");
+    assert_eq!(
+        expanded_count, initial_count,
+        "Re-expanding should restore entry count"
+    );
 }
 
 // ───────────────────────────────────────────────────────────

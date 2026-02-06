@@ -19,8 +19,7 @@ pub struct SourceCall {
     pub table_name: String,
 }
 
-static JINJA_COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\{#[\s\S]*?#\}").unwrap());
+static JINJA_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{#[\s\S]*?#\}").unwrap());
 
 // Matches ref('name'), ref("name"), ref('pkg', 'name'), ref("pkg", "name")
 // Handles {{ ref(...) }} and {{- ref(...) -}} whitespace control

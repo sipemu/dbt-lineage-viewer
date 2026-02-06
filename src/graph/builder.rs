@@ -202,7 +202,11 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
                 Some(idx) => *idx,
                 None => {
                     // Create phantom node
-                    eprintln!("Warning: unresolved ref '{}' in {}", ref_call.name, sql_path.display());
+                    eprintln!(
+                        "Warning: unresolved ref '{}' in {}",
+                        ref_call.name,
+                        sql_path.display()
+                    );
                     let phantom_id = format!("model.{}", ref_call.name);
                     let idx = graph.add_node(NodeData {
                         unique_id: phantom_id.clone(),
@@ -216,20 +220,31 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
                 }
             };
             // Edge: dependency → dependent (data flows downstream)
-            graph.add_edge(dep_idx, current_idx, EdgeData { edge_type: EdgeType::Ref });
+            graph.add_edge(
+                dep_idx,
+                current_idx,
+                EdgeData {
+                    edge_type: EdgeType::Ref,
+                },
+            );
         }
 
         // Process source() calls
         let sources = extract_sources(&content);
         for source_call in sources {
-            let source_id = format!("source.{}.{}", source_call.source_name, source_call.table_name);
+            let source_id = format!(
+                "source.{}.{}",
+                source_call.source_name, source_call.table_name
+            );
             let source_idx = match node_map.get(&source_id) {
                 Some(idx) => *idx,
                 None => {
                     // Create phantom source node
                     eprintln!(
                         "Warning: unresolved source '{}.{}' in {}",
-                        source_call.source_name, source_call.table_name, sql_path.display()
+                        source_call.source_name,
+                        source_call.table_name,
+                        sql_path.display()
                     );
                     let label = format!("{}.{}", source_call.source_name, source_call.table_name);
                     let idx = graph.add_node(NodeData {
@@ -243,7 +258,13 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
                     idx
                 }
             };
-            graph.add_edge(source_idx, current_idx, EdgeData { edge_type: EdgeType::Source });
+            graph.add_edge(
+                source_idx,
+                current_idx,
+                EdgeData {
+                    edge_type: EdgeType::Source,
+                },
+            );
         }
     }
 
@@ -264,7 +285,13 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
             if let Some(model_name) = parse_exposure_ref(dep) {
                 let dep_id = resolve_ref(&model_name, &node_map);
                 if let Some(&dep_idx) = node_map.get(&dep_id) {
-                    graph.add_edge(dep_idx, idx, EdgeData { edge_type: EdgeType::Exposure });
+                    graph.add_edge(
+                        dep_idx,
+                        idx,
+                        EdgeData {
+                            edge_type: EdgeType::Exposure,
+                        },
+                    );
                 }
             }
         }

@@ -193,8 +193,12 @@ impl App {
 
     /// Navigate to the closest node in the next layer (downstream / right)
     pub fn navigate_right(&mut self) {
-        let Some(current) = self.selected_node else { return };
-        let Some(&(cur_layer, cur_pos)) = self.layout.positions.get(&current) else { return };
+        let Some(current) = self.selected_node else {
+            return;
+        };
+        let Some(&(cur_layer, cur_pos)) = self.layout.positions.get(&current) else {
+            return;
+        };
 
         // Find the closest node in the nearest non-empty layer to the right
         let mut best: Option<(NodeIndex, usize, usize)> = None; // (node, layer_dist, pos_dist)
@@ -222,9 +226,15 @@ impl App {
 
     /// Navigate to the closest node in the previous layer (upstream / left)
     pub fn navigate_left(&mut self) {
-        let Some(current) = self.selected_node else { return };
-        let Some(&(cur_layer, cur_pos)) = self.layout.positions.get(&current) else { return };
-        if cur_layer == 0 { return; }
+        let Some(current) = self.selected_node else {
+            return;
+        };
+        let Some(&(cur_layer, cur_pos)) = self.layout.positions.get(&current) else {
+            return;
+        };
+        if cur_layer == 0 {
+            return;
+        }
 
         let mut best: Option<(NodeIndex, usize, usize)> = None;
         for (&node, &(layer, pos)) in &self.layout.positions {
@@ -251,15 +261,25 @@ impl App {
 
     /// Navigate up within the same layer (wraps around)
     pub fn navigate_up(&mut self) {
-        let Some(current) = self.selected_node else { return };
-        let Some(&(cur_layer, _cur_pos)) = self.layout.positions.get(&current) else { return };
+        let Some(current) = self.selected_node else {
+            return;
+        };
+        let Some(&(cur_layer, _cur_pos)) = self.layout.positions.get(&current) else {
+            return;
+        };
 
-        if cur_layer >= self.layout.layers.len() { return; }
+        if cur_layer >= self.layout.layers.len() {
+            return;
+        }
         let layer = &self.layout.layers[cur_layer];
-        if layer.len() <= 1 { return; }
+        if layer.len() <= 1 {
+            return;
+        }
 
         // Find current position in the layer vec
-        let Some(idx) = layer.iter().position(|&n| n == current) else { return };
+        let Some(idx) = layer.iter().position(|&n| n == current) else {
+            return;
+        };
         let new_idx = if idx == 0 { layer.len() - 1 } else { idx - 1 };
 
         self.selected_node = Some(layer[new_idx]);
@@ -270,14 +290,24 @@ impl App {
 
     /// Navigate down within the same layer (wraps around)
     pub fn navigate_down(&mut self) {
-        let Some(current) = self.selected_node else { return };
-        let Some(&(cur_layer, _cur_pos)) = self.layout.positions.get(&current) else { return };
+        let Some(current) = self.selected_node else {
+            return;
+        };
+        let Some(&(cur_layer, _cur_pos)) = self.layout.positions.get(&current) else {
+            return;
+        };
 
-        if cur_layer >= self.layout.layers.len() { return; }
+        if cur_layer >= self.layout.layers.len() {
+            return;
+        }
         let layer = &self.layout.layers[cur_layer];
-        if layer.len() <= 1 { return; }
+        if layer.len() <= 1 {
+            return;
+        }
 
-        let Some(idx) = layer.iter().position(|&n| n == current) else { return };
+        let Some(idx) = layer.iter().position(|&n| n == current) else {
+            return;
+        };
         let new_idx = (idx + 1) % layer.len();
 
         self.selected_node = Some(layer[new_idx]);
@@ -298,7 +328,9 @@ impl App {
     /// Sync the node list ListState selection to match the current selected_node.
     /// Auto-expands the group containing the selected node if it's collapsed.
     pub fn sync_node_list_state(&mut self) {
-        let Some(selected) = self.selected_node else { return };
+        let Some(selected) = self.selected_node else {
+            return;
+        };
 
         // Auto-expand the group containing the selected node
         let group_key = self.group_key_for_selected(selected);
@@ -310,9 +342,11 @@ impl App {
         }
 
         // Find flat index of this node in node_list_entries
-        if let Some(flat_idx) = self.node_list_entries.iter().position(|e| {
-            matches!(e, NodeListEntry::Node(idx) if *idx == selected)
-        }) {
+        if let Some(flat_idx) = self
+            .node_list_entries
+            .iter()
+            .position(|e| matches!(e, NodeListEntry::Node(idx) if *idx == selected))
+        {
             self.node_list_state.select(Some(flat_idx));
         }
     }
@@ -327,10 +361,16 @@ impl App {
 
     /// Toggle collapse state of the group containing the currently selected node
     pub fn toggle_group_collapse(&mut self) {
-        let Some(selected) = self.selected_node else { return };
+        let Some(selected) = self.selected_node else {
+            return;
+        };
 
         // Find which group the selected node belongs to
-        let group_idx = match self.node_groups.iter().position(|g| g.nodes.contains(&selected)) {
+        let group_idx = match self
+            .node_groups
+            .iter()
+            .position(|g| g.nodes.contains(&selected))
+        {
             Some(i) => i,
             None => return,
         };
@@ -342,9 +382,11 @@ impl App {
             self.node_list_entries =
                 build_node_list_entries(&self.node_groups, &self.collapsed_groups);
             // Select the node row
-            if let Some(flat_idx) = self.node_list_entries.iter().position(|e| {
-                matches!(e, NodeListEntry::Node(idx) if *idx == selected)
-            }) {
+            if let Some(flat_idx) = self
+                .node_list_entries
+                .iter()
+                .position(|e| matches!(e, NodeListEntry::Node(idx) if *idx == selected))
+            {
                 self.node_list_state.select(Some(flat_idx));
             }
         } else {
@@ -353,9 +395,11 @@ impl App {
             self.node_list_entries =
                 build_node_list_entries(&self.node_groups, &self.collapsed_groups);
             // Select the group header row
-            if let Some(flat_idx) = self.node_list_entries.iter().position(|e| {
-                matches!(e, NodeListEntry::GroupHeader(i) if *i == group_idx)
-            }) {
+            if let Some(flat_idx) = self
+                .node_list_entries
+                .iter()
+                .position(|e| matches!(e, NodeListEntry::GroupHeader(i) if *i == group_idx))
+            {
                 self.node_list_state.select(Some(flat_idx));
             }
         }
@@ -380,14 +424,17 @@ impl App {
         } else {
             self.collapsed_groups.insert(key);
         }
-        self.node_list_entries =
-            build_node_list_entries(&self.node_groups, &self.collapsed_groups);
+        self.node_list_entries = build_node_list_entries(&self.node_groups, &self.collapsed_groups);
     }
 
     /// Center the viewport on the currently selected node
     pub fn center_on_selected(&mut self) {
-        let Some(selected) = self.selected_node else { return };
-        let Some(&(layer, pos)) = self.layout.positions.get(&selected) else { return };
+        let Some(selected) = self.selected_node else {
+            return;
+        };
+        let Some(&(layer, pos)) = self.layout.positions.get(&selected) else {
+            return;
+        };
 
         use super::graph_widget::node_world_center;
         let (cx, cy) = node_world_center(layer, pos, self.zoom);
@@ -543,8 +590,7 @@ fn group_key_for_node(node: &crate::graph::types::NodeData, project_dir: &Path) 
     if let Some(path) = &node.file_path {
         // Normalize absolute paths by stripping the project dir prefix
         let rel = if path.is_absolute() {
-            path.strip_prefix(project_dir)
-                .unwrap_or(path.as_path())
+            path.strip_prefix(project_dir).unwrap_or(path.as_path())
         } else {
             path.as_path()
         };
@@ -579,7 +625,11 @@ fn build_node_groups(
     groups
         .into_iter()
         .map(|(key, nodes)| {
-            let label = if key.is_empty() { "(root)".to_string() } else { key.clone() };
+            let label = if key.is_empty() {
+                "(root)".to_string()
+            } else {
+                key.clone()
+            };
             NodeGroup { key, label, nodes }
         })
         .collect()

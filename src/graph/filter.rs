@@ -44,10 +44,22 @@ pub fn filter_graph(
         keep_nodes.insert(focus_idx);
 
         // BFS upstream (predecessors)
-        bfs_collect(graph, focus_idx, Direction::Incoming, upstream, &mut keep_nodes);
+        bfs_collect(
+            graph,
+            focus_idx,
+            Direction::Incoming,
+            upstream,
+            &mut keep_nodes,
+        );
 
         // BFS downstream (successors)
-        bfs_collect(graph, focus_idx, Direction::Outgoing, downstream, &mut keep_nodes);
+        bfs_collect(
+            graph,
+            focus_idx,
+            Direction::Outgoing,
+            downstream,
+            &mut keep_nodes,
+        );
     } else {
         // No focus model — keep all nodes
         keep_nodes.extend(graph.node_indices());
@@ -166,9 +178,27 @@ mod tests {
             description: None,
         });
 
-        g.add_edge(a, b, EdgeData { edge_type: EdgeType::Source });
-        g.add_edge(b, c, EdgeData { edge_type: EdgeType::Ref });
-        g.add_edge(c, d, EdgeData { edge_type: EdgeType::Exposure });
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        g.add_edge(
+            b,
+            c,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        g.add_edge(
+            c,
+            d,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
         g
     }
 

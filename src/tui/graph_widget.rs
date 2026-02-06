@@ -71,7 +71,16 @@ impl<'a> GraphWidget<'a> {
     }
 
     /// Draw a horizontal run of a character
-    fn draw_hline(&self, buf: &mut Buffer, wx_start: i32, wx_end: i32, wy: i32, area: Rect, symbol: &str, style: Style) {
+    fn draw_hline(
+        &self,
+        buf: &mut Buffer,
+        wx_start: i32,
+        wx_end: i32,
+        wy: i32,
+        area: Rect,
+        symbol: &str,
+        style: Style,
+    ) {
         let (left, right) = if wx_start <= wx_end {
             (wx_start, wx_end)
         } else {
@@ -83,7 +92,16 @@ impl<'a> GraphWidget<'a> {
     }
 
     /// Draw a vertical run of a character
-    fn draw_vline(&self, buf: &mut Buffer, wx: i32, wy_start: i32, wy_end: i32, area: Rect, symbol: &str, style: Style) {
+    fn draw_vline(
+        &self,
+        buf: &mut Buffer,
+        wx: i32,
+        wy_start: i32,
+        wy_end: i32,
+        area: Rect,
+        symbol: &str,
+        style: Style,
+    ) {
         let (top, bottom) = if wy_start <= wy_end {
             (wy_start, wy_end)
         } else {
@@ -191,10 +209,7 @@ impl<'a> GraphWidget<'a> {
                     Style::default().fg(Color::Black).bg(Color::White),
                 )
             } else {
-                (
-                    Style::default().fg(node_fg),
-                    Style::default().fg(node_fg),
-                )
+                (Style::default().fg(node_fg), Style::default().fg(node_fg))
             };
 
             let w = NODE_BOX_WIDTH as i32;

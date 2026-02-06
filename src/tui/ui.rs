@@ -75,8 +75,7 @@ fn draw_node_list(f: &mut Frame, app: &mut App, area: Rect) {
                 let is_collapsed = app.collapsed_groups.contains(&group.key);
                 let arrow = if is_collapsed { "\u{25b8}" } else { "\u{25be}" };
                 let label = format!("{} {} ({})", arrow, group.label, group.nodes.len());
-                ListItem::new(label)
-                    .style(Style::default().fg(Color::White).bold())
+                ListItem::new(label).style(Style::default().fg(Color::White).bold())
             }
             NodeListEntry::Node(idx) => {
                 let node = &app.graph[*idx];
@@ -99,20 +98,14 @@ fn draw_node_list(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Nodes "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" Nodes "))
         .highlight_style(Style::default().fg(Color::Black).bg(Color::White));
 
     f.render_stateful_widget(list, area, &mut app.node_list_state);
 }
 
 fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Details ");
+    let block = Block::default().borders(Borders::ALL).title(" Details ");
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -154,7 +147,10 @@ fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
     // Run status
     lines.push(Line::from(vec![
         Span::styled("Status: ", Style::default().bold()),
-        Span::styled(status_label(run_status), Style::default().fg(status_color(run_status))),
+        Span::styled(
+            status_label(run_status),
+            Style::default().fg(status_color(run_status)),
+        ),
     ]));
 
     // Last run timestamp
@@ -217,7 +213,11 @@ fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
         )]));
         for up in &upstream {
             let n = &app.graph[*up];
-            lines.push(Line::from(format!("  {} ({})", n.label, n.node_type.label())));
+            lines.push(Line::from(format!(
+                "  {} ({})",
+                n.label,
+                n.node_type.label()
+            )));
         }
     }
 
@@ -231,7 +231,11 @@ fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
         )]));
         for down in &downstream {
             let n = &app.graph[*down];
-            lines.push(Line::from(format!("  {} ({})", n.label, n.node_type.label())));
+            lines.push(Line::from(format!(
+                "  {} ({})",
+                n.label,
+                n.node_type.label()
+            )));
         }
     }
 
@@ -264,8 +268,7 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
             )
         }
         AppMode::RunMenu | AppMode::ContextMenu => {
-            " r: run | u: +upstream | d: downstream+ | a: +all+ | t: test | Esc: cancel"
-                .to_string()
+            " r: run | u: +upstream | d: downstream+ | a: +all+ | t: test | Esc: cancel".to_string()
         }
         AppMode::RunConfirm => " y/Enter: execute | n/Esc: cancel".to_string(),
         AppMode::RunOutput => " j/k: scroll | G: bottom | Esc/q: close".to_string(),
@@ -274,7 +277,9 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
     let style = match app.mode {
         AppMode::Normal => Style::default().bg(Color::DarkGray).fg(Color::White),
         AppMode::Search => Style::default().bg(Color::Blue).fg(Color::White),
-        AppMode::RunMenu | AppMode::ContextMenu => Style::default().bg(Color::Magenta).fg(Color::White),
+        AppMode::RunMenu | AppMode::ContextMenu => {
+            Style::default().bg(Color::Magenta).fg(Color::White)
+        }
         AppMode::RunConfirm => Style::default().bg(Color::Yellow).fg(Color::Black),
         AppMode::RunOutput => Style::default().bg(Color::Cyan).fg(Color::Black),
     };
@@ -320,7 +325,9 @@ fn draw_run_menu(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_context_menu(f: &mut Frame, app: &mut App) {
-    let Some((mx, my)) = app.context_menu_pos else { return };
+    let Some((mx, my)) = app.context_menu_pos else {
+        return;
+    };
 
     let menu_width: u16 = 30;
     let menu_height: u16 = 10;
@@ -512,4 +519,3 @@ fn node_color(node_type: NodeType) -> Color {
         NodeType::Phantom => Color::DarkGray,
     }
 }
-

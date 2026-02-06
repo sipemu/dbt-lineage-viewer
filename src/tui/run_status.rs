@@ -63,9 +63,7 @@ mod tests {
             "\u{2717}"
         );
         assert_eq!(
-            status_symbol(&RunStatus::Skipped {
-                completed_at: None
-            }),
+            status_symbol(&RunStatus::Skipped { completed_at: None }),
             "-"
         );
     }

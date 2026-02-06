@@ -98,7 +98,11 @@ pub struct DbtRunRequest {
 impl DbtRunRequest {
     /// The program to invoke (either "uv" or "dbt")
     pub fn program(&self) -> &'static str {
-        if self.use_uv { "uv" } else { "dbt" }
+        if self.use_uv {
+            "uv"
+        } else {
+            "dbt"
+        }
     }
 
     /// Build the full argument list for the command
@@ -243,7 +247,16 @@ mod tests {
             use_uv: false,
         };
         let args = req.args();
-        assert_eq!(args, vec!["run", "--select", "+stg_orders", "--project-dir", "/tmp/project"]);
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "--select",
+                "+stg_orders",
+                "--project-dir",
+                "/tmp/project"
+            ]
+        );
     }
 
     #[test]
@@ -256,7 +269,18 @@ mod tests {
             use_uv: true,
         };
         let args = req.args();
-        assert_eq!(args, vec!["run", "dbt", "run", "--select", "orders", "--project-dir", "/tmp/project"]);
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "dbt",
+                "run",
+                "--select",
+                "orders",
+                "--project-dir",
+                "/tmp/project"
+            ]
+        );
         assert_eq!(req.program(), "uv");
     }
 

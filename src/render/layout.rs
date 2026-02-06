@@ -94,7 +94,10 @@ fn assign_layers(graph: &LineageGraph) -> Vec<Vec<NodeIndex>> {
 }
 
 /// Reduce edge crossings using barycenter heuristic
-fn reduce_crossings(graph: &LineageGraph, initial_layers: &[Vec<NodeIndex>]) -> Vec<Vec<NodeIndex>> {
+fn reduce_crossings(
+    graph: &LineageGraph,
+    initial_layers: &[Vec<NodeIndex>],
+) -> Vec<Vec<NodeIndex>> {
     let mut layers = initial_layers.to_vec();
 
     // Run 3 passes of barycenter ordering
@@ -122,11 +125,8 @@ fn sort_by_barycenter(
     adjacent: &[NodeIndex],
     direction: Direction,
 ) {
-    let adj_positions: HashMap<NodeIndex, usize> = adjacent
-        .iter()
-        .enumerate()
-        .map(|(i, &n)| (n, i))
-        .collect();
+    let adj_positions: HashMap<NodeIndex, usize> =
+        adjacent.iter().enumerate().map(|(i, &n)| (n, i)).collect();
 
     let mut barycenters: HashMap<NodeIndex, f64> = HashMap::new();
 
@@ -193,8 +193,20 @@ mod tests {
             file_path: None,
             description: None,
         });
-        g.add_edge(a, b, EdgeData { edge_type: EdgeType::Source });
-        g.add_edge(b, c, EdgeData { edge_type: EdgeType::Ref });
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        g.add_edge(
+            b,
+            c,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
 
         let layout = sugiyama_layout(&g);
         assert_eq!(layout.num_layers, 3);

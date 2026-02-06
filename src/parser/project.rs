@@ -45,17 +45,14 @@ impl DbtProject {
             return Err(DbtLineageError::ProjectNotFound(project_dir.to_path_buf()).into());
         }
 
-        let content = std::fs::read_to_string(&project_file).map_err(|e| {
-            DbtLineageError::FileReadError {
+        let content =
+            std::fs::read_to_string(&project_file).map_err(|e| DbtLineageError::FileReadError {
                 path: project_file.clone(),
                 source: e,
-            }
-        })?;
+            })?;
 
-        let project: DbtProject = serde_yaml::from_str(&content).context(format!(
-            "Failed to parse {}",
-            project_file.display()
-        ))?;
+        let project: DbtProject = serde_yaml::from_str(&content)
+            .context(format!("Failed to parse {}", project_file.display()))?;
 
         Ok(project)
     }

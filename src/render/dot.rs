@@ -36,10 +36,7 @@ pub fn render_dot(graph: &LineageGraph) {
             "  \"{}\" -> \"{}\" [{}];",
             source.unique_id,
             target.unique_id,
-            format!("label=\"{}\"{}",
-                edge.weight().edge_type_label(),
-                style
-            ),
+            format!("label=\"{}\"{}", edge.weight().edge_type_label(), style),
         );
     }
 

@@ -24,13 +24,11 @@ mod parsing {
 
     #[test]
     fn test_sql_ref_extraction() {
-        let sql = std::fs::read_to_string(
-            fixture_dir().join("models/marts/orders.sql"),
-        )
-        .unwrap();
+        let sql = std::fs::read_to_string(fixture_dir().join("models/marts/orders.sql")).unwrap();
 
         // Check that refs are found using regex
-        let ref_re = regex::Regex::new(r#"\{\{-?\s*ref\s*\(\s*['"]([^'"]+)['"]\s*\)\s*-?\}\}"#).unwrap();
+        let ref_re =
+            regex::Regex::new(r#"\{\{-?\s*ref\s*\(\s*['"]([^'"]+)['"]\s*\)\s*-?\}\}"#).unwrap();
         let refs: Vec<String> = ref_re
             .captures_iter(&sql)
             .map(|c| c[1].to_string())
@@ -43,10 +41,8 @@ mod parsing {
 
     #[test]
     fn test_sql_source_extraction() {
-        let sql = std::fs::read_to_string(
-            fixture_dir().join("models/staging/stg_orders.sql"),
-        )
-        .unwrap();
+        let sql =
+            std::fs::read_to_string(fixture_dir().join("models/staging/stg_orders.sql")).unwrap();
 
         let source_re = regex::Regex::new(
             r#"\{\{-?\s*source\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)\s*-?\}\}"#,
@@ -64,10 +60,8 @@ mod parsing {
 
     #[test]
     fn test_yaml_sources_parsing() {
-        let content = std::fs::read_to_string(
-            fixture_dir().join("models/staging/schema.yml"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(fixture_dir().join("models/staging/schema.yml")).unwrap();
 
         let schema: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
         let sources = schema["sources"].as_sequence().unwrap();
@@ -79,18 +73,13 @@ mod parsing {
 
     #[test]
     fn test_yaml_exposures_parsing() {
-        let content = std::fs::read_to_string(
-            fixture_dir().join("models/marts/schema.yml"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(fixture_dir().join("models/marts/schema.yml")).unwrap();
 
         let schema: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
         let exposures = schema["exposures"].as_sequence().unwrap();
         assert_eq!(exposures.len(), 1);
-        assert_eq!(
-            exposures[0]["name"].as_str().unwrap(),
-            "weekly_report"
-        );
+        assert_eq!(exposures[0]["name"].as_str().unwrap(), "weekly_report");
     }
 }
 
@@ -194,11 +183,7 @@ mod cli {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         // Should succeed (exit 0) and produce output
-        assert!(
-            output.status.success(),
-            "Failed with stderr: {}",
-            stderr
-        );
+        assert!(output.status.success(), "Failed with stderr: {}", stderr);
         // Should contain some model names in the output
         assert!(
             stdout.contains("stg_orders") || stdout.contains("orders"),
@@ -245,11 +230,7 @@ mod cli {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "Failed with stderr: {}",
-            stderr
-        );
+        assert!(output.status.success(), "Failed with stderr: {}", stderr);
         assert!(
             stdout.contains("stg_orders"),
             "Output should contain focused model: {}",
