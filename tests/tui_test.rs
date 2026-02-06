@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use dbt_lineage::graph::types::*;
 use dbt_lineage::parser::artifacts::RunStatusMap;
-use dbt_lineage::tui::app::{App, DragState, NodeListEntry};
+use dbt_lineage::tui::app::{App, AppMode, DragState, NodeListEntry};
 use dbt_lineage::tui::graph_widget::{hit_test_node, GraphWidget};
 
 use jugar_probar::tui::{expect_frame, TuiFrame};
@@ -232,4 +232,85 @@ fn test_toggle_group_collapse_by_index() {
     app.toggle_group_collapse_by_index(group_idx);
     let expanded_count = app.node_list_entries.len();
     assert_eq!(expanded_count, initial_count, "Re-expanding should restore entry count");
+}
+
+// ───────────────────────────────────────────────────────────
+// Context menu tests
+// ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_right_click_opens_context_menu() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use dbt_lineage::tui::event::handle_mouse_event;
+
+    let graph = build_two_node_graph();
+    let mut app = make_app(graph);
+    render_graph_to_frame(&mut app, 80, 24); // sets last_graph_area
+
+    // Right-click on the first node (stg_orders at ~(5,1))
+    let mouse = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: 5,
+        row: 1,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    handle_mouse_event(&mut app, mouse);
+
+    assert_eq!(app.mode, AppMode::ContextMenu);
+    assert!(app.context_menu_pos.is_some());
+    assert!(app.selected_node.is_some());
+    assert_eq!(app.graph[app.selected_node.unwrap()].label, "stg_orders");
+}
+
+#[test]
+fn test_right_click_empty_space_does_nothing() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use dbt_lineage::tui::event::handle_mouse_event;
+
+    let graph = build_two_node_graph();
+    let mut app = make_app(graph);
+    render_graph_to_frame(&mut app, 80, 24);
+
+    // Right-click on empty space (bottom-right)
+    let mouse = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: 79,
+        row: 23,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    handle_mouse_event(&mut app, mouse);
+
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.context_menu_pos.is_none());
+}
+
+#[test]
+fn test_context_menu_dismissed_by_click() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use dbt_lineage::tui::event::handle_mouse_event;
+
+    let graph = build_two_node_graph();
+    let mut app = make_app(graph);
+    render_graph_to_frame(&mut app, 80, 24);
+
+    // Open context menu via right-click on node
+    let mouse = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: 5,
+        row: 1,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    handle_mouse_event(&mut app, mouse);
+    assert_eq!(app.mode, AppMode::ContextMenu);
+
+    // Left-click anywhere should dismiss it
+    let dismiss = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 40,
+        row: 12,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    handle_mouse_event(&mut app, dismiss);
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.context_menu_pos.is_none());
 }

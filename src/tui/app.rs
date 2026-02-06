@@ -20,6 +20,7 @@ pub enum AppMode {
     Normal,
     Search,
     RunMenu,
+    ContextMenu,
     RunConfirm,
     RunOutput,
 }
@@ -87,6 +88,7 @@ pub struct App {
     // Mouse interaction state
     pub drag_state: Option<DragState>,
     pub last_node_list_area: Option<Rect>,
+    pub context_menu_pos: Option<(u16, u16)>,
 
     // Run execution state
     pub project_dir: PathBuf,
@@ -146,6 +148,7 @@ impl App {
             node_list_entries,
             drag_state: None,
             last_node_list_area: None,
+            context_menu_pos: None,
             project_dir,
             run_status,
             run_state: DbtRunState::Idle,
@@ -274,7 +277,7 @@ impl App {
     }
 
     /// Sync node_cycle_index to match the current selected_node
-    fn sync_cycle_index(&mut self) {
+    pub fn sync_cycle_index(&mut self) {
         if let Some(selected) = self.selected_node {
             if let Some(idx) = self.node_order.iter().position(|&n| n == selected) {
                 self.node_cycle_index = idx;
@@ -284,7 +287,7 @@ impl App {
 
     /// Sync the node list ListState selection to match the current selected_node.
     /// Auto-expands the group containing the selected node if it's collapsed.
-    fn sync_node_list_state(&mut self) {
+    pub fn sync_node_list_state(&mut self) {
         let Some(selected) = self.selected_node else { return };
 
         // Auto-expand the group containing the selected node

@@ -46,6 +46,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App) {
     // Draw overlays on top
     match app.mode {
         AppMode::RunMenu => draw_run_menu(f, app),
+        AppMode::ContextMenu => draw_context_menu(f, app),
         AppMode::RunConfirm => draw_run_confirm(f, app),
         AppMode::RunOutput => draw_run_output(f, app),
         _ => {}
@@ -262,7 +263,7 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
                 app.search_query
             )
         }
-        AppMode::RunMenu => {
+        AppMode::RunMenu | AppMode::ContextMenu => {
             " r: run | u: +upstream | d: downstream+ | a: +all+ | t: test | Esc: cancel"
                 .to_string()
         }
@@ -273,7 +274,7 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
     let style = match app.mode {
         AppMode::Normal => Style::default().bg(Color::DarkGray).fg(Color::White),
         AppMode::Search => Style::default().bg(Color::Blue).fg(Color::White),
-        AppMode::RunMenu => Style::default().bg(Color::Magenta).fg(Color::White),
+        AppMode::RunMenu | AppMode::ContextMenu => Style::default().bg(Color::Magenta).fg(Color::White),
         AppMode::RunConfirm => Style::default().bg(Color::Yellow).fg(Color::Black),
         AppMode::RunOutput => Style::default().bg(Color::Cyan).fg(Color::Black),
     };
@@ -321,6 +322,67 @@ fn draw_run_menu(f: &mut Frame, app: &App) {
         Line::from(""),
         Line::from(Span::styled(
             "  Esc to cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let paragraph = Paragraph::new(text).block(block);
+    f.render_widget(Clear, popup);
+    f.render_widget(paragraph, popup);
+}
+
+fn draw_context_menu(f: &mut Frame, app: &App) {
+    let Some((mx, my)) = app.context_menu_pos else { return };
+
+    let menu_width: u16 = 30;
+    let menu_height: u16 = 10;
+    let area = f.area();
+
+    // Clamp position so menu stays on screen
+    let x = mx.min(area.x + area.width.saturating_sub(menu_width));
+    let y = my.min(area.y + area.height.saturating_sub(menu_height));
+
+    let popup = Rect {
+        x,
+        y,
+        width: menu_width.min(area.width),
+        height: menu_height.min(area.height),
+    };
+
+    let model_name = app
+        .selected_node
+        .map(|idx| app.graph[idx].label.as_str())
+        .unwrap_or("?");
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", model_name))
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let text = vec![
+        Line::from(vec![
+            Span::styled(" r", Style::default().bold().fg(Color::Yellow)),
+            Span::raw("  dbt run"),
+        ]),
+        Line::from(vec![
+            Span::styled(" u", Style::default().bold().fg(Color::Yellow)),
+            Span::raw("  dbt run +upstream"),
+        ]),
+        Line::from(vec![
+            Span::styled(" d", Style::default().bold().fg(Color::Yellow)),
+            Span::raw("  dbt run downstream+"),
+        ]),
+        Line::from(vec![
+            Span::styled(" a", Style::default().bold().fg(Color::Yellow)),
+            Span::raw("  dbt run +all+"),
+        ]),
+        Line::from(vec![
+            Span::styled(" t", Style::default().bold().fg(Color::Yellow)),
+            Span::raw("  dbt test"),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " Esc to close",
             Style::default().fg(Color::DarkGray),
         )),
     ];

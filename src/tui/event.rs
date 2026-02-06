@@ -13,6 +13,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
         AppMode::Normal => handle_normal_mode(app, key),
         AppMode::Search => handle_search_mode(app, key),
         AppMode::RunMenu => handle_run_menu_mode(app, key),
+        AppMode::ContextMenu => handle_context_menu_mode(app, key),
         AppMode::RunConfirm => handle_run_confirm_mode(app, key),
         AppMode::RunOutput => handle_run_output_mode(app, key),
     }
@@ -187,6 +188,70 @@ fn handle_run_menu_mode(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
+fn handle_context_menu_mode(app: &mut App, key: KeyEvent) -> bool {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        app.mode = AppMode::Normal;
+        app.context_menu_pos = None;
+        return false;
+    }
+
+    let selected_idx = match app.selected_node {
+        Some(idx) => idx,
+        None => {
+            app.mode = AppMode::Normal;
+            app.context_menu_pos = None;
+            return false;
+        }
+    };
+
+    let model_name = app.graph[selected_idx].label.clone();
+    let project_dir = app.project_dir.clone();
+    let use_uv = detect_use_uv(&project_dir);
+
+    let make_request = |command: DbtCommand, scope: SelectionScope| DbtRunRequest {
+        command,
+        scope,
+        model_name: model_name.clone(),
+        project_dir: project_dir.clone(),
+        use_uv,
+    };
+
+    match key.code {
+        KeyCode::Char('r') => {
+            app.pending_run = Some(make_request(DbtCommand::Run, SelectionScope::Single));
+            app.context_menu_pos = None;
+            app.mode = AppMode::RunConfirm;
+        }
+        KeyCode::Char('u') => {
+            app.pending_run = Some(make_request(DbtCommand::Run, SelectionScope::WithUpstream));
+            app.context_menu_pos = None;
+            app.mode = AppMode::RunConfirm;
+        }
+        KeyCode::Char('d') => {
+            app.pending_run = Some(make_request(DbtCommand::Run, SelectionScope::WithDownstream));
+            app.context_menu_pos = None;
+            app.mode = AppMode::RunConfirm;
+        }
+        KeyCode::Char('a') => {
+            app.pending_run = Some(make_request(DbtCommand::Run, SelectionScope::FullLineage));
+            app.context_menu_pos = None;
+            app.mode = AppMode::RunConfirm;
+        }
+        KeyCode::Char('t') => {
+            app.pending_run = Some(make_request(DbtCommand::Test, SelectionScope::Single));
+            app.context_menu_pos = None;
+            app.mode = AppMode::RunConfirm;
+        }
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            app.context_menu_pos = None;
+        }
+        _ => {}
+    }
+
+    false
+}
+
 fn handle_run_confirm_mode(app: &mut App, key: KeyEvent) -> bool {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.pending_run = None;
@@ -210,12 +275,39 @@ fn handle_run_confirm_mode(app: &mut App, key: KeyEvent) -> bool {
 
 /// Handle a mouse event. Returns true if the app should quit (never does).
 pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
+    // Dismiss context menu on any click
+    if app.mode == AppMode::ContextMenu {
+        if let MouseEventKind::Down(_) = mouse.kind {
+            app.mode = AppMode::Normal;
+            app.context_menu_pos = None;
+        }
+        return false;
+    }
+
     // Only handle mouse in Normal mode
     if app.mode != AppMode::Normal {
         return false;
     }
 
     match mouse.kind {
+        MouseEventKind::Down(MouseButton::Right) => {
+            if let Some(graph_area) = app.last_graph_area {
+                if mouse.column >= graph_area.x
+                    && mouse.column < graph_area.x + graph_area.width
+                    && mouse.row >= graph_area.y
+                    && mouse.row < graph_area.y + graph_area.height
+                {
+                    if let Some(node_idx) = hit_test_node(app, mouse.column, mouse.row) {
+                        app.selected_node = Some(node_idx);
+                        app.sync_cycle_index();
+                        app.sync_node_list_state();
+                        app.context_menu_pos = Some((mouse.column, mouse.row));
+                        app.mode = AppMode::ContextMenu;
+                    }
+                }
+            }
+        }
+
         MouseEventKind::Down(MouseButton::Left) => {
             // Check if click is in the node list area
             if let Some(list_area) = app.last_node_list_area {

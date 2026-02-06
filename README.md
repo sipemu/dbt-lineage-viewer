@@ -8,7 +8,7 @@ No dbt compilation, manifest, or Python runtime required for graph building — 
 
 - **Direct SQL parsing** — extracts `ref()` and `source()` calls via regex, no `dbt compile` needed
 - **Interactive TUI** — navigate, search, and explore lineage in a terminal UI (ratatui) with Unicode box-drawing nodes, orthogonal edge routing, and full mouse support
-- **Run dbt from TUI** — execute `dbt run` / `dbt test` on selected models with scope control (`+upstream`, `downstream+`, `+all+`)
+- **Run dbt from TUI** — execute `dbt run` / `dbt test` on selected models with scope control (`+upstream`, `downstream+`, `+all+`) via keyboard menu or right-click context menu
 - **Run status tracking** — color-coded nodes show success (green), error (red), outdated (yellow), or never-run (default)
 - **Collapsible node list** — directory-grouped, expandable/collapsible sidebar panel
 - **Multiple output formats** — colored ASCII boxes or Graphviz DOT for static output
@@ -106,6 +106,7 @@ Options:
 | Scroll up / down | Graph area | Zoom in / out |
 | Left click | Node list entry | Select node and center viewport |
 | Left click | Group header | Collapse / expand group |
+| Right click | Node on graph | Open context menu (run options) |
 
 ### Search
 
@@ -127,9 +128,10 @@ Options:
 | Key | Action |
 |-----|--------|
 | `x` | Open run menu for selected node |
+| Right click | Open context menu on a node (same run options) |
 | `o` | View last run output |
 
-Run menu options:
+Run menu / context menu options:
 
 | Key | Command |
 |-----|---------|
