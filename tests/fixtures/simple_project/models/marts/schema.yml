@@ -1,0 +1,16 @@
+models:
+  - name: orders
+    description: Order fact table with payment details
+  - name: customers
+    description: Customer dimension table with lifetime metrics
+
+exposures:
+  - name: weekly_report
+    description: Weekly business performance dashboard
+    type: dashboard
+    depends_on:
+      - ref('orders')
+      - ref('customers')
+    owner:
+      name: Analytics Team
+      email: analytics@example.com

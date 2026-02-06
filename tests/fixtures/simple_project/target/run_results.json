@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v5/run-results.json",
+    "dbt_version": "1.7.0",
+    "generated_at": "2025-01-15T10:30:00Z",
+    "invocation_id": "test-invocation-id"
+  },
+  "results": [
+    {
+      "unique_id": "model.simple_project.stg_customers",
+      "status": "success",
+      "message": "OK 10",
+      "timing": [
+        {
+          "name": "compile",
+          "started_at": "2025-01-15T10:29:55Z",
+          "completed_at": "2025-01-15T10:29:56Z"
+        },
+        {
+          "name": "execute",
+          "started_at": "2025-01-15T10:29:56Z",
+          "completed_at": "2025-01-15T10:30:00Z"
+        }
+      ]
+    },
+    {
+      "unique_id": "model.simple_project.stg_orders",
+      "status": "success",
+      "message": "OK 50",
+      "timing": [
+        {
+          "name": "execute",
+          "started_at": "2025-01-15T10:29:56Z",
+          "completed_at": "2025-01-15T10:30:00Z"
+        }
+      ]
+    },
+    {
+      "unique_id": "model.simple_project.stg_payments",
+      "status": "success",
+      "message": "OK 30",
+      "timing": [
+        {
+          "name": "execute",
+          "started_at": "2025-01-15T10:29:56Z",
+          "completed_at": "2025-01-15T10:30:00Z"
+        }
+      ]
+    },
+    {
+      "unique_id": "model.simple_project.customers",
+      "status": "success",
+      "message": "OK 10",
+      "timing": [
+        {
+          "name": "execute",
+          "started_at": "2025-01-15T10:30:01Z",
+          "completed_at": "2025-01-15T10:30:05Z"
+        }
+      ]
+    },
+    {
+      "unique_id": "model.simple_project.orders",
+      "status": "error",
+      "message": "Compilation Error in model orders",
+      "timing": [
+        {
+          "name": "execute",
+          "started_at": "2025-01-15T10:30:01Z",
+          "completed_at": "2025-01-15T10:30:02Z"
+        }
+      ]
+    }
+  ],
+  "elapsed_time": 10.5
+}

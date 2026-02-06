@@ -1,0 +1,18 @@
+sources:
+  - name: raw
+    description: Raw data from the warehouse
+    tables:
+      - name: orders
+        description: Raw orders table
+      - name: customers
+        description: Raw customers table
+      - name: payments
+        description: Raw payments table
+
+models:
+  - name: stg_orders
+    description: Staged orders data
+  - name: stg_customers
+    description: Staged customers data
+  - name: stg_payments
+    description: Staged payments data
