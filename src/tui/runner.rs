@@ -136,6 +136,23 @@ pub enum DbtRunMessage {
     SpawnError(String),
 }
 
+/// Pipe lines from a reader to a channel, stopping when the channel closes or the reader ends.
+#[cfg(not(tarpaulin_include))]
+fn pipe_lines_to_channel<R: std::io::Read + Send + 'static>(
+    reader: Option<R>,
+    tx: mpsc::Sender<DbtRunMessage>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let Some(reader) = reader else { return };
+        let buf = BufReader::new(reader);
+        for line in buf.lines().map_while(Result::ok) {
+            if tx.send(DbtRunMessage::OutputLine(line)).is_err() {
+                break;
+            }
+        }
+    })
+}
+
 /// Spawn a dbt run in a background thread.
 /// Returns a receiver for progress messages.
 #[cfg(not(tarpaulin_include))]
@@ -152,63 +169,25 @@ pub fn spawn_dbt_run(request: DbtRunRequest) -> mpsc::Receiver<DbtRunMessage> {
             .stderr(Stdio::piped())
             .spawn();
 
-        match result {
+        let mut child = match result {
+            Ok(child) => child,
             Err(e) => {
                 let _ = tx.send(DbtRunMessage::SpawnError(format!(
                     "Failed to spawn: `{}`\n  Caused by: {}\n  Hint: ensure dbt is installed and on PATH, or use a uv-managed project (uv.lock / pyproject.toml)",
                     program, e
                 )));
+                return;
             }
-            Ok(mut child) => {
-                // Read stdout in a thread
-                let stdout = child.stdout.take();
-                let tx_out = tx.clone();
-                let stdout_handle = thread::spawn(move || {
-                    if let Some(stdout) = stdout {
-                        let reader = BufReader::new(stdout);
-                        for line in reader.lines() {
-                            match line {
-                                Ok(line) => {
-                                    if tx_out.send(DbtRunMessage::OutputLine(line)).is_err() {
-                                        break;
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    }
-                });
+        };
 
-                // Read stderr in a thread
-                let stderr = child.stderr.take();
-                let tx_err = tx.clone();
-                let stderr_handle = thread::spawn(move || {
-                    if let Some(stderr) = stderr {
-                        let reader = BufReader::new(stderr);
-                        for line in reader.lines() {
-                            match line {
-                                Ok(line) => {
-                                    if tx_err.send(DbtRunMessage::OutputLine(line)).is_err() {
-                                        break;
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    }
-                });
+        let stdout_handle = pipe_lines_to_channel(child.stdout.take(), tx.clone());
+        let stderr_handle = pipe_lines_to_channel(child.stderr.take(), tx.clone());
 
-                let _ = stdout_handle.join();
-                let _ = stderr_handle.join();
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
 
-                let success = match child.wait() {
-                    Ok(status) => status.success(),
-                    Err(_) => false,
-                };
-
-                let _ = tx.send(DbtRunMessage::Completed { success });
-            }
-        }
+        let success = child.wait().map(|s| s.success()).unwrap_or(false);
+        let _ = tx.send(DbtRunMessage::Completed { success });
     });
 
     rx

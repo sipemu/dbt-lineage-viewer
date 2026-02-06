@@ -9,38 +9,117 @@ use crate::parser::yaml_schema::{parse_schema_file, ExposureDefinition};
 
 use super::types::*;
 
-/// Build the lineage graph from discovered files
-pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<LineageGraph> {
-    let mut graph = LineageGraph::new();
-    // Map from node unique_id to NodeIndex
-    let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
-    // Track model names to file paths for duplicate detection
-    let mut model_name_paths: HashMap<String, std::path::PathBuf> = HashMap::new();
+/// Shared state threaded through the build_graph helper functions
+struct GraphBuilder {
+    graph: LineageGraph,
+    node_map: HashMap<String, NodeIndex>,
+}
 
-    // 1. Parse YAML files first to get source definitions and model descriptions
+impl GraphBuilder {
+    fn new() -> Self {
+        Self {
+            graph: LineageGraph::new(),
+            node_map: HashMap::new(),
+        }
+    }
+
+    /// Add a node and register it in the node map
+    fn add_node(&mut self, data: NodeData) -> NodeIndex {
+        let idx = self.graph.add_node(data);
+        let unique_id = self.graph[idx].unique_id.clone();
+        self.node_map.insert(unique_id, idx);
+        idx
+    }
+
+    /// Get or create a phantom ref node, returning its index
+    fn get_or_create_phantom_ref(&mut self, ref_name: &str, sql_path: &Path) -> NodeIndex {
+        let dep_id = resolve_ref(ref_name, &self.node_map);
+        if let Some(&idx) = self.node_map.get(&dep_id) {
+            return idx;
+        }
+        eprintln!(
+            "Warning: unresolved ref '{}' in {}",
+            ref_name,
+            sql_path.display()
+        );
+        let phantom_id = format!("model.{}", ref_name);
+        self.add_node(NodeData {
+            unique_id: phantom_id,
+            label: ref_name.to_string(),
+            node_type: NodeType::Phantom,
+            file_path: None,
+            description: None,
+        })
+    }
+
+    /// Get or create a phantom source node, returning its index
+    fn get_or_create_phantom_source(
+        &mut self,
+        source_name: &str,
+        table_name: &str,
+        sql_path: &Path,
+    ) -> NodeIndex {
+        let source_id = format!("source.{}.{}", source_name, table_name);
+        if let Some(&idx) = self.node_map.get(&source_id) {
+            return idx;
+        }
+        eprintln!(
+            "Warning: unresolved source '{}.{}' in {}",
+            source_name,
+            table_name,
+            sql_path.display()
+        );
+        let label = format!("{}.{}", source_name, table_name);
+        self.add_node(NodeData {
+            unique_id: source_id,
+            label,
+            node_type: NodeType::Phantom,
+            file_path: None,
+            description: None,
+        })
+    }
+}
+
+/// Read a file with a descriptive error
+fn read_file(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|e| {
+        crate::error::DbtLineageError::FileReadError {
+            path: path.to_path_buf(),
+            source: e,
+        }
+        .into()
+    })
+}
+
+/// Extract the file stem as a string, defaulting to "unknown"
+fn file_stem_str(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// Parse YAML schema files: create source nodes, collect model descriptions and exposures
+fn process_yaml_files(
+    gb: &mut GraphBuilder,
+    files: &DiscoveredFiles,
+) -> Result<(HashMap<String, String>, Vec<ExposureDefinition>)> {
     let mut model_descriptions: HashMap<String, String> = HashMap::new();
     let mut exposures: Vec<ExposureDefinition> = Vec::new();
 
     for yaml_path in &files.yaml_files {
-        let content = std::fs::read_to_string(yaml_path).map_err(|e| {
-            crate::error::DbtLineageError::FileReadError {
-                path: yaml_path.clone(),
-                source: e,
-            }
-        })?;
-
+        let content = read_file(yaml_path)?;
         let schema = match parse_schema_file(&content) {
             Ok(s) => s,
-            Err(_) => continue, // Skip unparseable YAML files
+            Err(_) => continue,
         };
 
-        // Create source nodes
         for source_def in &schema.sources {
             for table in &source_def.tables {
                 let unique_id = format!("source.{}.{}", source_def.name, table.name);
                 let label = format!("{}.{}", source_def.name, table.name);
-                let idx = graph.add_node(NodeData {
-                    unique_id: unique_id.clone(),
+                gb.add_node(NodeData {
+                    unique_id,
                     label,
                     node_type: NodeType::Source,
                     file_path: Some(yaml_path.clone()),
@@ -49,30 +128,33 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
                         .clone()
                         .or_else(|| source_def.description.clone()),
                 });
-                node_map.insert(unique_id, idx);
             }
         }
 
-        // Collect model descriptions
         for model_def in &schema.models {
             if let Some(desc) = &model_def.description {
                 model_descriptions.insert(model_def.name.clone(), desc.clone());
             }
         }
 
-        // Collect exposures
         exposures.extend(schema.exposures.into_iter());
     }
 
-    // 2. Process model SQL files
-    for sql_path in &files.model_sql_files {
-        let model_name = sql_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+    Ok((model_descriptions, exposures))
+}
 
-        // Check for duplicate model names
+/// Create nodes for model SQL files (with duplicate detection)
+fn process_model_files(
+    gb: &mut GraphBuilder,
+    files: &DiscoveredFiles,
+    project_dir: &Path,
+    model_descriptions: &HashMap<String, String>,
+) {
+    let mut model_name_paths: HashMap<String, std::path::PathBuf> = HashMap::new();
+
+    for sql_path in &files.model_sql_files {
+        let model_name = file_stem_str(sql_path);
+
         if let Some(existing_path) = model_name_paths.get(&model_name) {
             eprintln!(
                 "Warning: duplicate model name '{}' in {} and {}",
@@ -89,65 +171,45 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
             .unwrap_or(sql_path)
             .to_path_buf();
 
-        let idx = graph.add_node(NodeData {
-            unique_id: unique_id.clone(),
+        gb.add_node(NodeData {
+            unique_id,
             label: model_name.clone(),
             node_type: NodeType::Model,
             file_path: Some(relative_path),
             description: model_descriptions.get(&model_name).cloned(),
         });
-        node_map.insert(unique_id, idx);
     }
+}
 
-    // 3. Process seed files
-    for seed_path in &files.seed_files {
-        let seed_name = seed_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+/// Create nodes for simple file-based resources (seeds, snapshots)
+fn process_simple_nodes(
+    gb: &mut GraphBuilder,
+    paths: &[std::path::PathBuf],
+    project_dir: &Path,
+    prefix: &str,
+    node_type: NodeType,
+) {
+    for path in paths {
+        let name = file_stem_str(path);
+        let unique_id = format!("{}.{}", prefix, name);
+        let relative_path = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
 
-        let unique_id = format!("seed.{}", seed_name);
-        let relative_path = seed_path
-            .strip_prefix(project_dir)
-            .unwrap_or(seed_path)
-            .to_path_buf();
-
-        let idx = graph.add_node(NodeData {
-            unique_id: unique_id.clone(),
-            label: seed_name,
-            node_type: NodeType::Seed,
+        gb.add_node(NodeData {
+            unique_id,
+            label: name,
+            node_type,
             file_path: Some(relative_path),
             description: None,
         });
-        node_map.insert(unique_id, idx);
     }
+}
 
-    // 4. Process snapshot SQL files
-    for sql_path in &files.snapshot_sql_files {
-        let snap_name = sql_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let unique_id = format!("snapshot.{}", snap_name);
-        let relative_path = sql_path
-            .strip_prefix(project_dir)
-            .unwrap_or(sql_path)
-            .to_path_buf();
-
-        let idx = graph.add_node(NodeData {
-            unique_id: unique_id.clone(),
-            label: snap_name,
-            node_type: NodeType::Snapshot,
-            file_path: Some(relative_path),
-            description: None,
-        });
-        node_map.insert(unique_id, idx);
-    }
-
-    // 5. Now parse SQL for refs/sources and add edges
+/// Parse SQL files for ref()/source() calls and add edges
+fn process_sql_edges(
+    gb: &mut GraphBuilder,
+    files: &DiscoveredFiles,
+    project_dir: &Path,
+) -> Result<()> {
     let all_sql_files: Vec<(&std::path::PathBuf, &str)> = files
         .model_sql_files
         .iter()
@@ -157,19 +219,8 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
         .collect();
 
     for (sql_path, file_type) in &all_sql_files {
-        let content = std::fs::read_to_string(sql_path).map_err(|e| {
-            crate::error::DbtLineageError::FileReadError {
-                path: (*sql_path).clone(),
-                source: e,
-            }
-        })?;
-
-        let node_name = sql_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
+        let content = read_file(sql_path)?;
+        let node_name = file_stem_str(sql_path);
         let node_unique_id = format!("{}.{}", file_type, node_name);
 
         // Create test nodes on the fly
@@ -178,49 +229,23 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
                 .strip_prefix(project_dir)
                 .unwrap_or(sql_path)
                 .to_path_buf();
-
-            let idx = graph.add_node(NodeData {
+            gb.add_node(NodeData {
                 unique_id: node_unique_id.clone(),
                 label: node_name,
                 node_type: NodeType::Test,
                 file_path: Some(relative_path),
                 description: None,
             });
-            node_map.insert(node_unique_id.clone(), idx);
         }
 
-        let current_idx = match node_map.get(&node_unique_id) {
-            Some(idx) => *idx,
+        let current_idx = match gb.node_map.get(&node_unique_id) {
+            Some(&idx) => idx,
             None => continue,
         };
 
-        // Process ref() calls
-        let refs = extract_refs(&content);
-        for ref_call in refs {
-            let dep_id = resolve_ref(&ref_call.name, &node_map);
-            let dep_idx = match node_map.get(&dep_id) {
-                Some(idx) => *idx,
-                None => {
-                    // Create phantom node
-                    eprintln!(
-                        "Warning: unresolved ref '{}' in {}",
-                        ref_call.name,
-                        sql_path.display()
-                    );
-                    let phantom_id = format!("model.{}", ref_call.name);
-                    let idx = graph.add_node(NodeData {
-                        unique_id: phantom_id.clone(),
-                        label: ref_call.name,
-                        node_type: NodeType::Phantom,
-                        file_path: None,
-                        description: None,
-                    });
-                    node_map.insert(phantom_id, idx);
-                    idx
-                }
-            };
-            // Edge: dependency → dependent (data flows downstream)
-            graph.add_edge(
+        for ref_call in extract_refs(&content) {
+            let dep_idx = gb.get_or_create_phantom_ref(&ref_call.name, sql_path);
+            gb.graph.add_edge(
                 dep_idx,
                 current_idx,
                 EdgeData {
@@ -229,36 +254,13 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
             );
         }
 
-        // Process source() calls
-        let sources = extract_sources(&content);
-        for source_call in sources {
-            let source_id = format!(
-                "source.{}.{}",
-                source_call.source_name, source_call.table_name
+        for source_call in extract_sources(&content) {
+            let source_idx = gb.get_or_create_phantom_source(
+                &source_call.source_name,
+                &source_call.table_name,
+                sql_path,
             );
-            let source_idx = match node_map.get(&source_id) {
-                Some(idx) => *idx,
-                None => {
-                    // Create phantom source node
-                    eprintln!(
-                        "Warning: unresolved source '{}.{}' in {}",
-                        source_call.source_name,
-                        source_call.table_name,
-                        sql_path.display()
-                    );
-                    let label = format!("{}.{}", source_call.source_name, source_call.table_name);
-                    let idx = graph.add_node(NodeData {
-                        unique_id: source_id.clone(),
-                        label,
-                        node_type: NodeType::Phantom,
-                        file_path: None,
-                        description: None,
-                    });
-                    node_map.insert(source_id, idx);
-                    idx
-                }
-            };
-            graph.add_edge(
+            gb.graph.add_edge(
                 source_idx,
                 current_idx,
                 EdgeData {
@@ -268,24 +270,26 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
         }
     }
 
-    // 6. Process exposures
-    for exposure in &exposures {
+    Ok(())
+}
+
+/// Create exposure nodes and edges to their dependencies
+fn process_exposures(gb: &mut GraphBuilder, exposures: &[ExposureDefinition]) {
+    for exposure in exposures {
         let unique_id = format!("exposure.{}", exposure.name);
-        let idx = graph.add_node(NodeData {
-            unique_id: unique_id.clone(),
+        let idx = gb.add_node(NodeData {
+            unique_id,
             label: exposure.name.clone(),
             node_type: NodeType::Exposure,
             file_path: None,
             description: exposure.description.clone(),
         });
-        node_map.insert(unique_id, idx);
 
         for dep in &exposure.depends_on {
-            // Parse ref('name') or source('src', 'table') from depends_on strings
             if let Some(model_name) = parse_exposure_ref(dep) {
-                let dep_id = resolve_ref(&model_name, &node_map);
-                if let Some(&dep_idx) = node_map.get(&dep_id) {
-                    graph.add_edge(
+                let dep_id = resolve_ref(&model_name, &gb.node_map);
+                if let Some(&dep_idx) = gb.node_map.get(&dep_id) {
+                    gb.graph.add_edge(
                         dep_idx,
                         idx,
                         EdgeData {
@@ -296,8 +300,32 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
             }
         }
     }
+}
 
-    Ok(graph)
+/// Build the lineage graph from discovered files
+pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<LineageGraph> {
+    let mut gb = GraphBuilder::new();
+
+    let (model_descriptions, exposures) = process_yaml_files(&mut gb, files)?;
+    process_model_files(&mut gb, files, project_dir, &model_descriptions);
+    process_simple_nodes(
+        &mut gb,
+        &files.seed_files,
+        project_dir,
+        "seed",
+        NodeType::Seed,
+    );
+    process_simple_nodes(
+        &mut gb,
+        &files.snapshot_sql_files,
+        project_dir,
+        "snapshot",
+        NodeType::Snapshot,
+    );
+    process_sql_edges(&mut gb, files, project_dir)?;
+    process_exposures(&mut gb, &exposures);
+
+    Ok(gb.graph)
 }
 
 /// Try to resolve a ref name to a node unique_id

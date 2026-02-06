@@ -36,6 +36,76 @@ pub fn render_ascii(graph: &LineageGraph) {
     render_ascii_to_writer(graph, &mut std::io::stdout().lock());
 }
 
+/// Compute column x-offsets from column widths and spacing
+fn compute_col_offsets(col_widths: &[usize], spacing: usize) -> Vec<usize> {
+    let mut offsets = vec![0usize; col_widths.len()];
+    for i in 1..col_widths.len() {
+        offsets[i] = offsets[i - 1] + col_widths[i - 1] + spacing;
+    }
+    offsets
+}
+
+/// Render a single row of the ASCII layout into a line string
+fn render_row(
+    graph: &LineageGraph,
+    layout: &LayoutResult,
+    row: usize,
+    col_widths: &[usize],
+    col_offsets: &[usize],
+) -> String {
+    let mut line = String::new();
+    let mut cursor = 0;
+
+    for (layer_idx, layer) in layout.layers.iter().enumerate() {
+        let col_start = col_offsets[layer_idx];
+        let col_width = col_widths[layer_idx];
+
+        // Pad to column start
+        while cursor < col_start {
+            line.push(' ');
+            cursor += 1;
+        }
+
+        if row < layer.len() {
+            let node = &graph[layer[row]];
+            let display = node.display_name();
+            let box_str = format!("[ {} ]", display);
+            let colored_box = colorize_node(&box_str, node.node_type);
+
+            let padding = col_width.saturating_sub(box_str.len()) / 2;
+            for _ in 0..padding {
+                line.push(' ');
+                cursor += 1;
+            }
+            line.push_str(&colored_box);
+            cursor += box_str.len();
+
+            let remaining = col_start + col_width - cursor;
+            for _ in 0..remaining {
+                line.push(' ');
+                cursor += 1;
+            }
+        } else {
+            for _ in 0..col_width {
+                line.push(' ');
+                cursor += 1;
+            }
+        }
+    }
+
+    line
+}
+
+/// Format a single edge as a display string
+fn format_edge_arrow(edge_type: EdgeType) -> &'static str {
+    match edge_type {
+        EdgeType::Ref => "──ref──>",
+        EdgeType::Source => "──src──>",
+        EdgeType::Test => "──test─>",
+        EdgeType::Exposure => "──exp──>",
+    }
+}
+
 fn render_ascii_to_writer<W: Write>(graph: &LineageGraph, w: &mut W) {
     if graph.node_count() == 0 {
         writeln!(w, "(empty graph — no nodes to display)").unwrap();
@@ -43,101 +113,33 @@ fn render_ascii_to_writer<W: Write>(graph: &LineageGraph, w: &mut W) {
     }
 
     let layout = sugiyama_layout(graph);
-
     if layout.num_layers == 0 {
         return;
     }
 
-    // Calculate column widths based on node labels
     let col_widths = calculate_column_widths(graph, &layout);
-    let col_spacing = 4; // spacing between columns
+    let col_offsets = compute_col_offsets(&col_widths, 4);
 
-    // Render layer by layer (left-to-right, so layers are columns)
-    // We'll transpose: each layer is a column, each position is a row
-    let total_rows = layout.max_layer_width;
-
-    // Pre-compute column x offsets
-    let col_offsets: Vec<usize> = {
-        let mut offsets = vec![0usize; layout.num_layers];
-        for i in 1..layout.num_layers {
-            offsets[i] = offsets[i - 1] + col_widths[i - 1] + col_spacing;
-        }
-        offsets
-    };
-
-    // Build a 2D grid of strings (row x cols as characters)
-    // For simplicity, render line by line
-
-    for row in 0..total_rows {
-        let mut line = String::new();
-        let mut cursor = 0;
-
-        for (layer_idx, layer) in layout.layers.iter().enumerate() {
-            let col_start = col_offsets[layer_idx];
-            let col_width = col_widths[layer_idx];
-
-            // Pad to column start
-            while cursor < col_start {
-                line.push(' ');
-                cursor += 1;
-            }
-
-            if row < layer.len() {
-                let node = &graph[layer[row]];
-                let display = node.display_name();
-                let box_str = format!("[ {} ]", display);
-                let colored_box = colorize_node(&box_str, node.node_type);
-
-                // Center the box in the column
-                let padding = col_width.saturating_sub(box_str.len()) / 2;
-                for _ in 0..padding {
-                    line.push(' ');
-                    cursor += 1;
-                }
-                line.push_str(&colored_box);
-                cursor += box_str.len();
-
-                // Fill remaining column width
-                let remaining = col_start + col_width - cursor;
-                for _ in 0..remaining {
-                    line.push(' ');
-                    cursor += 1;
-                }
-            } else {
-                // Empty cell
-                for _ in 0..col_width {
-                    line.push(' ');
-                    cursor += 1;
-                }
-            }
-        }
-
+    for row in 0..layout.max_layer_width {
+        let line = render_row(graph, &layout, row, &col_widths, &col_offsets);
         writeln!(w, "{}", line.trim_end()).unwrap();
     }
 
-    // Print edges below the graph as a summary
     writeln!(w).unwrap();
     writeln!(w, "{}", "Edges:".bold()).unwrap();
     for edge in graph.edge_references() {
         let source = &graph[edge.source()];
         let target = &graph[edge.target()];
-        let arrow = match edge.weight().edge_type {
-            EdgeType::Ref => "──ref──>",
-            EdgeType::Source => "──src──>",
-            EdgeType::Test => "──test─>",
-            EdgeType::Exposure => "──exp──>",
-        };
         writeln!(
             w,
             "  {} {} {}",
             colorize_node(&source.display_name(), source.node_type),
-            arrow,
+            format_edge_arrow(edge.weight().edge_type),
             colorize_node(&target.display_name(), target.node_type),
         )
         .unwrap();
     }
 
-    // Print legend
     writeln!(w).unwrap();
     print_legend_to_writer(w);
 }

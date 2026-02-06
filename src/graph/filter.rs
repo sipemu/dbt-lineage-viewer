@@ -119,21 +119,16 @@ fn bfs_collect(
     visited.insert(start);
 
     while let Some((node, depth)) = queue.pop_front() {
-        if let Some(max) = max_depth {
-            if depth >= max {
-                continue;
-            }
+        // Skip expansion if at max depth
+        if max_depth.is_some_and(|max| depth >= max) {
+            continue;
         }
 
-        let neighbors: Vec<NodeIndex> = graph
-            .edges_directed(node, direction)
-            .map(|e| match direction {
+        for e in graph.edges_directed(node, direction) {
+            let neighbor = match direction {
                 Direction::Incoming => e.source(),
                 Direction::Outgoing => e.target(),
-            })
-            .collect();
-
-        for neighbor in neighbors {
+            };
             if visited.insert(neighbor) {
                 collected.insert(neighbor);
                 queue.push_back((neighbor, depth + 1));

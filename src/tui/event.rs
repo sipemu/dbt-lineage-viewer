@@ -368,200 +368,189 @@ fn handle_run_confirm_mode(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
-/// Handle a mouse event. Returns true if the app should quit (never does).
-pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
-    // Handle mouse in context menu or run menu (hover + click)
-    if app.mode == AppMode::ContextMenu || app.mode == AppMode::RunMenu {
-        let (menu_area, items_y_offset) = if app.mode == AppMode::ContextMenu {
-            (app.last_context_menu_area, 1u16) // border only
-        } else {
-            (app.last_run_menu_area, 2u16) // border + empty line
-        };
+/// Check if a mouse position is within a Rect area
+fn is_within(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x && column < area.x + area.width && row >= area.y && row < area.y + area.height
+}
 
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                app.menu_hover_index =
-                    menu_item_at_pos(menu_area, items_y_offset, mouse.column, mouse.row);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(item) =
-                    menu_item_at_pos(menu_area, items_y_offset, mouse.column, mouse.row)
-                {
-                    if let Some(request) = make_run_request_for_item(app, item) {
-                        app.pending_run = Some(request);
-                        clear_menu_state(app);
-                        app.mode = AppMode::RunConfirm;
-                        return false;
-                    }
-                }
-                // Click outside menu items — dismiss
-                app.mode = AppMode::Normal;
-                clear_menu_state(app);
-            }
-            MouseEventKind::Down(_) => {
-                app.mode = AppMode::Normal;
-                clear_menu_state(app);
-            }
-            _ => {}
-        }
-        return false;
-    }
-
-    // Handle mouse in confirm dialog (hover + click)
-    if app.mode == AppMode::RunConfirm {
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                app.confirm_hover =
-                    confirm_button_at_pos(app.last_confirm_area, mouse.column, mouse.row);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                match confirm_button_at_pos(app.last_confirm_area, mouse.column, mouse.row) {
-                    Some(true) => {
-                        app.confirm_hover = None;
-                        app.last_confirm_area = None;
-                        app.start_dbt_run();
-                    }
-                    Some(false) => {
-                        app.pending_run = None;
-                        app.confirm_hover = None;
-                        app.last_confirm_area = None;
-                        app.mode = AppMode::Normal;
-                    }
-                    None => {
-                        // Click outside buttons — dismiss
-                        app.pending_run = None;
-                        app.confirm_hover = None;
-                        app.last_confirm_area = None;
-                        app.mode = AppMode::Normal;
-                    }
-                }
-            }
-            MouseEventKind::Down(_) => {
-                app.pending_run = None;
-                app.confirm_hover = None;
-                app.last_confirm_area = None;
-                app.mode = AppMode::Normal;
-            }
-            _ => {}
-        }
-        return false;
-    }
-
-    // Only handle mouse in Normal mode
-    if app.mode != AppMode::Normal {
-        return false;
-    }
+/// Handle mouse in ContextMenu or RunMenu mode
+fn handle_mouse_menu(app: &mut App, mouse: MouseEvent) {
+    let (menu_area, items_y_offset) = if app.mode == AppMode::ContextMenu {
+        (app.last_context_menu_area, 1u16)
+    } else {
+        (app.last_run_menu_area, 2u16)
+    };
 
     match mouse.kind {
-        MouseEventKind::Down(MouseButton::Right) => {
-            if let Some(graph_area) = app.last_graph_area {
-                if mouse.column >= graph_area.x
-                    && mouse.column < graph_area.x + graph_area.width
-                    && mouse.row >= graph_area.y
-                    && mouse.row < graph_area.y + graph_area.height
-                {
-                    if let Some(node_idx) = hit_test_node(app, mouse.column, mouse.row) {
-                        app.selected_node = Some(node_idx);
-                        app.sync_cycle_index();
-                        app.sync_node_list_state();
-                        app.context_menu_pos = Some((mouse.column, mouse.row));
-                        app.menu_hover_index = None;
-                        app.mode = AppMode::ContextMenu;
-                    }
-                }
-            }
+        MouseEventKind::Moved => {
+            app.menu_hover_index =
+                menu_item_at_pos(menu_area, items_y_offset, mouse.column, mouse.row);
         }
-
         MouseEventKind::Down(MouseButton::Left) => {
-            // Check if click is in the node list area
-            if let Some(list_area) = app.last_node_list_area {
-                if mouse.column >= list_area.x
-                    && mouse.column < list_area.x + list_area.width
-                    && mouse.row >= list_area.y
-                    && mouse.row < list_area.y + list_area.height
-                {
-                    // Map click row to node list entry (account for border)
-                    let row_in_list = mouse.row.saturating_sub(list_area.y + 1) as usize;
-                    if row_in_list < app.node_list_entries.len() {
-                        match app.node_list_entries[row_in_list] {
-                            NodeListEntry::GroupHeader(gi) => {
-                                app.toggle_group_collapse_by_index(gi);
-                            }
-                            NodeListEntry::Node(idx) => {
-                                app.selected_node = Some(idx);
-                                app.node_list_state.select(Some(row_in_list));
-                                // Sync cycle index and center
-                                app.center_on_selected();
-                            }
-                        }
-                    }
-                    return false;
+            if let Some(item) = menu_item_at_pos(menu_area, items_y_offset, mouse.column, mouse.row)
+            {
+                if let Some(request) = make_run_request_for_item(app, item) {
+                    app.pending_run = Some(request);
+                    clear_menu_state(app);
+                    app.mode = AppMode::RunConfirm;
+                    return;
                 }
             }
+            app.mode = AppMode::Normal;
+            clear_menu_state(app);
+        }
+        MouseEventKind::Down(_) => {
+            app.mode = AppMode::Normal;
+            clear_menu_state(app);
+        }
+        _ => {}
+    }
+}
 
-            // Check if click is in the graph area
-            if let Some(graph_area) = app.last_graph_area {
-                if mouse.column >= graph_area.x
-                    && mouse.column < graph_area.x + graph_area.width
-                    && mouse.row >= graph_area.y
-                    && mouse.row < graph_area.y + graph_area.height
-                {
-                    if let Some(node_idx) = hit_test_node(app, mouse.column, mouse.row) {
-                        app.select_node_no_center(node_idx);
-                    } else {
-                        // Start drag for panning
-                        app.drag_state = Some(DragState {
-                            start_x: mouse.column,
-                            start_y: mouse.row,
-                            viewport_x0: app.viewport_x,
-                            viewport_y0: app.viewport_y,
-                        });
-                    }
+/// Clear confirm dialog state and return to Normal mode
+fn dismiss_confirm(app: &mut App) {
+    app.pending_run = None;
+    app.confirm_hover = None;
+    app.last_confirm_area = None;
+    app.mode = AppMode::Normal;
+}
+
+/// Handle mouse in RunConfirm mode
+fn handle_mouse_confirm(app: &mut App, mouse: MouseEvent) {
+    match mouse.kind {
+        MouseEventKind::Moved => {
+            app.confirm_hover =
+                confirm_button_at_pos(app.last_confirm_area, mouse.column, mouse.row);
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            match confirm_button_at_pos(app.last_confirm_area, mouse.column, mouse.row) {
+                Some(true) => {
+                    app.confirm_hover = None;
+                    app.last_confirm_area = None;
+                    app.start_dbt_run();
                 }
+                Some(false) | None => dismiss_confirm(app),
             }
         }
+        MouseEventKind::Down(_) => dismiss_confirm(app),
+        _ => {}
+    }
+}
 
+/// Handle left-click on the node list panel
+fn handle_node_list_click(app: &mut App, column: u16, row: u16) -> bool {
+    let Some(list_area) = app.last_node_list_area else {
+        return false;
+    };
+    if !is_within(list_area, column, row) {
+        return false;
+    }
+    let row_in_list = row.saturating_sub(list_area.y + 1) as usize;
+    if row_in_list < app.node_list_entries.len() {
+        match app.node_list_entries[row_in_list] {
+            NodeListEntry::GroupHeader(gi) => app.toggle_group_collapse_by_index(gi),
+            NodeListEntry::Node(idx) => {
+                app.selected_node = Some(idx);
+                app.node_list_state.select(Some(row_in_list));
+                app.center_on_selected();
+            }
+        }
+    }
+    true // click was consumed
+}
+
+/// Handle left-click on the graph area (node select or drag start)
+fn handle_graph_left_click(app: &mut App, column: u16, row: u16) {
+    let Some(graph_area) = app.last_graph_area else {
+        return;
+    };
+    if !is_within(graph_area, column, row) {
+        return;
+    }
+    if let Some(node_idx) = hit_test_node(app, column, row) {
+        app.select_node_no_center(node_idx);
+    } else {
+        app.drag_state = Some(DragState {
+            start_x: column,
+            start_y: row,
+            viewport_x0: app.viewport_x,
+            viewport_y0: app.viewport_y,
+        });
+    }
+}
+
+/// Handle right-click in the graph area (open context menu)
+fn handle_graph_right_click(app: &mut App, column: u16, row: u16) {
+    let Some(graph_area) = app.last_graph_area else {
+        return;
+    };
+    if !is_within(graph_area, column, row) {
+        return;
+    }
+    if let Some(node_idx) = hit_test_node(app, column, row) {
+        app.selected_node = Some(node_idx);
+        app.sync_cycle_index();
+        app.sync_node_list_state();
+        app.context_menu_pos = Some((column, row));
+        app.menu_hover_index = None;
+        app.mode = AppMode::ContextMenu;
+    }
+}
+
+/// Handle scroll zoom on the graph area
+fn handle_graph_scroll(app: &mut App, column: u16, row: u16, zoom_in: bool) {
+    let Some(graph_area) = app.last_graph_area else {
+        return;
+    };
+    if !is_within(graph_area, column, row) {
+        return;
+    }
+    if zoom_in {
+        app.zoom = (app.zoom + ZOOM_STEP).min(3.0);
+    } else {
+        app.zoom = (app.zoom - ZOOM_STEP).max(0.3);
+    }
+}
+
+/// Handle a mouse event. Returns true if the app should quit (never does).
+pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
+    match app.mode {
+        AppMode::ContextMenu | AppMode::RunMenu => handle_mouse_menu(app, mouse),
+        AppMode::RunConfirm => handle_mouse_confirm(app, mouse),
+        AppMode::Normal => handle_mouse_normal(app, mouse),
+        _ => {}
+    }
+    false
+}
+
+/// Handle mouse events in Normal mode
+fn handle_mouse_normal(app: &mut App, mouse: MouseEvent) {
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Right) => {
+            handle_graph_right_click(app, mouse.column, mouse.row);
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if !handle_node_list_click(app, mouse.column, mouse.row) {
+                handle_graph_left_click(app, mouse.column, mouse.row);
+            }
+        }
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some(ref drag) = app.drag_state {
-                // Natural pan direction: dragging right moves viewport left
                 app.viewport_x = drag.viewport_x0 - (mouse.column as i32 - drag.start_x as i32);
                 app.viewport_y = drag.viewport_y0 - (mouse.row as i32 - drag.start_y as i32);
             }
         }
-
         MouseEventKind::Up(MouseButton::Left) => {
             app.drag_state = None;
         }
-
         MouseEventKind::ScrollUp => {
-            // Only zoom if over the graph area
-            if let Some(graph_area) = app.last_graph_area {
-                if mouse.column >= graph_area.x
-                    && mouse.column < graph_area.x + graph_area.width
-                    && mouse.row >= graph_area.y
-                    && mouse.row < graph_area.y + graph_area.height
-                {
-                    app.zoom = (app.zoom + ZOOM_STEP).min(3.0);
-                }
-            }
+            handle_graph_scroll(app, mouse.column, mouse.row, true);
         }
-
         MouseEventKind::ScrollDown => {
-            if let Some(graph_area) = app.last_graph_area {
-                if mouse.column >= graph_area.x
-                    && mouse.column < graph_area.x + graph_area.width
-                    && mouse.row >= graph_area.y
-                    && mouse.row < graph_area.y + graph_area.height
-                {
-                    app.zoom = (app.zoom - ZOOM_STEP).max(0.3);
-                }
-            }
+            handle_graph_scroll(app, mouse.column, mouse.row, false);
         }
-
         _ => {}
     }
-
-    false
 }
 
 fn handle_run_output_mode(app: &mut App, key: KeyEvent) -> bool {
