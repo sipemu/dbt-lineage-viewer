@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::app::{App, AppMode, DbtRunState};
 use super::runner::{detect_use_uv, DbtCommand, DbtRunRequest, SelectionScope};
 
-const PAN_AMOUNT: f64 = 2.0;
+const PAN_AMOUNT: i32 = 3;
 const ZOOM_STEP: f64 = 0.1;
 
 /// Handle a key event. Returns true if the app should quit.
@@ -26,10 +26,10 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> bool {
     // Shift+HJKL for camera panning
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
-            KeyCode::Char('H') => { app.camera_x -= PAN_AMOUNT; return false; }
-            KeyCode::Char('J') => { app.camera_y += PAN_AMOUNT; return false; }
-            KeyCode::Char('K') => { app.camera_y -= PAN_AMOUNT; return false; }
-            KeyCode::Char('L') => { app.camera_x += PAN_AMOUNT; return false; }
+            KeyCode::Char('H') => { app.viewport_x -= PAN_AMOUNT; return false; }
+            KeyCode::Char('J') => { app.viewport_y += PAN_AMOUNT; return false; }
+            KeyCode::Char('K') => { app.viewport_y -= PAN_AMOUNT; return false; }
+            KeyCode::Char('L') => { app.viewport_x += PAN_AMOUNT; return false; }
             _ => {}
         }
     }

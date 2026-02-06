@@ -1,19 +1,12 @@
-use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use ratatui::prelude::*;
-use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::*;
 
 use crate::graph::types::*;
 use crate::parser::artifacts::RunStatus;
 
 use super::app::{App, AppMode, DbtRunState, NodeListEntry};
+use super::graph_widget::GraphWidget;
 use super::run_status::{status_color, status_label, status_symbol};
-
-/// Node box dimensions for the canvas
-const NODE_WIDTH: f64 = 20.0;
-const NODE_HEIGHT: f64 = 3.0;
-const LAYER_SPACING: f64 = 30.0;
-const NODE_SPACING: f64 = 5.0;
 
 pub fn draw_ui(f: &mut Frame, app: &mut App) {
     // Main layout depends on whether node list panel is visible
@@ -59,95 +52,14 @@ pub fn draw_ui(f: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_graph(f: &mut Frame, app: &App, area: Rect) {
-    let x_max = (app.layout.num_layers as f64) * LAYER_SPACING + NODE_WIDTH;
-    let y_max = (app.layout.max_layer_width as f64) * (NODE_HEIGHT + NODE_SPACING);
-
-    let canvas = Canvas::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Lineage Graph "),
-        )
-        .x_bounds([
-            app.camera_x - x_max / (2.0 * app.zoom),
-            app.camera_x + x_max / (2.0 * app.zoom),
-        ])
-        .y_bounds([
-            app.camera_y - y_max / (2.0 * app.zoom),
-            app.camera_y + y_max / (2.0 * app.zoom),
-        ])
-        .paint(|ctx| {
-            // Draw edges first (behind nodes)
-            for edge in app.graph.edge_references() {
-                let source = edge.source();
-                let target = edge.target();
-
-                if let (Some(&(sl, sp)), Some(&(tl, tp))) = (
-                    app.layout.positions.get(&source),
-                    app.layout.positions.get(&target),
-                ) {
-                    let x1 = sl as f64 * LAYER_SPACING + NODE_WIDTH;
-                    let y1 = -(sp as f64 * (NODE_HEIGHT + NODE_SPACING) + NODE_HEIGHT / 2.0);
-                    let x2 = tl as f64 * LAYER_SPACING;
-                    let y2 = -(tp as f64 * (NODE_HEIGHT + NODE_SPACING) + NODE_HEIGHT / 2.0);
-
-                    let color = match edge.weight().edge_type {
-                        EdgeType::Ref => Color::Gray,
-                        EdgeType::Source => Color::DarkGray,
-                        EdgeType::Test => Color::Cyan,
-                        EdgeType::Exposure => Color::Red,
-                    };
-
-                    ctx.draw(&CanvasLine {
-                        x1,
-                        y1,
-                        x2,
-                        y2,
-                        color,
-                    });
-                }
-            }
-
-            // Draw nodes
-            for idx in app.graph.node_indices() {
-                if let Some(&(layer, pos)) = app.layout.positions.get(&idx) {
-                    let x = layer as f64 * LAYER_SPACING;
-                    let y = -(pos as f64 * (NODE_HEIGHT + NODE_SPACING));
-
-                    let node = &app.graph[idx];
-                    let is_selected = app.selected_node == Some(idx);
-                    let run_status = app.node_run_status(&node.unique_id);
-
-                    // Color by run status when available, else by node type
-                    let color = if is_selected {
-                        Color::White
-                    } else {
-                        match run_status {
-                            RunStatus::NeverRun => node_color(node.node_type),
-                            _ => status_color(run_status),
-                        }
-                    };
-
-                    // Draw a box using lines
-                    let x2 = x + NODE_WIDTH;
-                    let y2 = y - NODE_HEIGHT;
-                    ctx.draw(&CanvasLine { x1: x, y1: y, x2, y2: y, color });
-                    ctx.draw(&CanvasLine { x1: x, y1: y2, x2, y2: y2, color });
-                    ctx.draw(&CanvasLine { x1: x, y1: y, x2: x, y2, color });
-                    ctx.draw(&CanvasLine { x1: x2, y1: y, x2, y2, color });
-
-                    // Label with status symbol prefix
-                    let sym = status_symbol(run_status);
-                    let display = node.display_name();
-                    let label_with_status = format!("{} {}", sym, display);
-                    let label = truncate_label(&label_with_status, 16);
-                    ctx.print(x + 1.0, y - NODE_HEIGHT / 2.0, label.fg(color));
-                }
-            }
-        });
-
-    f.render_widget(canvas, area);
+fn draw_graph(f: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Lineage Graph ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    app.last_graph_area = Some(inner);
+    f.render_widget(GraphWidget::new(app), inner);
 }
 
 fn draw_node_list(f: &mut Frame, app: &mut App, area: Rect) {
@@ -535,10 +447,3 @@ fn node_color(node_type: NodeType) -> Color {
     }
 }
 
-fn truncate_label(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len - 3])
-    }
-}

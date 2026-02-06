@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 use petgraph::stable_graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
 use crate::graph::types::{LineageGraph, NodeType};
@@ -54,9 +55,10 @@ pub struct App {
     pub graph: LineageGraph,
     pub layout: LayoutResult,
     pub selected_node: Option<NodeIndex>,
-    pub camera_x: f64,
-    pub camera_y: f64,
+    pub viewport_x: i32,
+    pub viewport_y: i32,
     pub zoom: f64,
+    pub last_graph_area: Option<Rect>,
     pub mode: AppMode,
     pub search_query: String,
     pub search_results: Vec<NodeIndex>,
@@ -114,9 +116,10 @@ impl App {
             graph,
             layout,
             selected_node: selected,
-            camera_x: 0.0,
-            camera_y: 0.0,
+            viewport_x: 0,
+            viewport_y: 0,
             zoom: 1.0,
+            last_graph_area: None,
             mode: AppMode::Normal,
             search_query: String::new(),
             search_results: Vec::new(),
@@ -331,22 +334,22 @@ impl App {
         }
     }
 
-    /// Center the camera on the currently selected node
+    /// Center the viewport on the currently selected node
     pub fn center_on_selected(&mut self) {
         let Some(selected) = self.selected_node else { return };
         let Some(&(layer, pos)) = self.layout.positions.get(&selected) else { return };
 
-        // Use the same coordinate system as draw_graph in ui.rs
-        const NODE_WIDTH: f64 = 20.0;
-        const NODE_HEIGHT: f64 = 3.0;
-        const LAYER_SPACING: f64 = 30.0;
-        const NODE_SPACING: f64 = 5.0;
+        use super::graph_widget::node_world_center;
+        let (cx, cy) = node_world_center(layer, pos, self.zoom);
 
-        let x = layer as f64 * LAYER_SPACING + NODE_WIDTH / 2.0;
-        let y = -(pos as f64 * (NODE_HEIGHT + NODE_SPACING) + NODE_HEIGHT / 2.0);
-
-        self.camera_x = x;
-        self.camera_y = y;
+        if let Some(area) = self.last_graph_area {
+            self.viewport_x = cx - area.width as i32 / 2;
+            self.viewport_y = cy - area.height as i32 / 2;
+        } else {
+            // Fallback: assume a reasonable default area
+            self.viewport_x = cx - 40;
+            self.viewport_y = cy - 12;
+        }
     }
 
     pub fn update_search(&mut self) {
@@ -375,8 +378,8 @@ impl App {
     }
 
     pub fn reset_view(&mut self) {
-        self.camera_x = 0.0;
-        self.camera_y = 0.0;
+        self.viewport_x = 0;
+        self.viewport_y = 0;
         self.zoom = 1.0;
     }
 

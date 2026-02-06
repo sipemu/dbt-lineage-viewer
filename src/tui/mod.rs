@@ -1,5 +1,6 @@
 pub mod app;
 pub mod event;
+pub mod graph_widget;
 pub mod run_status;
 pub mod runner;
 pub mod ui;

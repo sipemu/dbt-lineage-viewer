@@ -7,7 +7,7 @@ No dbt compilation, manifest, or Python runtime required for graph building — 
 ## Features
 
 - **Direct SQL parsing** — extracts `ref()` and `source()` calls via regex, no `dbt compile` needed
-- **Interactive TUI** — navigate, search, and explore lineage in a terminal UI (ratatui)
+- **Interactive TUI** — navigate, search, and explore lineage in a terminal UI (ratatui) with Unicode box-drawing nodes and orthogonal edge routing
 - **Run dbt from TUI** — execute `dbt run` / `dbt test` on selected models with scope control (`+upstream`, `downstream+`, `+all+`)
 - **Run status tracking** — color-coded nodes show success (green), error (red), outdated (yellow), or never-run (default)
 - **Collapsible node list** — directory-grouped, expandable/collapsible sidebar panel
@@ -91,8 +91,8 @@ Options:
 | Key | Action |
 |-----|--------|
 | `h` `j` `k` `l` / arrow keys | Navigate between nodes (left/down/up/right) |
-| `H` `J` `K` `L` | Pan the camera |
-| `+` / `-` | Zoom in / out |
+| `H` `J` `K` `L` | Pan the viewport |
+| `+` / `-` | Zoom in / out (adjusts spacing) |
 | `Tab` / `Shift+Tab` | Cycle through nodes sequentially |
 | `r` | Reset view (center + zoom) |
 
