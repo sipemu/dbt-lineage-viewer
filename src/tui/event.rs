@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 
 use super::app::{App, AppMode, DbtRunState, DragState, NodeListEntry};
 use super::graph_widget::hit_test_node;
@@ -6,6 +7,85 @@ use super::runner::{detect_use_uv, DbtCommand, DbtRunRequest, SelectionScope};
 
 const PAN_AMOUNT: i32 = 3;
 const ZOOM_STEP: f64 = 0.1;
+const MENU_ITEM_COUNT: u16 = 5;
+
+/// Check if a mouse position is on a menu item row. Returns the item index (0-4).
+/// `items_y_offset` is the offset from the popup top to the first item row
+/// (1 for context menu = border, 2 for run menu = border + empty line).
+fn menu_item_at_pos(
+    menu_area: Option<Rect>,
+    items_y_offset: u16,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let area = menu_area?;
+    let first_y = area.y + items_y_offset;
+    if column >= area.x
+        && column < area.x + area.width
+        && row >= first_y
+        && row < first_y + MENU_ITEM_COUNT
+    {
+        Some((row - first_y) as usize)
+    } else {
+        None
+    }
+}
+
+/// Build a DbtRunRequest for a menu item index (0-4).
+fn make_run_request_for_item(app: &App, item: usize) -> Option<DbtRunRequest> {
+    let selected_idx = app.selected_node?;
+    let model_name = app.graph[selected_idx].label.clone();
+    let project_dir = app.project_dir.clone();
+    let use_uv = detect_use_uv(&project_dir);
+    let make = |command: DbtCommand, scope: SelectionScope| DbtRunRequest {
+        command,
+        scope,
+        model_name: model_name.clone(),
+        project_dir: project_dir.clone(),
+        use_uv,
+    };
+    Some(match item {
+        0 => make(DbtCommand::Run, SelectionScope::Single),
+        1 => make(DbtCommand::Run, SelectionScope::WithUpstream),
+        2 => make(DbtCommand::Run, SelectionScope::WithDownstream),
+        3 => make(DbtCommand::Run, SelectionScope::FullLineage),
+        4 => make(DbtCommand::Test, SelectionScope::Single),
+        _ => return None,
+    })
+}
+
+/// Clear all menu overlay state.
+fn clear_menu_state(app: &mut App) {
+    app.context_menu_pos = None;
+    app.last_context_menu_area = None;
+    app.last_run_menu_area = None;
+    app.menu_hover_index = None;
+}
+
+/// Check if a mouse position hits one of the confirm dialog buttons.
+/// Returns Some(true) for Execute, Some(false) for Cancel, None for neither.
+/// Button layout on the last inner row (popup.y + 6):
+///   "  " + " Execute (y) " + "  " + " Cancel (n) "
+///   cols:  0-1  2-14          15-16  17-28  (relative to inner x)
+fn confirm_button_at_pos(
+    confirm_area: Option<Rect>,
+    column: u16,
+    row: u16,
+) -> Option<bool> {
+    let area = confirm_area?;
+    let button_row = area.y + 6; // border(1) + 5 inner rows
+    if row != button_row {
+        return None;
+    }
+    let inner_x = area.x + 1; // skip left border
+    if column >= inner_x + 2 && column <= inner_x + 14 {
+        Some(true) // Execute
+    } else if column >= inner_x + 17 && column <= inner_x + 28 {
+        Some(false) // Cancel
+    } else {
+        None
+    }
+}
 
 /// Handle a key event. Returns true if the app should quit.
 pub fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
@@ -81,6 +161,7 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> bool {
         // Open run menu
         KeyCode::Char('x') => {
             if app.selected_node.is_some() && !app.is_run_in_progress() {
+                app.menu_hover_index = None;
                 app.mode = AppMode::RunMenu;
             }
         }
@@ -275,11 +356,79 @@ fn handle_run_confirm_mode(app: &mut App, key: KeyEvent) -> bool {
 
 /// Handle a mouse event. Returns true if the app should quit (never does).
 pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
-    // Dismiss context menu on any click
-    if app.mode == AppMode::ContextMenu {
-        if let MouseEventKind::Down(_) = mouse.kind {
-            app.mode = AppMode::Normal;
-            app.context_menu_pos = None;
+    // Handle mouse in context menu or run menu (hover + click)
+    if app.mode == AppMode::ContextMenu || app.mode == AppMode::RunMenu {
+        let (menu_area, items_y_offset) = if app.mode == AppMode::ContextMenu {
+            (app.last_context_menu_area, 1u16) // border only
+        } else {
+            (app.last_run_menu_area, 2u16) // border + empty line
+        };
+
+        match mouse.kind {
+            MouseEventKind::Moved => {
+                app.menu_hover_index =
+                    menu_item_at_pos(menu_area, items_y_offset, mouse.column, mouse.row);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(item) =
+                    menu_item_at_pos(menu_area, items_y_offset, mouse.column, mouse.row)
+                {
+                    if let Some(request) = make_run_request_for_item(app, item) {
+                        app.pending_run = Some(request);
+                        clear_menu_state(app);
+                        app.mode = AppMode::RunConfirm;
+                        return false;
+                    }
+                }
+                // Click outside menu items — dismiss
+                app.mode = AppMode::Normal;
+                clear_menu_state(app);
+            }
+            MouseEventKind::Down(_) => {
+                app.mode = AppMode::Normal;
+                clear_menu_state(app);
+            }
+            _ => {}
+        }
+        return false;
+    }
+
+    // Handle mouse in confirm dialog (hover + click)
+    if app.mode == AppMode::RunConfirm {
+        match mouse.kind {
+            MouseEventKind::Moved => {
+                app.confirm_hover =
+                    confirm_button_at_pos(app.last_confirm_area, mouse.column, mouse.row);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                match confirm_button_at_pos(app.last_confirm_area, mouse.column, mouse.row) {
+                    Some(true) => {
+                        app.confirm_hover = None;
+                        app.last_confirm_area = None;
+                        app.start_dbt_run();
+                    }
+                    Some(false) => {
+                        app.pending_run = None;
+                        app.confirm_hover = None;
+                        app.last_confirm_area = None;
+                        app.mode = AppMode::Normal;
+                    }
+                    None => {
+                        // Click outside buttons — dismiss
+                        app.pending_run = None;
+                        app.confirm_hover = None;
+                        app.last_confirm_area = None;
+                        app.mode = AppMode::Normal;
+                    }
+                }
+            }
+            MouseEventKind::Down(_) => {
+                app.pending_run = None;
+                app.confirm_hover = None;
+                app.last_confirm_area = None;
+                app.mode = AppMode::Normal;
+            }
+            _ => {}
         }
         return false;
     }
@@ -302,6 +451,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                         app.sync_cycle_index();
                         app.sync_node_list_state();
                         app.context_menu_pos = Some((mouse.column, mouse.row));
+                        app.menu_hover_index = None;
                         app.mode = AppMode::ContextMenu;
                     }
                 }

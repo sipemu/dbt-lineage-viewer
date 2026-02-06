@@ -89,6 +89,11 @@ pub struct App {
     pub drag_state: Option<DragState>,
     pub last_node_list_area: Option<Rect>,
     pub context_menu_pos: Option<(u16, u16)>,
+    pub last_context_menu_area: Option<Rect>,
+    pub last_run_menu_area: Option<Rect>,
+    pub menu_hover_index: Option<usize>,
+    pub last_confirm_area: Option<Rect>,
+    pub confirm_hover: Option<bool>, // Some(true) = Execute hovered, Some(false) = Cancel hovered
 
     // Run execution state
     pub project_dir: PathBuf,
@@ -149,6 +154,11 @@ impl App {
             drag_state: None,
             last_node_list_area: None,
             context_menu_pos: None,
+            last_context_menu_area: None,
+            last_run_menu_area: None,
+            menu_hover_index: None,
+            last_confirm_area: None,
+            confirm_hover: None,
             project_dir,
             run_status,
             run_state: DbtRunState::Idle,

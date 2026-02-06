@@ -283,9 +283,11 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(help, area);
 }
 
-fn draw_run_menu(f: &mut Frame, app: &App) {
+fn draw_run_menu(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let popup = centered_rect(42, 14, area);
+
+    app.last_run_menu_area = Some(popup);
 
     let model_name = app
         .selected_node
@@ -297,28 +299,14 @@ fn draw_run_menu(f: &mut Frame, app: &App) {
         .title(format!(" Run: {} ", model_name))
         .border_style(Style::default().fg(Color::Magenta));
 
+    let hover = app.menu_hover_index;
     let text = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled("  r", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run (this model)"),
-        ]),
-        Line::from(vec![
-            Span::styled("  u", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run +upstream"),
-        ]),
-        Line::from(vec![
-            Span::styled("  d", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run downstream+"),
-        ]),
-        Line::from(vec![
-            Span::styled("  a", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run +all+"),
-        ]),
-        Line::from(vec![
-            Span::styled("  t", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt test"),
-        ]),
+        menu_item_line("  r", "  dbt run (this model)", hover == Some(0)),
+        menu_item_line("  u", "  dbt run +upstream", hover == Some(1)),
+        menu_item_line("  d", "  dbt run downstream+", hover == Some(2)),
+        menu_item_line("  a", "  dbt run +all+", hover == Some(3)),
+        menu_item_line("  t", "  dbt test", hover == Some(4)),
         Line::from(""),
         Line::from(Span::styled(
             "  Esc to cancel",
@@ -331,7 +319,7 @@ fn draw_run_menu(f: &mut Frame, app: &App) {
     f.render_widget(paragraph, popup);
 }
 
-fn draw_context_menu(f: &mut Frame, app: &App) {
+fn draw_context_menu(f: &mut Frame, app: &mut App) {
     let Some((mx, my)) = app.context_menu_pos else { return };
 
     let menu_width: u16 = 30;
@@ -349,6 +337,8 @@ fn draw_context_menu(f: &mut Frame, app: &App) {
         height: menu_height.min(area.height),
     };
 
+    app.last_context_menu_area = Some(popup);
+
     let model_name = app
         .selected_node
         .map(|idx| app.graph[idx].label.as_str())
@@ -359,27 +349,13 @@ fn draw_context_menu(f: &mut Frame, app: &App) {
         .title(format!(" {} ", model_name))
         .border_style(Style::default().fg(Color::Magenta));
 
+    let hover = app.menu_hover_index;
     let text = vec![
-        Line::from(vec![
-            Span::styled(" r", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run"),
-        ]),
-        Line::from(vec![
-            Span::styled(" u", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run +upstream"),
-        ]),
-        Line::from(vec![
-            Span::styled(" d", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run downstream+"),
-        ]),
-        Line::from(vec![
-            Span::styled(" a", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt run +all+"),
-        ]),
-        Line::from(vec![
-            Span::styled(" t", Style::default().bold().fg(Color::Yellow)),
-            Span::raw("  dbt test"),
-        ]),
+        menu_item_line(" r", "  dbt run", hover == Some(0)),
+        menu_item_line(" u", "  dbt run +upstream", hover == Some(1)),
+        menu_item_line(" d", "  dbt run downstream+", hover == Some(2)),
+        menu_item_line(" a", "  dbt run +all+", hover == Some(3)),
+        menu_item_line(" t", "  dbt test", hover == Some(4)),
         Line::from(""),
         Line::from(Span::styled(
             " Esc to close",
@@ -392,9 +368,11 @@ fn draw_context_menu(f: &mut Frame, app: &App) {
     f.render_widget(paragraph, popup);
 }
 
-fn draw_run_confirm(f: &mut Frame, app: &App) {
+fn draw_run_confirm(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let popup = centered_rect(60, 8, area);
+
+    app.last_confirm_area = Some(popup);
 
     let command_str = app
         .pending_run
@@ -407,6 +385,17 @@ fn draw_run_confirm(f: &mut Frame, app: &App) {
         .title(" Confirm ")
         .border_style(Style::default().fg(Color::Yellow));
 
+    let exec_style = if app.confirm_hover == Some(true) {
+        Style::default().bold().fg(Color::Black).bg(Color::Green)
+    } else {
+        Style::default().bold().fg(Color::Green)
+    };
+    let cancel_style = if app.confirm_hover == Some(false) {
+        Style::default().bold().fg(Color::Black).bg(Color::Red)
+    } else {
+        Style::default().bold().fg(Color::Red)
+    };
+
     let text = vec![
         Line::from(""),
         Line::from("  Execute this command?"),
@@ -417,10 +406,10 @@ fn draw_run_confirm(f: &mut Frame, app: &App) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  y", Style::default().bold().fg(Color::Green)),
-            Span::raw("/Enter: execute  "),
-            Span::styled("n", Style::default().bold().fg(Color::Red)),
-            Span::raw("/Esc: cancel"),
+            Span::raw("  "),
+            Span::styled(" Execute (y) ", exec_style),
+            Span::raw("  "),
+            Span::styled(" Cancel (n) ", cancel_style),
         ]),
     ];
 
@@ -486,6 +475,19 @@ fn draw_run_output(f: &mut Frame, app: &App) {
     let paragraph = Paragraph::new(text_lines).block(block);
     f.render_widget(Clear, popup);
     f.render_widget(paragraph, popup);
+}
+
+/// Build a single menu item line with optional hover highlight.
+fn menu_item_line<'a>(key: &'a str, desc: &'a str, hovered: bool) -> Line<'a> {
+    let line = Line::from(vec![
+        Span::styled(key, Style::default().bold().fg(Color::Yellow)),
+        Span::raw(desc),
+    ]);
+    if hovered {
+        line.style(Style::default().bg(Color::DarkGray))
+    } else {
+        line
+    }
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
