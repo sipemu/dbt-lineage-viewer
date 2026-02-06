@@ -1,5 +1,6 @@
 # dbt-lineage
 
+[![CI](https://github.com/sipemu/dbt-lineage-viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/sipemu/dbt-lineage-viewer/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/dbt-lineage)](https://crates.io/crates/dbt-lineage)
 [![docs.rs](https://img.shields.io/docsrs/dbt-lineage)](https://docs.rs/dbt-lineage)
 [![codecov](https://codecov.io/gh/sipemu/dbt-lineage-viewer/branch/master/graph/badge.svg)](https://codecov.io/gh/sipemu/dbt-lineage-viewer)
@@ -21,19 +22,21 @@ No dbt compilation, manifest, or Python runtime required for graph building — 
 
 ## Installation
 
+### From crates.io
+
 ```sh
+cargo install dbt-lineage
+```
+
+### From source
+
+```sh
+git clone https://github.com/sipemu/dbt-lineage-viewer.git
+cd dbt-lineage-viewer
 cargo install --path .
 ```
 
-Or build from source:
-
-```sh
-git clone https://github.com/your-username/dbt-lineage-viewer.git
-cd dbt-lineage-viewer
-cargo build --release
-```
-
-The binary is at `target/release/dbt-lineage`.
+The binary is installed to `~/.cargo/bin/dbt-lineage`.
 
 ## Usage
 
