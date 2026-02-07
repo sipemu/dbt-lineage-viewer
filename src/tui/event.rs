@@ -1756,15 +1756,9 @@ mod tests {
     fn test_shift_c_toggles_column_lineage() {
         let mut app = test_app();
         assert!(!app.show_column_lineage);
-        assert!(!handle_key_event(
-            &mut app,
-            key_shift(KeyCode::Char('C'))
-        ));
+        assert!(!handle_key_event(&mut app, key_shift(KeyCode::Char('C'))));
         assert!(app.show_column_lineage);
-        assert!(!handle_key_event(
-            &mut app,
-            key_shift(KeyCode::Char('C'))
-        ));
+        assert!(!handle_key_event(&mut app, key_shift(KeyCode::Char('C'))));
         assert!(!app.show_column_lineage);
     }
 
