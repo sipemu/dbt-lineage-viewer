@@ -215,6 +215,40 @@ fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // Column lineage (when enabled)
+    if app.show_column_lineage {
+        let col_edges = app.column_lineage.edges_for_target(&node.unique_id);
+        if !col_edges.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                format!("Column Lineage ({}):", col_edges.len()),
+                Style::default().bold(),
+            )]));
+            for edge in &col_edges {
+                let conf_color = match edge.confidence {
+                    crate::parser::column_lineage::ColumnConfidence::Direct => Color::Green,
+                    crate::parser::column_lineage::ColumnConfidence::Aliased => Color::Yellow,
+                    crate::parser::column_lineage::ColumnConfidence::Derived => Color::Magenta,
+                    crate::parser::column_lineage::ColumnConfidence::Star => Color::Cyan,
+                };
+                let source = if edge.source_column.is_empty() {
+                    edge.source_node.clone()
+                } else {
+                    format!("{}.{}", edge.source_node, edge.source_column)
+                };
+                lines.push(Line::from(vec![
+                    Span::raw(format!("  {} ", edge.target_column)),
+                    Span::styled("\u{2190} ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(format!("{} ", source)),
+                    Span::styled(
+                        format!("[{}]", edge.confidence.label()),
+                        Style::default().fg(conf_color),
+                    ),
+                ]));
+            }
+        }
+    }
+
     // Upstream
     let upstream = app.upstream_of(selected);
     if !upstream.is_empty() {
@@ -251,6 +285,40 @@ fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // Impact analysis (when path highlighting is active)
+    if let Some(ref report) = app.impact_report {
+        if app.path_highlight_source == Some(selected) {
+            let severity_color = match report.overall_severity {
+                crate::graph::impact::ImpactSeverity::Critical => Color::Red,
+                crate::graph::impact::ImpactSeverity::High => Color::LightRed,
+                crate::graph::impact::ImpactSeverity::Medium => Color::Yellow,
+                crate::graph::impact::ImpactSeverity::Low => Color::Green,
+            };
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "Impact Analysis:",
+                Style::default().bold(),
+            )]));
+            lines.push(Line::from(vec![
+                Span::styled("  Severity: ", Style::default().bold()),
+                Span::styled(
+                    report.overall_severity.label(),
+                    Style::default().fg(severity_color),
+                ),
+            ]));
+            lines.push(Line::from(format!(
+                "  Affected: {} models, {} tests, {} exposures",
+                report.affected_models, report.affected_tests, report.affected_exposures
+            )));
+            if report.longest_path_length > 0 {
+                lines.push(Line::from(format!(
+                    "  Longest path: {} hops",
+                    report.longest_path_length
+                )));
+            }
+        }
+    }
+
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
     f.render_widget(paragraph, inner);
 }
@@ -276,7 +344,10 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
             if !app.highlighted_path.is_empty() {
                 help.push_str(" | [path]");
             }
-            help.push_str(" | q: quit");
+            if app.show_column_lineage {
+                help.push_str(" | [columns]");
+            }
+            help.push_str(" | C: columns | q: quit");
             help
         }
         AppMode::Search => {

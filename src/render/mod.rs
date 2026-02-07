@@ -1,5 +1,9 @@
 pub mod ascii;
+pub mod diff;
 pub mod dot;
+pub mod html;
+pub mod impact;
 pub mod json;
 pub mod layout;
 pub mod mermaid;
+pub mod svg;

@@ -122,19 +122,15 @@ static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // Matches materialized='value' or materialized="value"
-static MATERIALIZED_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"materialized\s*=\s*['"]([^'"]+)['"]"#).unwrap()
-});
+static MATERIALIZED_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"materialized\s*=\s*['"]([^'"]+)['"]"#).unwrap());
 
 // Matches tags=['a', 'b'] or tags=["a", "b"]
-static TAGS_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"tags\s*=\s*\[([^\]]*)\]"#).unwrap()
-});
+static TAGS_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"tags\s*=\s*\[([^\]]*)\]"#).unwrap());
 
 // Matches individual tag values inside the tags list
-static TAG_VALUE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"['"]([^'"]+)['"]"#).unwrap()
-});
+static TAG_VALUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"['"]([^'"]+)['"]"#).unwrap());
 
 /// Extract config() block settings from SQL content
 pub fn extract_config(sql: &str) -> SqlConfig {

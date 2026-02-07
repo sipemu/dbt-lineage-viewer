@@ -1,9 +1,12 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "dbt-lineage", about = "Visualize dbt model lineage")]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Model name to focus on (shows full lineage if omitted)
     pub model: Option<String>,
 
@@ -23,7 +26,7 @@ pub struct Cli {
     #[arg(short = 'i', long)]
     pub interactive: bool,
 
-    /// Output format: ascii (default), dot, json, mermaid
+    /// Output format: ascii (default), dot, json, mermaid, svg, html
     #[arg(short = 'o', long, default_value = "ascii")]
     pub output: OutputFormat,
 
@@ -58,6 +61,60 @@ pub enum OutputFormat {
     Dot,
     Json,
     Mermaid,
+    Svg,
+    Html,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Compute downstream impact analysis for a model
+    Impact {
+        /// Model name to analyze impact for
+        model: String,
+
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Output format: text (default) or json
+        #[arg(short = 'o', long, default_value = "text")]
+        output: ImpactOutputFormat,
+
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
+
+    /// Compare lineage between git refs
+    Diff {
+        /// Base git ref to compare from (e.g., main, HEAD~1)
+        #[arg(long)]
+        base: String,
+
+        /// Head git ref to compare to (defaults to working tree)
+        #[arg(long)]
+        head: Option<String>,
+
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Output format: text (default) or json
+        #[arg(short = 'o', long, default_value = "text")]
+        output: DiffOutputFormat,
+    },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum ImpactOutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum DiffOutputFormat {
+    Text,
+    Json,
 }
 
 #[cfg(test)]
@@ -69,6 +126,7 @@ mod tests {
     fn test_default_args() {
         let cli = Cli::try_parse_from(["dbt-lineage"]).unwrap();
         assert!(cli.model.is_none());
+        assert!(cli.command.is_none());
         assert!(!cli.interactive);
         assert!(cli.upstream.is_none());
         assert!(cli.downstream.is_none());
@@ -127,8 +185,7 @@ mod tests {
 
     #[test]
     fn test_select_long_flag() {
-        let cli =
-            Cli::try_parse_from(["dbt-lineage", "--select", "path:models/staging"]).unwrap();
+        let cli = Cli::try_parse_from(["dbt-lineage", "--select", "path:models/staging"]).unwrap();
         assert_eq!(cli.select.as_deref(), Some("path:models/staging"));
     }
 
@@ -136,16 +193,12 @@ mod tests {
     fn test_manifest_flag() {
         let cli =
             Cli::try_parse_from(["dbt-lineage", "--manifest", "/path/to/manifest.json"]).unwrap();
-        assert_eq!(
-            cli.manifest,
-            Some(PathBuf::from("/path/to/manifest.json"))
-        );
+        assert_eq!(cli.manifest, Some(PathBuf::from("/path/to/manifest.json")));
     }
 
     #[test]
     fn test_manifest_flag_directory() {
-        let cli =
-            Cli::try_parse_from(["dbt-lineage", "--manifest", "/path/to/project"]).unwrap();
+        let cli = Cli::try_parse_from(["dbt-lineage", "--manifest", "/path/to/project"]).unwrap();
         assert_eq!(cli.manifest, Some(PathBuf::from("/path/to/project")));
     }
 
@@ -163,8 +216,73 @@ mod tests {
         let cli = Cli::try_parse_from(["dbt-lineage", "-o", "mermaid"]).unwrap();
         assert!(matches!(cli.output, OutputFormat::Mermaid));
 
+        let cli = Cli::try_parse_from(["dbt-lineage", "-o", "svg"]).unwrap();
+        assert!(matches!(cli.output, OutputFormat::Svg));
+
+        let cli = Cli::try_parse_from(["dbt-lineage", "-o", "html"]).unwrap();
+        assert!(matches!(cli.output, OutputFormat::Html));
+
         // Invalid format
-        let result = Cli::try_parse_from(["dbt-lineage", "-o", "html"]);
+        let result = Cli::try_parse_from(["dbt-lineage", "-o", "yaml"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_impact_subcommand() {
+        let cli =
+            Cli::try_parse_from(["dbt-lineage", "impact", "orders", "-p", "/path/to/project"])
+                .unwrap();
+        match cli.command {
+            Some(Command::Impact {
+                ref model,
+                ref project_dir,
+                ..
+            }) => {
+                assert_eq!(model, "orders");
+                assert_eq!(project_dir, &PathBuf::from("/path/to/project"));
+            }
+            _ => panic!("Expected Impact subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_impact_subcommand_json() {
+        let cli = Cli::try_parse_from(["dbt-lineage", "impact", "orders", "-o", "json"]).unwrap();
+        match cli.command {
+            Some(Command::Impact { ref output, .. }) => {
+                assert!(matches!(output, ImpactOutputFormat::Json));
+            }
+            _ => panic!("Expected Impact subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_diff_subcommand() {
+        let cli = Cli::try_parse_from(["dbt-lineage", "diff", "--base", "main"]).unwrap();
+        match cli.command {
+            Some(Command::Diff {
+                ref base, ref head, ..
+            }) => {
+                assert_eq!(base, "main");
+                assert!(head.is_none());
+            }
+            _ => panic!("Expected Diff subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_diff_subcommand_with_head() {
+        let cli =
+            Cli::try_parse_from(["dbt-lineage", "diff", "--base", "main", "--head", "feature"])
+                .unwrap();
+        match cli.command {
+            Some(Command::Diff {
+                ref base, ref head, ..
+            }) => {
+                assert_eq!(base, "main");
+                assert_eq!(head.as_deref(), Some("feature"));
+            }
+            _ => panic!("Expected Diff subcommand"),
+        }
     }
 }

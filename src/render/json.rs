@@ -216,7 +216,13 @@ mod tests {
         let mut graph = LineageGraph::new();
         let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
         let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
-        graph.add_edge(a, b, EdgeData { edge_type: EdgeType::Ref });
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
         let output = render_to_string(&graph);
         // Should parse as valid JSON
         let _: serde_json::Value = serde_json::from_str(&output).unwrap();

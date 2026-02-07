@@ -263,8 +263,12 @@ impl<'a> GraphWidget<'a> {
                 )
             } else if has_highlight && is_on_path && !is_selected {
                 (
-                    Style::default().fg(node_fg).add_modifier(ratatui::style::Modifier::BOLD),
-                    Style::default().fg(node_fg).add_modifier(ratatui::style::Modifier::BOLD),
+                    Style::default()
+                        .fg(node_fg)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                    Style::default()
+                        .fg(node_fg)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
                 )
             } else {
                 (Style::default().fg(node_fg), Style::default().fg(node_fg))

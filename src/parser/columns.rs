@@ -6,13 +6,11 @@ static JINJA_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{-?[\s\S]*?-?\}\}|\{%-?[\s\S]*?-?%\}").unwrap());
 
 /// Regex to strip Jinja comments {# ... #}
-static JINJA_COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\{#[\s\S]*?#\}").unwrap());
+static JINJA_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{#[\s\S]*?#\}").unwrap());
 
 /// Match the beginning of a SELECT clause (possibly with DISTINCT).
-static SELECT_START: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?is)\bSELECT\b\s+(?:DISTINCT\s+)?").unwrap()
-});
+static SELECT_START: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bSELECT\b\s+(?:DISTINCT\s+)?").unwrap());
 
 /// Extract column names from the outermost SELECT clause of a SQL string.
 ///
@@ -155,7 +153,10 @@ fn extract_alias_after_paren(item: &str) -> Option<String> {
         return None;
     }
     // Strip leading AS (case-insensitive)
-    let after = if after.len() >= 3 && after[..2].eq_ignore_ascii_case("as") && after.as_bytes()[2].is_ascii_whitespace() {
+    let after = if after.len() >= 3
+        && after[..2].eq_ignore_ascii_case("as")
+        && after.as_bytes()[2].is_ascii_whitespace()
+    {
         after[2..].trim()
     } else {
         after
@@ -303,7 +304,10 @@ mod tests {
             FROM orders
         "#;
         let cols = extract_select_columns(sql);
-        assert_eq!(cols, vec!["order_id", "customer_id", "order_date", "status"]);
+        assert_eq!(
+            cols,
+            vec!["order_id", "customer_id", "order_date", "status"]
+        );
     }
 
     #[test]

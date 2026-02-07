@@ -134,6 +134,7 @@ fn handle_normal_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Char('o') if app.has_run_output() => app.mode = AppMode::RunOutput,
         KeyCode::Char('f') => app.mode = AppMode::Filter,
         KeyCode::Char('p') => app.toggle_path_highlight(),
+        KeyCode::Char('C') => app.toggle_column_lineage(),
         _ => {}
     }
     false
@@ -1639,20 +1640,30 @@ mod tests {
     fn test_filter_toggle_models() {
         let mut app = test_app();
         app.mode = AppMode::Filter;
-        assert!(app.filter_node_types.contains(&crate::graph::types::NodeType::Model));
+        assert!(app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Model));
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('m'))));
-        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Model));
+        assert!(!app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Model));
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('m'))));
-        assert!(app.filter_node_types.contains(&crate::graph::types::NodeType::Model));
+        assert!(app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Model));
     }
 
     #[test]
     fn test_filter_toggle_sources() {
         let mut app = test_app();
         app.mode = AppMode::Filter;
-        assert!(app.filter_node_types.contains(&crate::graph::types::NodeType::Source));
+        assert!(app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Source));
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('s'))));
-        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Source));
+        assert!(!app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Source));
     }
 
     #[test]
@@ -1660,7 +1671,9 @@ mod tests {
         let mut app = test_app();
         app.mode = AppMode::Filter;
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('e'))));
-        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Exposure));
+        assert!(!app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Exposure));
     }
 
     #[test]
@@ -1668,7 +1681,9 @@ mod tests {
         let mut app = test_app();
         app.mode = AppMode::Filter;
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('t'))));
-        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Test));
+        assert!(!app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Test));
     }
 
     #[test]
@@ -1676,7 +1691,9 @@ mod tests {
         let mut app = test_app();
         app.mode = AppMode::Filter;
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('d'))));
-        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Seed));
+        assert!(!app
+            .filter_node_types
+            .contains(&crate::graph::types::NodeType::Seed));
     }
 
     #[test]
@@ -1731,5 +1748,36 @@ mod tests {
         app.selected_node = None;
         assert!(!handle_key_event(&mut app, key(KeyCode::Char('p'))));
         assert!(app.highlighted_path.is_empty());
+    }
+
+    // ─── Column lineage tests ───
+
+    #[test]
+    fn test_shift_c_toggles_column_lineage() {
+        let mut app = test_app();
+        assert!(!app.show_column_lineage);
+        assert!(!handle_key_event(
+            &mut app,
+            key_shift(KeyCode::Char('C'))
+        ));
+        assert!(app.show_column_lineage);
+        assert!(!handle_key_event(
+            &mut app,
+            key_shift(KeyCode::Char('C'))
+        ));
+        assert!(!app.show_column_lineage);
+    }
+
+    // ─── Impact report via path highlight tests ───
+
+    #[test]
+    fn test_path_highlight_includes_impact() {
+        let mut app = test_app();
+        assert!(app.impact_report.is_none());
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('p'))));
+        assert!(app.impact_report.is_some());
+        // Clear
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('p'))));
+        assert!(app.impact_report.is_none());
     }
 }

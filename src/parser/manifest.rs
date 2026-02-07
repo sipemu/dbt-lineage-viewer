@@ -131,8 +131,8 @@ pub fn build_graph_from_manifest(manifest_path: &Path) -> Result<LineageGraph> {
 }
 
 /// Build a LineageGraph from an already-parsed Manifest struct.
-/// This is separated for testability.
-fn build_graph_from_parsed_manifest(manifest: &Manifest) -> Result<LineageGraph> {
+/// This is separated for testability and reuse by the diff feature.
+pub fn build_graph_from_parsed_manifest(manifest: &Manifest) -> Result<LineageGraph> {
     let mut graph = LineageGraph::new();
     // Map from original manifest unique_id to graph NodeIndex
     let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
@@ -285,9 +285,7 @@ fn infer_edge_type(dep_unique_id: &str) -> EdgeType {
 
 /// Return None for empty or whitespace-only strings
 fn non_empty_string(s: &Option<String>) -> Option<String> {
-    s.as_ref()
-        .filter(|v| !v.trim().is_empty())
-        .cloned()
+    s.as_ref().filter(|v| !v.trim().is_empty()).cloned()
 }
 
 #[cfg(test)]
@@ -349,14 +347,8 @@ mod tests {
             infer_edge_type("model.my_project.stg_orders"),
             EdgeType::Ref
         );
-        assert_eq!(
-            infer_edge_type("test.my_project.some_test"),
-            EdgeType::Test
-        );
-        assert_eq!(
-            infer_edge_type("seed.my_project.countries"),
-            EdgeType::Ref
-        );
+        assert_eq!(infer_edge_type("test.my_project.some_test"), EdgeType::Test);
+        assert_eq!(infer_edge_type("seed.my_project.countries"), EdgeType::Ref);
     }
 
     #[test]
@@ -824,14 +816,28 @@ mod tests {
 
         // The fixture has: 3 sources, 3 staging models, 2 mart models, 1 seed, 1 test, 1 exposure
         // = 11 nodes total
-        assert!(graph.node_count() >= 10, "Expected at least 10 nodes, got {}", graph.node_count());
+        assert!(
+            graph.node_count() >= 10,
+            "Expected at least 10 nodes, got {}",
+            graph.node_count()
+        );
 
         // Check we have all node types present
-        let has_source = graph.node_indices().any(|i| graph[i].node_type == NodeType::Source);
-        let has_model = graph.node_indices().any(|i| graph[i].node_type == NodeType::Model);
-        let has_seed = graph.node_indices().any(|i| graph[i].node_type == NodeType::Seed);
-        let has_test = graph.node_indices().any(|i| graph[i].node_type == NodeType::Test);
-        let has_exposure = graph.node_indices().any(|i| graph[i].node_type == NodeType::Exposure);
+        let has_source = graph
+            .node_indices()
+            .any(|i| graph[i].node_type == NodeType::Source);
+        let has_model = graph
+            .node_indices()
+            .any(|i| graph[i].node_type == NodeType::Model);
+        let has_seed = graph
+            .node_indices()
+            .any(|i| graph[i].node_type == NodeType::Seed);
+        let has_test = graph
+            .node_indices()
+            .any(|i| graph[i].node_type == NodeType::Test);
+        let has_exposure = graph
+            .node_indices()
+            .any(|i| graph[i].node_type == NodeType::Exposure);
 
         assert!(has_source, "Should have source nodes");
         assert!(has_model, "Should have model nodes");

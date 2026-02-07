@@ -311,8 +311,7 @@ mod tests {
             include_exposures: true,
         };
         // Focus on "orders" with 1 upstream, 0 downstream
-        let filtered =
-            filter_graph(&g, Some("orders"), Some(1), Some(0), &filter, &[]).unwrap();
+        let filtered = filter_graph(&g, Some("orders"), Some(1), Some(0), &filter, &[]).unwrap();
         // Should have: orders + stg_orders (1 upstream)
         assert_eq!(filtered.node_count(), 2);
     }
@@ -571,15 +570,8 @@ mod tests {
     fn test_selector_empty_does_not_filter() {
         let g = make_tagged_graph();
         let no_selectors: Vec<Selector> = vec![];
-        let filtered = filter_graph(
-            &g,
-            None,
-            None,
-            None,
-            &default_type_filter(),
-            &no_selectors,
-        )
-        .unwrap();
+        let filtered =
+            filter_graph(&g, None, None, None, &default_type_filter(), &no_selectors).unwrap();
         assert_eq!(filtered.node_count(), 4);
     }
 
