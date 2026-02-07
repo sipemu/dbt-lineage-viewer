@@ -100,6 +100,66 @@ pub fn extract_sources(sql: &str) -> Vec<SourceCall> {
     sources
 }
 
+/// Parsed config block from SQL
+#[derive(Debug, Clone, Default)]
+pub struct SqlConfig {
+    pub materialized: Option<String>,
+    pub tags: Vec<String>,
+}
+
+// Matches {{ config(...) }} blocks — captures the inner arguments
+static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?x)
+        \{\{-?\s*
+        config\s*\(
+        ([\s\S]*?)
+        \)\s*
+        -?\}\}
+    "#,
+    )
+    .unwrap()
+});
+
+// Matches materialized='value' or materialized="value"
+static MATERIALIZED_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"materialized\s*=\s*['"]([^'"]+)['"]"#).unwrap()
+});
+
+// Matches tags=['a', 'b'] or tags=["a", "b"]
+static TAGS_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"tags\s*=\s*\[([^\]]*)\]"#).unwrap()
+});
+
+// Matches individual tag values inside the tags list
+static TAG_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"['"]([^'"]+)['"]"#).unwrap()
+});
+
+/// Extract config() block settings from SQL content
+pub fn extract_config(sql: &str) -> SqlConfig {
+    let cleaned = strip_jinja_comments(sql);
+    let mut config = SqlConfig::default();
+
+    if let Some(cap) = CONFIG_PATTERN.captures(&cleaned) {
+        let inner = &cap[1];
+
+        if let Some(mat) = MATERIALIZED_PATTERN.captures(inner) {
+            config.materialized = Some(mat[1].to_string());
+        }
+
+        if let Some(tags_cap) = TAGS_PATTERN.captures(inner) {
+            let tags_inner = &tags_cap[1];
+            config.tags = TAG_VALUE
+                .captures_iter(tags_inner)
+                .map(|c| c[1].to_string())
+                .collect();
+        }
+    }
+
+    config
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +267,76 @@ mod tests {
         let refs = extract_refs(sql);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "stg_orders");
+    }
+
+    // ─── Config extraction tests ───
+
+    #[test]
+    fn test_config_materialized() {
+        let sql = "{{ config(materialized='incremental') }}\nSELECT 1";
+        let config = extract_config(sql);
+        assert_eq!(config.materialized.as_deref(), Some("incremental"));
+        assert!(config.tags.is_empty());
+    }
+
+    #[test]
+    fn test_config_materialized_double_quotes() {
+        let sql = r#"{{ config(materialized="table") }}"#;
+        let config = extract_config(sql);
+        assert_eq!(config.materialized.as_deref(), Some("table"));
+    }
+
+    #[test]
+    fn test_config_tags() {
+        let sql = "{{ config(tags=['nightly', 'finance']) }}\nSELECT 1";
+        let config = extract_config(sql);
+        assert_eq!(config.tags, vec!["nightly", "finance"]);
+    }
+
+    #[test]
+    fn test_config_both() {
+        let sql = "{{ config(materialized='view', tags=['daily']) }}\nSELECT 1";
+        let config = extract_config(sql);
+        assert_eq!(config.materialized.as_deref(), Some("view"));
+        assert_eq!(config.tags, vec!["daily"]);
+    }
+
+    #[test]
+    fn test_config_whitespace_control() {
+        let sql = "{{- config(materialized='ephemeral') -}}\nSELECT 1";
+        let config = extract_config(sql);
+        assert_eq!(config.materialized.as_deref(), Some("ephemeral"));
+    }
+
+    #[test]
+    fn test_config_multiline() {
+        let sql = r#"{{
+            config(
+                materialized='incremental',
+                tags=['nightly', 'warehouse']
+            )
+        }}
+        SELECT 1"#;
+        let config = extract_config(sql);
+        assert_eq!(config.materialized.as_deref(), Some("incremental"));
+        assert_eq!(config.tags, vec!["nightly", "warehouse"]);
+    }
+
+    #[test]
+    fn test_no_config() {
+        let sql = "SELECT * FROM {{ ref('orders') }}";
+        let config = extract_config(sql);
+        assert!(config.materialized.is_none());
+        assert!(config.tags.is_empty());
+    }
+
+    #[test]
+    fn test_config_in_comment_ignored() {
+        let sql = r#"
+            {# {{ config(materialized='table') }} #}
+            SELECT 1
+        "#;
+        let config = extract_config(sql);
+        assert!(config.materialized.is_none());
     }
 }

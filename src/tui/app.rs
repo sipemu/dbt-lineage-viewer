@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
@@ -23,6 +23,15 @@ pub enum AppMode {
     ContextMenu,
     RunConfirm,
     RunOutput,
+    Filter,
+}
+
+/// Filter by run status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterStatus {
+    Errored,
+    Success,
+    NeverRun,
 }
 
 /// State of a background dbt run
@@ -99,6 +108,15 @@ pub struct App {
     pub run_state: DbtRunState,
     pub run_output_scroll: usize,
     pub pending_run: Option<DbtRunRequest>,
+
+    // Filtering state
+    pub filter_node_types: HashSet<NodeType>,
+    pub filter_status: Option<FilterStatus>,
+
+    // Path highlighting state
+    pub highlighted_path: HashSet<NodeIndex>,
+    /// The node for which the path was computed (so we can clear on re-select)
+    pub path_highlight_source: Option<NodeIndex>,
 }
 
 impl App {
@@ -128,6 +146,19 @@ impl App {
                 .unwrap_or(0);
             node_list_state.select(Some(first_node_idx));
         }
+
+        // Initialize filter_node_types with all node types shown by default
+        let filter_node_types: HashSet<NodeType> = [
+            NodeType::Model,
+            NodeType::Source,
+            NodeType::Exposure,
+            NodeType::Test,
+            NodeType::Seed,
+            NodeType::Snapshot,
+            NodeType::Phantom,
+        ]
+        .into_iter()
+        .collect();
 
         App {
             graph,
@@ -161,6 +192,10 @@ impl App {
             run_state: DbtRunState::Idle,
             run_output_scroll: 0,
             pending_run: None,
+            filter_node_types,
+            filter_status: None,
+            highlighted_path: HashSet::new(),
+            path_highlight_source: None,
         }
     }
 
@@ -571,6 +606,110 @@ impl App {
             .unwrap_or(&RunStatus::NeverRun)
     }
 
+    /// Check if a node passes the current filters
+    pub fn node_passes_filter(&self, idx: NodeIndex) -> bool {
+        let node = &self.graph[idx];
+
+        // Check node type filter
+        if !self.filter_node_types.contains(&node.node_type) {
+            return false;
+        }
+
+        // Check status filter
+        if let Some(ref fs) = self.filter_status {
+            let run_status = self.node_run_status(&node.unique_id);
+            match fs {
+                FilterStatus::Errored => {
+                    if !matches!(run_status, RunStatus::Error { .. }) {
+                        return false;
+                    }
+                }
+                FilterStatus::Success => {
+                    if !matches!(run_status, RunStatus::Success { .. }) {
+                        return false;
+                    }
+                }
+                FilterStatus::NeverRun => {
+                    if !matches!(run_status, RunStatus::NeverRun) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Toggle a node type in the filter set
+    pub fn toggle_filter_node_type(&mut self, nt: NodeType) {
+        if self.filter_node_types.contains(&nt) {
+            self.filter_node_types.remove(&nt);
+        } else {
+            self.filter_node_types.insert(nt);
+        }
+    }
+
+    /// Build a description of active filters for the help bar
+    pub fn filter_description(&self) -> Option<String> {
+        let all_types: HashSet<NodeType> = [
+            NodeType::Model,
+            NodeType::Source,
+            NodeType::Exposure,
+            NodeType::Test,
+            NodeType::Seed,
+            NodeType::Snapshot,
+            NodeType::Phantom,
+        ]
+        .into_iter()
+        .collect();
+
+        let mut parts = Vec::new();
+
+        // Show which types are hidden
+        let hidden: Vec<&str> = all_types
+            .difference(&self.filter_node_types)
+            .map(|nt| nt.label())
+            .collect();
+        if !hidden.is_empty() {
+            parts.push(format!("hide:{}", hidden.join(",")));
+        }
+
+        // Show status filter
+        if let Some(ref fs) = self.filter_status {
+            let label = match fs {
+                FilterStatus::Errored => "errored",
+                FilterStatus::Success => "success",
+                FilterStatus::NeverRun => "never-run",
+            };
+            parts.push(format!("status:{}", label));
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    }
+
+    /// Toggle path highlighting for the currently selected node.
+    /// If already highlighting this node, clear it. Otherwise compute paths.
+    pub fn toggle_path_highlight(&mut self) {
+        let Some(selected) = self.selected_node else {
+            return;
+        };
+
+        // If already highlighting this node, clear
+        if self.path_highlight_source == Some(selected) {
+            self.highlighted_path.clear();
+            self.path_highlight_source = None;
+            return;
+        }
+
+        // Compute the full path through the selected node
+        self.highlighted_path = compute_path_through(&self.graph, selected);
+        self.path_highlight_source = Some(selected);
+    }
+
     /// Whether a dbt run is currently in progress
     pub fn is_run_in_progress(&self) -> bool {
         matches!(self.run_state, DbtRunState::Running { .. })
@@ -632,6 +771,39 @@ fn build_node_groups(
         .collect()
 }
 
+/// Compute all nodes on paths through a given node.
+/// BFS backward to find all ancestors, BFS forward to find all descendants,
+/// then union them together with the node itself.
+pub fn compute_path_through(graph: &LineageGraph, node: NodeIndex) -> HashSet<NodeIndex> {
+    let mut result = HashSet::new();
+    result.insert(node);
+
+    // BFS backward (upstream / ancestors)
+    let mut queue = VecDeque::new();
+    queue.push_back(node);
+    while let Some(current) = queue.pop_front() {
+        for edge in graph.edges_directed(current, Direction::Incoming) {
+            let src = edge.source();
+            if result.insert(src) {
+                queue.push_back(src);
+            }
+        }
+    }
+
+    // BFS forward (downstream / descendants)
+    queue.push_back(node);
+    while let Some(current) = queue.pop_front() {
+        for edge in graph.edges_directed(current, Direction::Outgoing) {
+            let tgt = edge.target();
+            if result.insert(tgt) {
+                queue.push_back(tgt);
+            }
+        }
+    }
+
+    result
+}
+
 /// Build the flat list of entries from groups and collapse state
 fn build_node_list_entries(
     groups: &[NodeGroup],
@@ -664,6 +836,9 @@ mod tests {
             node_type: NodeType::Source,
             file_path: Some(PathBuf::from("models/schema.yml")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let stg = graph.add_node(NodeData {
             unique_id: "model.stg_orders".into(),
@@ -671,6 +846,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: Some(PathBuf::from("models/staging/stg_orders.sql")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let mart = graph.add_node(NodeData {
             unique_id: "model.orders".into(),
@@ -678,6 +856,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: Some(PathBuf::from("models/marts/orders.sql")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let exp = graph.add_node(NodeData {
             unique_id: "exposure.dashboard".into(),
@@ -685,6 +866,9 @@ mod tests {
             node_type: NodeType::Exposure,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         graph.add_edge(
             src,
@@ -1096,6 +1280,9 @@ mod tests {
             node_type: NodeType::Source,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let a = graph.add_node(NodeData {
             unique_id: "model.stg_a".into(),
@@ -1103,6 +1290,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let b = graph.add_node(NodeData {
             unique_id: "model.stg_b".into(),
@@ -1110,6 +1300,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         // src → a, src → b — a and b end up in the same layer
         graph.add_edge(
@@ -1192,6 +1385,9 @@ mod tests {
             node_type: NodeType::Exposure,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         assert_eq!(
             group_key_for_node(&node_exp, std::path::Path::new("/tmp")),
@@ -1204,6 +1400,9 @@ mod tests {
             node_type: NodeType::Phantom,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         assert_eq!(
             group_key_for_node(&node_phantom, std::path::Path::new("/tmp")),
@@ -1217,6 +1416,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: Some(PathBuf::from("models/staging/x.sql")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         assert_eq!(
             group_key_for_node(&node_model, std::path::Path::new("/tmp")),
@@ -1234,5 +1436,295 @@ mod tests {
             .any(|e| matches!(e, NodeListEntry::GroupHeader(_))));
         // Should have node entries
         assert!(entries.iter().any(|e| matches!(e, NodeListEntry::Node(_))));
+    }
+
+    // ─── Filter tests ───
+
+    #[test]
+    fn test_filter_node_types_defaults_all() {
+        let app = test_app();
+        assert!(app.filter_node_types.contains(&NodeType::Model));
+        assert!(app.filter_node_types.contains(&NodeType::Source));
+        assert!(app.filter_node_types.contains(&NodeType::Exposure));
+        assert!(app.filter_node_types.contains(&NodeType::Test));
+        assert!(app.filter_node_types.contains(&NodeType::Seed));
+        assert!(app.filter_node_types.contains(&NodeType::Snapshot));
+        assert!(app.filter_node_types.contains(&NodeType::Phantom));
+    }
+
+    #[test]
+    fn test_filter_status_default_none() {
+        let app = test_app();
+        assert!(app.filter_status.is_none());
+    }
+
+    #[test]
+    fn test_node_passes_filter_all_pass() {
+        let app = test_app();
+        // All nodes should pass with default filters
+        for idx in app.graph.node_indices() {
+            assert!(app.node_passes_filter(idx));
+        }
+    }
+
+    #[test]
+    fn test_node_passes_filter_hide_sources() {
+        let mut app = test_app();
+        app.filter_node_types.remove(&NodeType::Source);
+
+        for idx in app.graph.node_indices() {
+            let node = &app.graph[idx];
+            if node.node_type == NodeType::Source {
+                assert!(!app.node_passes_filter(idx));
+            } else {
+                assert!(app.node_passes_filter(idx));
+            }
+        }
+    }
+
+    #[test]
+    fn test_node_passes_filter_status_never_run() {
+        let mut app = test_app();
+        app.filter_status = Some(FilterStatus::NeverRun);
+
+        // All nodes are NeverRun in test, so all should pass
+        for idx in app.graph.node_indices() {
+            assert!(app.node_passes_filter(idx));
+        }
+    }
+
+    #[test]
+    fn test_node_passes_filter_status_errored() {
+        let mut app = test_app();
+        app.filter_status = Some(FilterStatus::Errored);
+
+        // No nodes have errored status, so none should pass
+        for idx in app.graph.node_indices() {
+            assert!(!app.node_passes_filter(idx));
+        }
+    }
+
+    #[test]
+    fn test_node_passes_filter_status_success() {
+        let mut app = test_app();
+        app.filter_status = Some(FilterStatus::Success);
+
+        // No nodes have success status, so none should pass
+        for idx in app.graph.node_indices() {
+            assert!(!app.node_passes_filter(idx));
+        }
+    }
+
+    #[test]
+    fn test_toggle_filter_node_type() {
+        let mut app = test_app();
+        assert!(app.filter_node_types.contains(&NodeType::Model));
+        app.toggle_filter_node_type(NodeType::Model);
+        assert!(!app.filter_node_types.contains(&NodeType::Model));
+        app.toggle_filter_node_type(NodeType::Model);
+        assert!(app.filter_node_types.contains(&NodeType::Model));
+    }
+
+    #[test]
+    fn test_filter_description_no_filters() {
+        let app = test_app();
+        assert!(app.filter_description().is_none());
+    }
+
+    #[test]
+    fn test_filter_description_hidden_types() {
+        let mut app = test_app();
+        app.filter_node_types.remove(&NodeType::Source);
+        let desc = app.filter_description().unwrap();
+        assert!(desc.contains("hide:"));
+        assert!(desc.contains("source"));
+    }
+
+    #[test]
+    fn test_filter_description_status() {
+        let mut app = test_app();
+        app.filter_status = Some(FilterStatus::Errored);
+        let desc = app.filter_description().unwrap();
+        assert!(desc.contains("status:errored"));
+    }
+
+    #[test]
+    fn test_filter_description_both() {
+        let mut app = test_app();
+        app.filter_node_types.remove(&NodeType::Test);
+        app.filter_status = Some(FilterStatus::NeverRun);
+        let desc = app.filter_description().unwrap();
+        assert!(desc.contains("hide:"));
+        assert!(desc.contains("status:never-run"));
+    }
+
+    // ─── Path highlighting tests ───
+
+    #[test]
+    fn test_compute_path_through_middle_node() {
+        // src → stg → mart → exp
+        let graph = make_test_graph();
+        let stg = graph
+            .node_indices()
+            .find(|&i| graph[i].label == "stg_orders")
+            .unwrap();
+        let path = compute_path_through(&graph, stg);
+        // Should include all 4 nodes (stg is in the middle of a linear chain)
+        assert_eq!(path.len(), 4);
+    }
+
+    #[test]
+    fn test_compute_path_through_root_node() {
+        // src → stg → mart → exp
+        let graph = make_test_graph();
+        let src = graph
+            .node_indices()
+            .find(|&i| graph[i].label == "raw.orders")
+            .unwrap();
+        let path = compute_path_through(&graph, src);
+        // Root: no ancestors, all downstream = all 4 nodes
+        assert_eq!(path.len(), 4);
+    }
+
+    #[test]
+    fn test_compute_path_through_leaf_node() {
+        let graph = make_test_graph();
+        let exp = graph
+            .node_indices()
+            .find(|&i| graph[i].label == "dashboard")
+            .unwrap();
+        let path = compute_path_through(&graph, exp);
+        // Leaf: all upstream, no downstream = all 4 nodes
+        assert_eq!(path.len(), 4);
+    }
+
+    #[test]
+    fn test_compute_path_through_isolated_node() {
+        let mut graph = LineageGraph::new();
+        let n = graph.add_node(NodeData {
+            unique_id: "model.isolated".into(),
+            label: "isolated".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        let path = compute_path_through(&graph, n);
+        assert_eq!(path.len(), 1);
+        assert!(path.contains(&n));
+    }
+
+    #[test]
+    fn test_compute_path_through_fan_out() {
+        // src → a, src → b
+        let graph = make_fan_graph();
+        let src = graph
+            .node_indices()
+            .find(|&i| graph[i].label == "raw.orders")
+            .unwrap();
+        let path = compute_path_through(&graph, src);
+        // Should include src, a, and b
+        assert_eq!(path.len(), 3);
+    }
+
+    #[test]
+    fn test_compute_path_through_fan_in() {
+        // a → c, b → c
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(NodeData {
+            unique_id: "model.a".into(),
+            label: "a".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        let b = graph.add_node(NodeData {
+            unique_id: "model.b".into(),
+            label: "b".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        let c = graph.add_node(NodeData {
+            unique_id: "model.c".into(),
+            label: "c".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        graph.add_edge(a, c, EdgeData { edge_type: EdgeType::Ref });
+        graph.add_edge(b, c, EdgeData { edge_type: EdgeType::Ref });
+
+        let path = compute_path_through(&graph, c);
+        // c has ancestors a and b, no descendants
+        assert_eq!(path.len(), 3);
+        assert!(path.contains(&a));
+        assert!(path.contains(&b));
+        assert!(path.contains(&c));
+
+        // Path through a: only a and c (not b)
+        let path_a = compute_path_through(&graph, a);
+        assert_eq!(path_a.len(), 2);
+        assert!(path_a.contains(&a));
+        assert!(path_a.contains(&c));
+    }
+
+    #[test]
+    fn test_toggle_path_highlight() {
+        let mut app = test_app();
+        assert!(app.highlighted_path.is_empty());
+        assert!(app.path_highlight_source.is_none());
+
+        // Toggle on
+        app.toggle_path_highlight();
+        assert!(!app.highlighted_path.is_empty());
+        assert!(app.path_highlight_source.is_some());
+
+        let source = app.path_highlight_source;
+        let path_len = app.highlighted_path.len();
+
+        // Toggle off (same node selected)
+        app.toggle_path_highlight();
+        assert!(app.highlighted_path.is_empty());
+        assert!(app.path_highlight_source.is_none());
+        let _ = (source, path_len);
+    }
+
+    #[test]
+    fn test_toggle_path_highlight_different_node() {
+        let mut app = test_app();
+        // Enable for first node
+        app.toggle_path_highlight();
+        let first_source = app.path_highlight_source;
+        assert!(first_source.is_some());
+
+        // Select a different node
+        app.cycle_next_node();
+        assert_ne!(app.selected_node, first_source);
+
+        // Toggle should compute new path (not clear)
+        app.toggle_path_highlight();
+        assert!(!app.highlighted_path.is_empty());
+        assert_eq!(app.path_highlight_source, app.selected_node);
+    }
+
+    #[test]
+    fn test_toggle_path_highlight_no_selection() {
+        let mut app = test_app();
+        app.selected_node = None;
+        app.toggle_path_highlight();
+        assert!(app.highlighted_path.is_empty());
+        assert!(app.path_highlight_source.is_none());
     }
 }

@@ -56,6 +56,12 @@ pub struct NodeData {
     pub file_path: Option<PathBuf>,
     /// Description from YAML schema
     pub description: Option<String>,
+    /// Materialization strategy (table, view, incremental, ephemeral)
+    pub materialization: Option<String>,
+    /// Tags from config or YAML
+    pub tags: Vec<String>,
+    /// Column names exposed by this model (from SELECT clause)
+    pub columns: Vec<String>,
 }
 
 impl NodeData {
@@ -124,6 +130,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         assert_eq!(node.display_name(), "orders");
     }
@@ -136,6 +145,9 @@ mod tests {
             node_type: NodeType::Source,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         assert_eq!(node.display_name(), "src:raw.orders");
     }
@@ -156,6 +168,9 @@ mod tests {
                 node_type: nt,
                 file_path: None,
                 description: None,
+                materialization: None,
+                tags: vec![],
+                columns: vec![],
             };
             assert_eq!(node.display_name(), expected, "Failed for {:?}", nt);
         }

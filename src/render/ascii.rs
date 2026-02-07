@@ -244,6 +244,9 @@ mod tests {
             node_type,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         }
     }
 

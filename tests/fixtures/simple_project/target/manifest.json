@@ -1,0 +1,147 @@
+{
+  "nodes": {
+    "model.simple_project.stg_orders": {
+      "unique_id": "model.simple_project.stg_orders",
+      "name": "stg_orders",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["source.simple_project.raw.orders"]
+      },
+      "config": {
+        "materialized": "view",
+        "tags": ["staging"]
+      },
+      "description": "Staged orders data",
+      "path": "models/staging/stg_orders.sql"
+    },
+    "model.simple_project.stg_customers": {
+      "unique_id": "model.simple_project.stg_customers",
+      "name": "stg_customers",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["source.simple_project.raw.customers"]
+      },
+      "config": {
+        "materialized": "view",
+        "tags": ["staging"]
+      },
+      "description": "Staged customers data",
+      "path": "models/staging/stg_customers.sql"
+    },
+    "model.simple_project.stg_payments": {
+      "unique_id": "model.simple_project.stg_payments",
+      "name": "stg_payments",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["source.simple_project.raw.payments"]
+      },
+      "config": {
+        "materialized": "view",
+        "tags": ["staging"]
+      },
+      "description": "Staged payments data",
+      "path": "models/staging/stg_payments.sql"
+    },
+    "model.simple_project.orders": {
+      "unique_id": "model.simple_project.orders",
+      "name": "orders",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": [
+          "model.simple_project.stg_orders",
+          "model.simple_project.stg_payments"
+        ]
+      },
+      "config": {
+        "materialized": "table",
+        "tags": ["marts"]
+      },
+      "description": "Order fact table with payment details",
+      "path": "models/marts/orders.sql"
+    },
+    "model.simple_project.customers": {
+      "unique_id": "model.simple_project.customers",
+      "name": "customers",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": [
+          "model.simple_project.stg_customers",
+          "model.simple_project.orders"
+        ]
+      },
+      "config": {
+        "materialized": "table",
+        "tags": ["marts"]
+      },
+      "description": "Customer dimension table with lifetime metrics",
+      "path": "models/marts/customers.sql"
+    },
+    "seed.simple_project.countries": {
+      "unique_id": "seed.simple_project.countries",
+      "name": "countries",
+      "resource_type": "seed",
+      "depends_on": {
+        "nodes": []
+      },
+      "config": {
+        "materialized": "seed",
+        "tags": []
+      },
+      "description": "",
+      "path": "seeds/countries.csv"
+    },
+    "test.simple_project.assert_orders_positive_amount": {
+      "unique_id": "test.simple_project.assert_orders_positive_amount",
+      "name": "assert_orders_positive_amount",
+      "resource_type": "test",
+      "depends_on": {
+        "nodes": ["model.simple_project.orders"]
+      },
+      "config": {
+        "materialized": "test",
+        "tags": []
+      },
+      "description": "",
+      "path": "tests/assert_orders_positive_amount.sql"
+    }
+  },
+  "sources": {
+    "source.simple_project.raw.orders": {
+      "unique_id": "source.simple_project.raw.orders",
+      "name": "orders",
+      "source_name": "raw",
+      "resource_type": "source",
+      "description": "Raw orders table",
+      "path": "models/staging/schema.yml"
+    },
+    "source.simple_project.raw.customers": {
+      "unique_id": "source.simple_project.raw.customers",
+      "name": "customers",
+      "source_name": "raw",
+      "resource_type": "source",
+      "description": "Raw customers table",
+      "path": "models/staging/schema.yml"
+    },
+    "source.simple_project.raw.payments": {
+      "unique_id": "source.simple_project.raw.payments",
+      "name": "payments",
+      "source_name": "raw",
+      "resource_type": "source",
+      "description": "Raw payments table",
+      "path": "models/staging/schema.yml"
+    }
+  },
+  "exposures": {
+    "exposure.simple_project.weekly_report": {
+      "unique_id": "exposure.simple_project.weekly_report",
+      "name": "weekly_report",
+      "depends_on": {
+        "nodes": [
+          "model.simple_project.orders",
+          "model.simple_project.customers"
+        ]
+      },
+      "description": "Weekly business performance dashboard"
+    }
+  }
+}

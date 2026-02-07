@@ -55,6 +55,18 @@ pub struct ModelDefinition {
     pub description: Option<String>,
     #[serde(default)]
     pub columns: Vec<ColumnDefinition>,
+    #[serde(default)]
+    pub config: Option<ModelConfig>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ModelConfig {
+    #[serde(default)]
+    pub materialized: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

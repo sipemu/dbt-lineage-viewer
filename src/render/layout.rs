@@ -178,6 +178,9 @@ mod tests {
             node_type: NodeType::Source,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let b = g.add_node(NodeData {
             unique_id: "b".into(),
@@ -185,6 +188,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let c = g.add_node(NodeData {
             unique_id: "c".into(),
@@ -192,6 +198,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         g.add_edge(
             a,

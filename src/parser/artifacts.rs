@@ -289,6 +289,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: Some(std::path::PathBuf::from("models/stg_orders.sql")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         graph.add_node(NodeData {
             unique_id: "model.orders".into(),
@@ -296,6 +299,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         graph
     }
@@ -466,6 +472,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         let tmp = tempfile::tempdir().unwrap();
         let status = resolve_run_status(Some(&result), &node, tmp.path());
@@ -490,6 +499,9 @@ mod tests {
             node_type: NodeType::Test,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         let tmp = tempfile::tempdir().unwrap();
         let status = resolve_run_status(Some(&result), &node, tmp.path());
@@ -510,6 +522,9 @@ mod tests {
             node_type: NodeType::Test,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         let tmp = tempfile::tempdir().unwrap();
         let status = resolve_run_status(Some(&result), &node, tmp.path());
@@ -530,6 +545,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         let tmp = tempfile::tempdir().unwrap();
         let status = resolve_run_status(Some(&result), &node, tmp.path());
@@ -550,6 +568,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         };
         let tmp = tempfile::tempdir().unwrap();
         let status = resolve_run_status(Some(&result), &node, tmp.path());

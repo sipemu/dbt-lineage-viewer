@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use super::app::{App, AppMode, DbtRunState, DragState, NodeListEntry};
+use super::app::{App, AppMode, DbtRunState, DragState, FilterStatus, NodeListEntry};
 use super::graph_widget::hit_test_node;
 use super::runner::{detect_use_uv, DbtCommand, DbtRunRequest, SelectionScope};
 
@@ -92,6 +92,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
         AppMode::ContextMenu => handle_context_menu_mode(app, key),
         AppMode::RunConfirm => handle_run_confirm_mode(app, key),
         AppMode::RunOutput => handle_run_output_mode(app, key),
+        AppMode::Filter => handle_filter_mode(app, key),
     }
 }
 
@@ -131,6 +132,8 @@ fn handle_normal_key(app: &mut App, code: KeyCode) -> bool {
             app.mode = AppMode::RunMenu;
         }
         KeyCode::Char('o') if app.has_run_output() => app.mode = AppMode::RunOutput,
+        KeyCode::Char('f') => app.mode = AppMode::Filter,
+        KeyCode::Char('p') => app.toggle_path_highlight(),
         _ => {}
     }
     false
@@ -475,7 +478,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
     match app.mode {
         AppMode::ContextMenu | AppMode::RunMenu => handle_mouse_menu(app, mouse),
         AppMode::RunConfirm => handle_mouse_confirm(app, mouse),
-        AppMode::Normal => handle_mouse_normal(app, mouse),
+        AppMode::Normal | AppMode::Filter => handle_mouse_normal(app, mouse),
         _ => {}
     }
     false
@@ -542,6 +545,41 @@ fn handle_run_output_mode(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
+fn handle_filter_mode(app: &mut App, key: KeyEvent) -> bool {
+    use crate::graph::types::NodeType;
+
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        app.mode = AppMode::Normal;
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Char('m') => app.toggle_filter_node_type(NodeType::Model),
+        KeyCode::Char('s') => app.toggle_filter_node_type(NodeType::Source),
+        KeyCode::Char('e') => app.toggle_filter_node_type(NodeType::Exposure),
+        KeyCode::Char('t') => app.toggle_filter_node_type(NodeType::Test),
+        KeyCode::Char('d') => app.toggle_filter_node_type(NodeType::Seed),
+        KeyCode::Char('1') => {
+            app.filter_status = Some(FilterStatus::Errored);
+        }
+        KeyCode::Char('2') => {
+            app.filter_status = Some(FilterStatus::Success);
+        }
+        KeyCode::Char('3') => {
+            app.filter_status = Some(FilterStatus::NeverRun);
+        }
+        KeyCode::Char('0') => {
+            app.filter_status = None;
+        }
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+        }
+        _ => {}
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,6 +596,9 @@ mod tests {
             node_type: NodeType::Source,
             file_path: Some(PathBuf::from("models/schema.yml")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let stg = graph.add_node(NodeData {
             unique_id: "model.stg_orders".into(),
@@ -565,6 +606,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: Some(PathBuf::from("models/staging/stg_orders.sql")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let mart = graph.add_node(NodeData {
             unique_id: "model.orders".into(),
@@ -572,6 +616,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: Some(PathBuf::from("models/marts/orders.sql")),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         let exp = graph.add_node(NodeData {
             unique_id: "exposure.dashboard".into(),
@@ -579,6 +626,9 @@ mod tests {
             node_type: NodeType::Exposure,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         graph.add_edge(
             src,
@@ -1558,5 +1608,128 @@ mod tests {
         handle_mouse_event(&mut app, click);
         // Should select the node without starting a drag
         assert!(app.drag_state.is_none());
+    }
+
+    // ─── Filter mode tests ───
+
+    #[test]
+    fn test_normal_f_enters_filter() {
+        let mut app = test_app();
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('f'))));
+        assert_eq!(app.mode, AppMode::Filter);
+    }
+
+    #[test]
+    fn test_filter_esc_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Esc)));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_filter_ctrl_c_exits() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key_ctrl('c')));
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_filter_toggle_models() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(app.filter_node_types.contains(&crate::graph::types::NodeType::Model));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('m'))));
+        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Model));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('m'))));
+        assert!(app.filter_node_types.contains(&crate::graph::types::NodeType::Model));
+    }
+
+    #[test]
+    fn test_filter_toggle_sources() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(app.filter_node_types.contains(&crate::graph::types::NodeType::Source));
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('s'))));
+        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Source));
+    }
+
+    #[test]
+    fn test_filter_toggle_exposures() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('e'))));
+        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Exposure));
+    }
+
+    #[test]
+    fn test_filter_toggle_tests() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('t'))));
+        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Test));
+    }
+
+    #[test]
+    fn test_filter_toggle_seeds() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('d'))));
+        assert!(!app.filter_node_types.contains(&crate::graph::types::NodeType::Seed));
+    }
+
+    #[test]
+    fn test_filter_status_errored() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('1'))));
+        assert_eq!(app.filter_status, Some(FilterStatus::Errored));
+    }
+
+    #[test]
+    fn test_filter_status_success() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('2'))));
+        assert_eq!(app.filter_status, Some(FilterStatus::Success));
+    }
+
+    #[test]
+    fn test_filter_status_never_run() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('3'))));
+        assert_eq!(app.filter_status, Some(FilterStatus::NeverRun));
+    }
+
+    #[test]
+    fn test_filter_status_clear() {
+        let mut app = test_app();
+        app.mode = AppMode::Filter;
+        app.filter_status = Some(FilterStatus::Errored);
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('0'))));
+        assert!(app.filter_status.is_none());
+    }
+
+    // ─── Path highlighting tests ───
+
+    #[test]
+    fn test_normal_p_toggles_path() {
+        let mut app = test_app();
+        assert!(app.highlighted_path.is_empty());
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('p'))));
+        assert!(!app.highlighted_path.is_empty());
+        // Press again to clear
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('p'))));
+        assert!(app.highlighted_path.is_empty());
+    }
+
+    #[test]
+    fn test_path_highlight_no_selection() {
+        let mut app = test_app();
+        app.selected_node = None;
+        assert!(!handle_key_event(&mut app, key(KeyCode::Char('p'))));
+        assert!(app.highlighted_path.is_empty());
     }
 }

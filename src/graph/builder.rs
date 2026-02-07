@@ -3,8 +3,9 @@ use petgraph::stable_graph::NodeIndex;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::parser::columns::extract_select_columns;
 use crate::parser::discovery::DiscoveredFiles;
-use crate::parser::sql::{extract_refs, extract_sources};
+use crate::parser::sql::{extract_config, extract_refs, extract_sources};
 use crate::parser::yaml_schema::{parse_schema_file, ExposureDefinition};
 
 use super::types::*;
@@ -49,6 +50,9 @@ impl GraphBuilder {
             node_type: NodeType::Phantom,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         })
     }
 
@@ -76,6 +80,9 @@ impl GraphBuilder {
             node_type: NodeType::Phantom,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         })
     }
 }
@@ -118,17 +125,28 @@ fn add_source_nodes(
                     .description
                     .clone()
                     .or_else(|| source_def.description.clone()),
+                materialization: None,
+                tags: vec![],
+                columns: vec![],
             });
         }
     }
 }
 
-/// Parse YAML schema files: create source nodes, collect model descriptions and exposures
+/// Metadata collected from YAML for a model
+#[derive(Clone, Default)]
+struct YamlModelMeta {
+    description: Option<String>,
+    materialization: Option<String>,
+    tags: Vec<String>,
+}
+
+/// Parse YAML schema files: create source nodes, collect model metadata and exposures
 fn process_yaml_files(
     gb: &mut GraphBuilder,
     files: &DiscoveredFiles,
-) -> Result<(HashMap<String, String>, Vec<ExposureDefinition>)> {
-    let mut model_descriptions: HashMap<String, String> = HashMap::new();
+) -> Result<(HashMap<String, YamlModelMeta>, Vec<ExposureDefinition>)> {
+    let mut model_meta: HashMap<String, YamlModelMeta> = HashMap::new();
     let mut exposures: Vec<ExposureDefinition> = Vec::new();
 
     for yaml_path in &files.yaml_files {
@@ -141,15 +159,26 @@ fn process_yaml_files(
         add_source_nodes(gb, &schema, yaml_path);
 
         for model_def in &schema.models {
-            if let Some(desc) = &model_def.description {
-                model_descriptions.insert(model_def.name.clone(), desc.clone());
+            let mut meta = YamlModelMeta {
+                description: model_def.description.clone(),
+                ..Default::default()
+            };
+            // Merge tags from model-level and config-level
+            let mut tags = model_def.tags.clone();
+            if let Some(cfg) = &model_def.config {
+                meta.materialization = cfg.materialized.clone();
+                tags.extend(cfg.tags.clone());
             }
+            tags.sort();
+            tags.dedup();
+            meta.tags = tags;
+            model_meta.insert(model_def.name.clone(), meta);
         }
 
         exposures.extend(schema.exposures.into_iter());
     }
 
-    Ok((model_descriptions, exposures))
+    Ok((model_meta, exposures))
 }
 
 /// Create nodes for model SQL files (with duplicate detection)
@@ -157,7 +186,7 @@ fn process_model_files(
     gb: &mut GraphBuilder,
     files: &DiscoveredFiles,
     project_dir: &Path,
-    model_descriptions: &HashMap<String, String>,
+    model_meta: &HashMap<String, YamlModelMeta>,
 ) {
     let mut model_name_paths: HashMap<String, std::path::PathBuf> = HashMap::new();
 
@@ -174,18 +203,50 @@ fn process_model_files(
         }
         model_name_paths.insert(model_name.clone(), sql_path.clone());
 
+        // Read SQL content once for config extraction and column extraction
+        let sql_content = std::fs::read_to_string(sql_path).ok();
+
+        // Extract config from SQL
+        let sql_config = sql_content
+            .as_ref()
+            .map(|content| extract_config(content))
+            .unwrap_or_default();
+
+        let yaml_meta = model_meta.get(&model_name);
+
+        // SQL config takes precedence over YAML config; merge tags
+        let materialization = sql_config
+            .materialized
+            .or_else(|| yaml_meta.and_then(|m| m.materialization.clone()));
+
+        let mut tags = sql_config.tags;
+        if let Some(meta) = yaml_meta {
+            tags.extend(meta.tags.clone());
+        }
+        tags.sort();
+        tags.dedup();
+
         let unique_id = format!("model.{}", model_name);
         let relative_path = sql_path
             .strip_prefix(project_dir)
             .unwrap_or(sql_path)
             .to_path_buf();
 
+        // Extract columns from SELECT clause
+        let columns = sql_content
+            .as_ref()
+            .map(|content| extract_select_columns(content))
+            .unwrap_or_default();
+
         gb.add_node(NodeData {
             unique_id,
             label: model_name.clone(),
             node_type: NodeType::Model,
             file_path: Some(relative_path),
-            description: model_descriptions.get(&model_name).cloned(),
+            description: yaml_meta.and_then(|m| m.description.clone()),
+            materialization,
+            tags,
+            columns,
         });
     }
 }
@@ -209,6 +270,9 @@ fn process_simple_nodes(
             node_type,
             file_path: Some(relative_path),
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
     }
 }
@@ -244,6 +308,9 @@ fn process_sql_edges(
                 node_type: NodeType::Test,
                 file_path: Some(relative_path),
                 description: None,
+                materialization: None,
+                tags: vec![],
+                columns: vec![],
             });
         }
 
@@ -292,6 +359,9 @@ fn process_exposures(gb: &mut GraphBuilder, exposures: &[ExposureDefinition]) {
             node_type: NodeType::Exposure,
             file_path: None,
             description: exposure.description.clone(),
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
 
         for dep in &exposure.depends_on {
@@ -315,8 +385,8 @@ fn process_exposures(gb: &mut GraphBuilder, exposures: &[ExposureDefinition]) {
 pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<LineageGraph> {
     let mut gb = GraphBuilder::new();
 
-    let (model_descriptions, exposures) = process_yaml_files(&mut gb, files)?;
-    process_model_files(&mut gb, files, project_dir, &model_descriptions);
+    let (model_meta, exposures) = process_yaml_files(&mut gb, files)?;
+    process_model_files(&mut gb, files, project_dir, &model_meta);
     process_simple_nodes(
         &mut gb,
         &files.seed_files,
@@ -392,6 +462,9 @@ mod tests {
             node_type: NodeType::Model,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         node_map.insert("model.orders".to_string(), idx);
 
@@ -408,6 +481,9 @@ mod tests {
             node_type: NodeType::Seed,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         node_map.insert("seed.countries".to_string(), idx);
 
@@ -424,6 +500,9 @@ mod tests {
             node_type: NodeType::Snapshot,
             file_path: None,
             description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
         });
         node_map.insert("snapshot.snap_orders".to_string(), idx);
 

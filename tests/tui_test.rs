@@ -22,6 +22,9 @@ fn build_two_node_graph() -> LineageGraph {
         node_type: NodeType::Model,
         file_path: Some(PathBuf::from("models/staging/stg_orders.sql")),
         description: None,
+        materialization: None,
+        tags: vec![],
+        columns: vec![],
     });
     let b = graph.add_node(NodeData {
         unique_id: "model.proj.orders".into(),
@@ -29,6 +32,9 @@ fn build_two_node_graph() -> LineageGraph {
         node_type: NodeType::Model,
         file_path: Some(PathBuf::from("models/marts/orders.sql")),
         description: Some("Final orders model".into()),
+        materialization: None,
+        tags: vec![],
+        columns: vec![],
     });
     graph.add_edge(
         a,
@@ -49,6 +55,9 @@ fn build_four_node_graph() -> LineageGraph {
         node_type: NodeType::Source,
         file_path: Some(PathBuf::from("models/schema.yml")),
         description: Some("Raw orders source".into()),
+        materialization: None,
+        tags: vec![],
+        columns: vec![],
     });
     let stg = graph.add_node(NodeData {
         unique_id: "model.stg_orders".into(),
@@ -56,6 +65,9 @@ fn build_four_node_graph() -> LineageGraph {
         node_type: NodeType::Model,
         file_path: Some(PathBuf::from("models/staging/stg_orders.sql")),
         description: None,
+        materialization: None,
+        tags: vec![],
+        columns: vec![],
     });
     let mart = graph.add_node(NodeData {
         unique_id: "model.orders".into(),
@@ -63,6 +75,9 @@ fn build_four_node_graph() -> LineageGraph {
         node_type: NodeType::Model,
         file_path: Some(PathBuf::from("models/marts/orders.sql")),
         description: Some("Final orders mart".into()),
+        materialization: None,
+        tags: vec![],
+        columns: vec![],
     });
     let exp = graph.add_node(NodeData {
         unique_id: "exposure.dashboard".into(),
@@ -70,6 +85,9 @@ fn build_four_node_graph() -> LineageGraph {
         node_type: NodeType::Exposure,
         file_path: None,
         description: Some("Analytics dashboard".into()),
+        materialization: None,
+        tags: vec![],
+        columns: vec![],
     });
     graph.add_edge(
         src,

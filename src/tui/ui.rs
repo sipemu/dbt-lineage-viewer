@@ -203,6 +203,18 @@ fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(desc.as_str()));
     }
 
+    // Columns
+    if !node.columns.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled(
+            format!("Columns ({}):", node.columns.len()),
+            Style::default().bold(),
+        )]));
+        for col in &node.columns {
+            lines.push(Line::from(format!("  {}", col)));
+        }
+    }
+
     // Upstream
     let upstream = app.upstream_of(selected);
     if !upstream.is_empty() {
@@ -247,7 +259,7 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
     let text = match app.mode {
         AppMode::Normal => {
             let mut help = String::from(
-                " hjkl/\u{2190}\u{2193}\u{2191}\u{2192}: navigate | HJKL: pan | +/-: zoom | Tab: cycle | /: search | n: nodes | r: reset | x: run",
+                " hjkl/\u{2190}\u{2193}\u{2191}\u{2192}: navigate | HJKL: pan | +/-: zoom | Tab: cycle | /: search | n: nodes | f: filter | p: path | r: reset | x: run",
             );
             if app.show_node_list {
                 help.push_str(" | c: collapse");
@@ -257,6 +269,12 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
             }
             if app.is_run_in_progress() {
                 help.push_str(" | [running...]");
+            }
+            if let Some(desc) = app.filter_description() {
+                help.push_str(&format!(" | [{}]", desc));
+            }
+            if !app.highlighted_path.is_empty() {
+                help.push_str(" | [path]");
             }
             help.push_str(" | q: quit");
             help
@@ -272,6 +290,15 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
         }
         AppMode::RunConfirm => " y/Enter: execute | n/Esc: cancel".to_string(),
         AppMode::RunOutput => " j/k: scroll | G: bottom | Esc/q: close".to_string(),
+        AppMode::Filter => {
+            let mut help = String::from(
+                " FILTER: m: models | s: sources | e: exposures | t: tests | d: seeds | 1: errored | 2: success | 3: never-run | 0: clear status | Esc: done",
+            );
+            if let Some(desc) = app.filter_description() {
+                help.push_str(&format!(" | [{}]", desc));
+            }
+            help
+        }
     };
 
     let style = match app.mode {
@@ -282,6 +309,7 @@ fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
         }
         AppMode::RunConfirm => Style::default().bg(Color::Yellow).fg(Color::Black),
         AppMode::RunOutput => Style::default().bg(Color::Cyan).fg(Color::Black),
+        AppMode::Filter => Style::default().bg(Color::LightYellow).fg(Color::Black),
     };
 
     let help = Paragraph::new(text).style(style);

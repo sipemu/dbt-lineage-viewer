@@ -115,9 +115,16 @@ impl<'a> GraphWidget<'a> {
     }
 
     fn draw_edges(&self, buf: &mut Buffer, area: Rect) {
+        let has_highlight = !self.app.highlighted_path.is_empty();
+
         for edge in self.app.graph.edge_references() {
             let source = edge.source();
             let target = edge.target();
+
+            // Skip edges where either endpoint is filtered out
+            if !self.app.node_passes_filter(source) || !self.app.node_passes_filter(target) {
+                continue;
+            }
 
             let (Some(&(sl, sp)), Some(&(tl, tp))) = (
                 self.app.layout.positions.get(&source),
@@ -126,11 +133,43 @@ impl<'a> GraphWidget<'a> {
                 continue;
             };
 
-            let color = match edge.weight().edge_type {
-                EdgeType::Ref => Color::Gray,
-                EdgeType::Source => Color::DarkGray,
-                EdgeType::Test => Color::Cyan,
-                EdgeType::Exposure => Color::Red,
+            let edge_highlighted = has_highlight
+                && self.app.highlighted_path.contains(&source)
+                && self.app.highlighted_path.contains(&target);
+
+            let color = if has_highlight && !edge_highlighted {
+                Color::DarkGray
+            } else {
+                match edge.weight().edge_type {
+                    EdgeType::Ref => {
+                        if edge_highlighted {
+                            Color::White
+                        } else {
+                            Color::Gray
+                        }
+                    }
+                    EdgeType::Source => {
+                        if edge_highlighted {
+                            Color::LightGreen
+                        } else {
+                            Color::DarkGray
+                        }
+                    }
+                    EdgeType::Test => {
+                        if edge_highlighted {
+                            Color::LightCyan
+                        } else {
+                            Color::Cyan
+                        }
+                    }
+                    EdgeType::Exposure => {
+                        if edge_highlighted {
+                            Color::LightRed
+                        } else {
+                            Color::Red
+                        }
+                    }
+                }
             };
             let style = Style::default().fg(color);
 
@@ -190,7 +229,14 @@ impl<'a> GraphWidget<'a> {
     }
 
     fn draw_nodes(&self, buf: &mut Buffer, area: Rect) {
+        let has_highlight = !self.app.highlighted_path.is_empty();
+
         for idx in self.app.graph.node_indices() {
+            // Skip nodes that don't pass the filter
+            if !self.app.node_passes_filter(idx) {
+                continue;
+            }
+
             let Some(&(layer, pos)) = self.app.layout.positions.get(&idx) else {
                 continue;
             };
@@ -199,16 +245,26 @@ impl<'a> GraphWidget<'a> {
             let node = &self.app.graph[idx];
             let is_selected = self.app.selected_node == Some(idx);
             let run_status = self.app.node_run_status(&node.unique_id);
+            let is_on_path = !has_highlight || self.app.highlighted_path.contains(&idx);
 
-            let node_fg = match run_status {
-                RunStatus::NeverRun => node_color(node.node_type),
-                _ => status_color(run_status),
+            let node_fg = if has_highlight && !is_on_path {
+                Color::DarkGray
+            } else {
+                match run_status {
+                    RunStatus::NeverRun => node_color(node.node_type),
+                    _ => status_color(run_status),
+                }
             };
 
             let (border_style, content_style) = if is_selected {
                 (
                     Style::default().fg(Color::Black).bg(Color::White),
                     Style::default().fg(Color::Black).bg(Color::White),
+                )
+            } else if has_highlight && is_on_path && !is_selected {
+                (
+                    Style::default().fg(node_fg).add_modifier(ratatui::style::Modifier::BOLD),
+                    Style::default().fg(node_fg).add_modifier(ratatui::style::Modifier::BOLD),
                 )
             } else {
                 (Style::default().fg(node_fg), Style::default().fg(node_fg))
