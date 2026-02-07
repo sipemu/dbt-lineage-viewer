@@ -45,29 +45,48 @@ pub fn extract_select_columns(sql: &str) -> Vec<String> {
     // Split on commas, but not commas inside parentheses
     let items = split_top_level_commas(select_body);
 
-    let mut columns = Vec::new();
-    for item in items {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
+    items
+        .iter()
+        .filter_map(|item| classify_select_item(item.trim()))
+        .collect()
+}
 
-        // Skip items that are entirely a subquery in parens
-        if item.starts_with('(') {
-            // If there's an alias after the closing paren, grab that
-            if let Some(alias) = extract_alias_after_paren(item) {
-                columns.push(alias);
-            }
-            continue;
-        }
-
-        let col = extract_column_name(item);
-        if !col.is_empty() {
-            columns.push(col);
-        }
+/// Classify a single SELECT item and return its column name, if any.
+fn classify_select_item(item: &str) -> Option<String> {
+    if item.is_empty() {
+        return None;
     }
 
-    columns
+    // Items starting with '(' are subqueries; check for alias after closing paren
+    if item.starts_with('(') {
+        return extract_alias_after_paren(item);
+    }
+
+    let col = extract_column_name(item);
+    if col.is_empty() {
+        None
+    } else {
+        Some(col)
+    }
+}
+
+/// Check if a byte is a word boundary character (not alphanumeric and not underscore)
+fn is_word_boundary(b: u8) -> bool {
+    !b.is_ascii_alphanumeric() && b != b'_'
+}
+
+/// Check if position `i` in string `s` starts a top-level `FROM` keyword with proper boundaries
+fn check_from_at(s: &str, bytes: &[u8], i: usize, len: usize) -> bool {
+    if i + 4 > len {
+        return false;
+    }
+    let candidate = &s[i..i + 4];
+    if !candidate.eq_ignore_ascii_case("from") {
+        return false;
+    }
+    let before_ok = i == 0 || is_word_boundary(bytes[i - 1]);
+    let after_ok = i + 4 >= len || is_word_boundary(bytes[i + 4]);
+    before_ok && after_ok
 }
 
 /// Find the position of the first top-level `FROM` keyword (not inside parentheses).
@@ -87,20 +106,8 @@ fn find_top_level_from(s: &str) -> Option<usize> {
                 }
             }
             b'f' | b'F' if depth == 0 => {
-                // Check for FROM keyword boundary
-                if i + 4 <= len {
-                    let candidate = &s[i..i + 4];
-                    if candidate.eq_ignore_ascii_case("from") {
-                        // Check word boundary before
-                        let before_ok =
-                            i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
-                        // Check word boundary after
-                        let after_ok = i + 4 >= len
-                            || !bytes[i + 4].is_ascii_alphanumeric() && bytes[i + 4] != b'_';
-                        if before_ok && after_ok {
-                            return Some(i);
-                        }
-                    }
+                if check_from_at(s, bytes, i, len) {
+                    return Some(i);
                 }
             }
             _ => {}
@@ -194,12 +201,26 @@ fn extract_column_name(item: &str) -> String {
     clean_identifier(last_token)
 }
 
+/// Check if position `i` (a whitespace char) starts a top-level ` AS ` token.
+/// Returns the position after "AS " if matched.
+fn is_as_keyword_at(item: &str, bytes: &[u8], i: usize, len: usize) -> Option<usize> {
+    if i + 3 >= len {
+        return None;
+    }
+    let candidate = &item[i + 1..i + 3];
+    let after = bytes[i + 3];
+    if candidate.eq_ignore_ascii_case("as") && matches!(after, b' ' | b'\t' | b'\n' | b'\r') {
+        Some(i + 4)
+    } else {
+        None
+    }
+}
+
 /// Find the alias from the last ` AS ` keyword that is not inside parentheses.
 fn find_last_as_alias(item: &str) -> Option<String> {
     let bytes = item.as_bytes();
     let len = bytes.len();
     let mut depth = 0;
-    // Track positions of top-level " AS " or " as "
     let mut last_as_pos: Option<usize> = None;
 
     let mut i = 0;
@@ -212,15 +233,8 @@ fn find_last_as_alias(item: &str) -> Option<String> {
                 }
             }
             b' ' | b'\t' | b'\n' | b'\r' if depth == 0 => {
-                // Check if next chars are "AS " (case-insensitive)
-                if i + 3 < len {
-                    let candidate = &item[i + 1..i + 3];
-                    let after = bytes[i + 3];
-                    if candidate.eq_ignore_ascii_case("as")
-                        && (after == b' ' || after == b'\t' || after == b'\n' || after == b'\r')
-                    {
-                        last_as_pos = Some(i + 4); // position after "AS "
-                    }
+                if let Some(pos) = is_as_keyword_at(item, bytes, i, len) {
+                    last_as_pos = Some(pos);
                 }
             }
             _ => {}

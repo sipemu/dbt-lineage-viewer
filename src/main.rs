@@ -32,21 +32,7 @@ fn main() -> Result<()> {
 
     let project_dir = cli.project_dir.canonicalize().unwrap_or(cli.project_dir);
 
-    // Build graph: either from manifest.json or by parsing SQL files
-    let dag = if let Some(manifest_arg) = &cli.manifest {
-        let manifest_path = resolve_manifest_path(manifest_arg)?;
-        parser::manifest::build_graph_from_manifest(&manifest_path)?
-    } else {
-        // Parse dbt project
-        let project = parser::project::DbtProject::load(&project_dir)?;
-        let paths = project.resolve_paths(&project_dir);
-
-        // Discover files
-        let files = parser::discovery::discover_files(&paths)?;
-
-        // Build graph
-        graph::builder::build_graph(&project_dir, &files)?
-    };
+    let dag = build_dag(&project_dir, cli.manifest.as_ref())?;
 
     // Parse selectors
     let selectors = cli
@@ -82,16 +68,36 @@ fn main() -> Result<()> {
         anyhow::bail!("TUI feature not enabled. Rebuild with --features tui");
     }
 
-    match cli.output {
-        cli::OutputFormat::Ascii => render::ascii::render_ascii(&filtered),
-        cli::OutputFormat::Dot => render::dot::render_dot(&filtered),
-        cli::OutputFormat::Json => render::json::render_json(&filtered),
-        cli::OutputFormat::Mermaid => render::mermaid::render_mermaid(&filtered),
-        cli::OutputFormat::Svg => render::svg::render_svg(&filtered),
-        cli::OutputFormat::Html => render::html::render_html(&filtered),
-    }
+    render_output(&cli.output, &filtered);
 
     Ok(())
+}
+
+/// Build the lineage DAG from either a manifest file or by parsing SQL files
+#[cfg(not(tarpaulin_include))]
+fn build_dag(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<graph::types::LineageGraph> {
+    if let Some(manifest_arg) = manifest {
+        let manifest_path = resolve_manifest_path(manifest_arg)?;
+        parser::manifest::build_graph_from_manifest(&manifest_path)
+    } else {
+        let project = parser::project::DbtProject::load(project_dir)?;
+        let paths = project.resolve_paths(project_dir);
+        let files = parser::discovery::discover_files(&paths)?;
+        graph::builder::build_graph(project_dir, &files)
+    }
+}
+
+/// Dispatch rendering based on output format
+#[cfg(not(tarpaulin_include))]
+fn render_output(format: &cli::OutputFormat, graph: &graph::types::LineageGraph) {
+    match format {
+        cli::OutputFormat::Ascii => render::ascii::render_ascii(graph),
+        cli::OutputFormat::Dot => render::dot::render_dot(graph),
+        cli::OutputFormat::Json => render::json::render_json(graph),
+        cli::OutputFormat::Mermaid => render::mermaid::render_mermaid(graph),
+        cli::OutputFormat::Svg => render::svg::render_svg(graph),
+        cli::OutputFormat::Html => render::html::render_html(graph),
+    }
 }
 
 /// Run the `impact` subcommand

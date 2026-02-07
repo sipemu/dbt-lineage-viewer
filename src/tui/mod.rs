@@ -59,24 +59,47 @@ fn process_event(app: &mut App, event: Event) -> bool {
     }
 }
 
+/// Load run status from dbt artifacts, returning an empty map if none found
+#[cfg(not(tarpaulin_include))]
+fn load_run_status(
+    project_dir: &std::path::Path,
+    graph: &LineageGraph,
+) -> Result<std::collections::HashMap<String, crate::parser::artifacts::RunStatus>> {
+    match artifacts::load_run_results(project_dir)? {
+        Some(results) => Ok(artifacts::build_run_status_map(
+            &results,
+            graph,
+            project_dir,
+        )),
+        None => Ok(Default::default()),
+    }
+}
+
+/// Run the main event loop, returning when the user quits
+#[cfg(not(tarpaulin_include))]
+fn run_event_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<()> {
+    loop {
+        terminal.draw(|f| draw_ui(f, app))?;
+        app.drain_run_messages();
+        if poll(Duration::from_millis(50))? && process_event(app, read()?) {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// Launch the interactive TUI
 #[cfg(not(tarpaulin_include))]
 pub fn run_tui(graph: LineageGraph, project_dir: PathBuf) -> Result<()> {
-    let run_status = match artifacts::load_run_results(&project_dir)? {
-        Some(results) => artifacts::build_run_status_map(&results, &graph, &project_dir),
-        None => Default::default(),
-    };
+    let run_status = load_run_status(&project_dir, &graph)?;
 
     let mut terminal = setup_terminal()?;
     let mut app = App::new(graph, project_dir, run_status);
 
-    loop {
-        terminal.draw(|f| draw_ui(f, &mut app))?;
-        app.drain_run_messages();
-        if poll(Duration::from_millis(50))? && process_event(&mut app, read()?) {
-            break;
-        }
-    }
+    run_event_loop(&mut terminal, &mut app)?;
 
     restore_terminal(&mut terminal)
 }

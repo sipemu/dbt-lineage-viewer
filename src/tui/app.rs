@@ -1817,14 +1817,14 @@ mod tests {
     #[test]
     fn test_group_key_for_node_absolute_path() {
         // Covers line 756: strip_prefix for absolute paths
-        let project_dir = std::path::PathBuf::from("/home/user/project");
+        // Use std::env::current_dir() to get a cross-platform absolute path
+        let project_dir = std::env::current_dir().unwrap();
+        let file_path = project_dir.join("models").join("orders.sql");
         let node = NodeData {
             unique_id: "model.orders".into(),
             label: "orders".into(),
             node_type: NodeType::Model,
-            file_path: Some(std::path::PathBuf::from(
-                "/home/user/project/models/orders.sql",
-            )),
+            file_path: Some(file_path),
             description: None,
             materialization: None,
             tags: vec![],

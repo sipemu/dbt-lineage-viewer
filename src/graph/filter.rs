@@ -136,8 +136,18 @@ pub fn filter_graph(
         }
     }
 
-    // Apply node type filter
-    let keep_nodes: HashSet<NodeIndex> = keep_nodes
+    let keep_nodes = apply_type_filter(graph, keep_nodes, type_filter);
+
+    Ok(build_subgraph(graph, &keep_nodes))
+}
+
+/// Filter a set of node indices by node type
+fn apply_type_filter(
+    graph: &LineageGraph,
+    nodes: HashSet<NodeIndex>,
+    type_filter: &NodeTypeFilter,
+) -> HashSet<NodeIndex> {
+    nodes
         .into_iter()
         .filter(|&idx| {
             let node = &graph[idx];
@@ -146,18 +156,19 @@ pub fn filter_graph(
                 NodeType::Seed => type_filter.include_seeds,
                 NodeType::Snapshot => type_filter.include_snapshots,
                 NodeType::Exposure => type_filter.include_exposures,
-                // Models, Sources, and Phantoms are always included
                 NodeType::Model | NodeType::Source | NodeType::Phantom => true,
             }
         })
-        .collect();
+        .collect()
+}
 
-    // Build filtered subgraph
+/// Build a new graph containing only the specified nodes and their interconnecting edges
+fn build_subgraph(graph: &LineageGraph, keep_nodes: &HashSet<NodeIndex>) -> LineageGraph {
     let mut new_graph = LineageGraph::new();
     let mut index_map: std::collections::HashMap<NodeIndex, NodeIndex> =
         std::collections::HashMap::new();
 
-    for &old_idx in &keep_nodes {
+    for &old_idx in keep_nodes {
         let node = graph[old_idx].clone();
         let new_idx = new_graph.add_node(node);
         index_map.insert(old_idx, new_idx);
@@ -173,7 +184,7 @@ pub fn filter_graph(
         }
     }
 
-    Ok(new_graph)
+    new_graph
 }
 
 /// BFS traversal collecting nodes up to max_depth levels away

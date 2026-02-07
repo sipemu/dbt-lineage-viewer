@@ -133,96 +133,129 @@ pub fn resolve_column_lineage(graph: &LineageGraph) -> ColumnLineage {
     // For each model node with a file_path, try to resolve column lineage
     for idx in graph.node_indices() {
         let node = &graph[idx];
-        let Some(file_path) = &node.file_path else {
-            continue;
-        };
-
-        // Read the SQL file
-        let sql = match std::fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        let table_refs = extract_table_refs(&sql);
-        let select_items = extract_select_items(&sql);
-
-        // Build alias -> node_id map
-        let alias_map: HashMap<String, String> = table_refs
-            .iter()
-            .filter_map(|tr| tr.alias.as_ref().map(|a| (a.clone(), tr.node_id.clone())))
-            .collect();
-
-        // If there's exactly one table ref with no alias, it's the default source
-        let default_source = if table_refs.len() == 1 {
-            Some(table_refs[0].node_id.clone())
-        } else {
-            None
-        };
-
-        for item in &select_items {
-            if item.is_star {
-                // Star: create star edges for all upstream sources
-                for tr in &table_refs {
-                    if let Some(upstream_cols) = column_map.get(&tr.node_id) {
-                        for col in upstream_cols {
-                            edges.push(ColumnEdge {
-                                source_node: tr.node_id.clone(),
-                                source_column: col.clone(),
-                                target_node: node.unique_id.clone(),
-                                target_column: col.clone(),
-                                confidence: ColumnConfidence::Star,
-                            });
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if item.is_derived {
-                // Derived: we know the output column but not the source
-                edges.push(ColumnEdge {
-                    source_node: default_source.clone().unwrap_or_default(),
-                    source_column: String::new(),
-                    target_node: node.unique_id.clone(),
-                    target_column: item.column_name.clone(),
-                    confidence: ColumnConfidence::Derived,
-                });
-                continue;
-            }
-
-            // Try to resolve the source
-            let resolved_source = if let Some(alias) = &item.source_alias {
-                alias_map
-                    .get(alias)
-                    .cloned()
-                    .or_else(|| default_source.clone())
-            } else {
-                default_source.clone()
-            };
-
-            let source_col = item.source_column.as_ref().unwrap_or(&item.column_name);
-
-            let confidence = if item.source_alias.is_some()
-                && item.source_column.as_ref() != Some(&item.column_name)
-            {
-                ColumnConfidence::Aliased
-            } else {
-                ColumnConfidence::Direct
-            };
-
-            if let Some(source_node) = resolved_source {
-                edges.push(ColumnEdge {
-                    source_node,
-                    source_column: source_col.clone(),
-                    target_node: node.unique_id.clone(),
-                    target_column: item.column_name.clone(),
-                    confidence,
-                });
-            }
-        }
+        edges.extend(resolve_node_column_edges(node, &column_map));
     }
 
     ColumnLineage { edges }
+}
+
+/// Resolve column edges for a single node by reading its SQL file
+fn resolve_node_column_edges(
+    node: &crate::graph::types::NodeData,
+    column_map: &HashMap<String, Vec<String>>,
+) -> Vec<ColumnEdge> {
+    let Some(file_path) = &node.file_path else {
+        return vec![];
+    };
+
+    let sql = match std::fs::read_to_string(file_path) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+
+    let table_refs = extract_table_refs(&sql);
+    let select_items = extract_select_items(&sql);
+
+    // Build alias -> node_id map
+    let alias_map: HashMap<String, String> = table_refs
+        .iter()
+        .filter_map(|tr| tr.alias.as_ref().map(|a| (a.clone(), tr.node_id.clone())))
+        .collect();
+
+    // If there's exactly one table ref, it's the default source
+    let default_source = if table_refs.len() == 1 {
+        Some(table_refs[0].node_id.clone())
+    } else {
+        None
+    };
+
+    select_items
+        .iter()
+        .flat_map(|item| {
+            resolve_select_item(
+                item,
+                &table_refs,
+                &alias_map,
+                default_source.as_deref(),
+                &node.unique_id,
+                column_map,
+            )
+        })
+        .collect()
+}
+
+/// Resolve column edges for a single SELECT item
+fn resolve_select_item(
+    item: &SelectItem,
+    table_refs: &[TableRef],
+    alias_map: &HashMap<String, String>,
+    default_source: Option<&str>,
+    target_id: &str,
+    column_map: &HashMap<String, Vec<String>>,
+) -> Vec<ColumnEdge> {
+    if item.is_star {
+        return resolve_star_item(table_refs, target_id, column_map);
+    }
+
+    if item.is_derived {
+        return vec![ColumnEdge {
+            source_node: default_source.unwrap_or_default().to_string(),
+            source_column: String::new(),
+            target_node: target_id.to_string(),
+            target_column: item.column_name.clone(),
+            confidence: ColumnConfidence::Derived,
+        }];
+    }
+
+    let resolved_source = if let Some(alias) = &item.source_alias {
+        alias_map.get(alias).map(|s| s.as_str()).or(default_source)
+    } else {
+        default_source
+    };
+
+    let source_col = item.source_column.as_ref().unwrap_or(&item.column_name);
+
+    let confidence =
+        if item.source_alias.is_some() && item.source_column.as_ref() != Some(&item.column_name) {
+            ColumnConfidence::Aliased
+        } else {
+            ColumnConfidence::Direct
+        };
+
+    match resolved_source {
+        Some(source_node) => vec![ColumnEdge {
+            source_node: source_node.to_string(),
+            source_column: source_col.clone(),
+            target_node: target_id.to_string(),
+            target_column: item.column_name.clone(),
+            confidence,
+        }],
+        None => vec![],
+    }
+}
+
+/// Resolve star expansion edges for all upstream sources
+fn resolve_star_item(
+    table_refs: &[TableRef],
+    target_id: &str,
+    column_map: &HashMap<String, Vec<String>>,
+) -> Vec<ColumnEdge> {
+    table_refs
+        .iter()
+        .flat_map(|tr| {
+            column_map
+                .get(&tr.node_id)
+                .into_iter()
+                .flatten()
+                .map(move |col| ColumnEdge {
+                    source_node: tr.node_id.clone(),
+                    source_column: col.clone(),
+                    target_node: target_id.to_string(),
+                    target_column: col.clone(),
+                    confidence: ColumnConfidence::Star,
+                })
+        })
+        .collect()
 }
 
 /// Extract SELECT items with source alias tracking from SQL
@@ -285,42 +318,55 @@ fn find_column_source(
     cleaned_sql: &str,
     output_col: &str,
 ) -> (Option<String>, Option<String>, bool) {
-    // Look for patterns like `alias.column AS output_col` or `alias.output_col`
+    if let Some(result) = try_alias_as_pattern(cleaned_sql, output_col) {
+        return result;
+    }
+    if let Some(result) = try_direct_pattern(cleaned_sql, output_col) {
+        return result;
+    }
+    if try_function_pattern(cleaned_sql, output_col) {
+        return (None, None, true);
+    }
+    // Simple column reference without alias
+    (None, Some(output_col.to_string()), false)
+}
+
+/// Try `alias.column AS output_col` or `alias.column output_col` pattern
+fn try_alias_as_pattern(
+    sql: &str,
+    output_col: &str,
+) -> Option<(Option<String>, Option<String>, bool)> {
     let pattern = format!(
         r"(?i)(\w+)\.(\w+)\s+(?:AS\s+)?{}(?:\s|,|$)",
         regex::escape(output_col)
     );
-    if let Ok(re) = Regex::new(&pattern) {
-        if let Some(cap) = re.captures(cleaned_sql) {
-            return (Some(cap[1].to_string()), Some(cap[2].to_string()), false);
-        }
-    }
+    let re = Regex::new(&pattern).ok()?;
+    let cap = re.captures(sql)?;
+    Some((Some(cap[1].to_string()), Some(cap[2].to_string()), false))
+}
 
-    // Check for direct `alias.column` pattern where column == output_col
-    let direct_pattern = format!(r"(?i)(\w+)\.{}\b", regex::escape(output_col));
-    if let Ok(re) = Regex::new(&direct_pattern) {
-        if let Some(cap) = re.captures(cleaned_sql) {
-            return (
-                Some(cap[1].to_string()),
-                Some(output_col.to_string()),
-                false,
-            );
-        }
-    }
+/// Try direct `alias.column` pattern where column == output_col
+fn try_direct_pattern(
+    sql: &str,
+    output_col: &str,
+) -> Option<(Option<String>, Option<String>, bool)> {
+    let pattern = format!(r"(?i)(\w+)\.{}\b", regex::escape(output_col));
+    let re = Regex::new(&pattern).ok()?;
+    let cap = re.captures(sql)?;
+    Some((
+        Some(cap[1].to_string()),
+        Some(output_col.to_string()),
+        false,
+    ))
+}
 
-    // Check if this looks like a function call (derived)
-    let func_pattern = format!(
+/// Check if output_col looks like a function call result (derived)
+fn try_function_pattern(sql: &str, output_col: &str) -> bool {
+    let pattern = format!(
         r"(?i)\w+\s*\([^)]*\)\s+(?:AS\s+)?{}",
         regex::escape(output_col)
     );
-    if let Ok(re) = Regex::new(&func_pattern) {
-        if re.is_match(cleaned_sql) {
-            return (None, None, true);
-        }
-    }
-
-    // Simple column reference without alias
-    (None, Some(output_col.to_string()), false)
+    Regex::new(&pattern).ok().is_some_and(|re| re.is_match(sql))
 }
 
 #[cfg(test)]

@@ -265,11 +265,20 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
         .filter(|f| f.ends_with(".yml") || f.ends_with(".yaml"))
         .collect::<Vec<_>>();
 
-    // Build a minimal graph from the files we can read
     let mut graph = LineageGraph::new();
+    parse_sources_from_git(&mut graph, project_dir, git_ref, &yaml_files);
+    parse_models_from_git(&mut graph, project_dir, git_ref, &sql_files);
+    Ok(graph)
+}
 
-    // Parse YAML files for source definitions
-    for yaml_path in &yaml_files {
+/// Parse YAML files from a git ref and add source nodes to the graph
+fn parse_sources_from_git(
+    graph: &mut LineageGraph,
+    project_dir: &Path,
+    git_ref: &str,
+    yaml_files: &[String],
+) {
+    for yaml_path in yaml_files {
         if let Ok(content) = git::git_show(project_dir, git_ref, yaml_path) {
             if let Ok(schema) = crate::parser::yaml_schema::parse_schema_file(&content) {
                 for source_def in &schema.sources {
@@ -291,9 +300,16 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
             }
         }
     }
+}
 
-    // Parse SQL files for model nodes
-    for sql_path in &sql_files {
+/// Parse SQL files from a git ref and add model nodes to the graph
+fn parse_models_from_git(
+    graph: &mut LineageGraph,
+    project_dir: &Path,
+    git_ref: &str,
+    sql_files: &[String],
+) {
+    for sql_path in sql_files {
         if let Ok(content) = git::git_show(project_dir, git_ref, sql_path) {
             let model_name = std::path::Path::new(sql_path)
                 .file_stem()
@@ -316,8 +332,6 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
             });
         }
     }
-
-    Ok(graph)
 }
 
 #[cfg(test)]
