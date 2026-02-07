@@ -444,4 +444,286 @@ mod tests {
         assert!(!cleaned.contains("{{"));
         assert!(cleaned.contains("__jinja__"));
     }
+
+    #[test]
+    fn test_resolve_column_lineage_direct_columns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("stg_customers.sql");
+        std::fs::write(
+            &sql_path,
+            "SELECT order_id, customer_id FROM {{ ref('stg_orders') }}",
+        )
+        .unwrap();
+
+        let mut graph = LineageGraph::new();
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["order_id".into(), "customer_id".into(), "amount".into()],
+        });
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.stg_customers".into(),
+            label: "stg_customers".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: Some(sql_path.clone()),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+
+        let lineage = resolve_column_lineage(&graph);
+        let edges: Vec<_> = lineage
+            .edges
+            .iter()
+            .filter(|e| e.target_node == "model.stg_customers")
+            .collect();
+        assert_eq!(edges.len(), 2);
+        assert!(edges
+            .iter()
+            .all(|e| e.confidence == ColumnConfidence::Direct));
+        assert!(edges.iter().any(|e| e.target_column == "order_id"));
+        assert!(edges.iter().any(|e| e.target_column == "customer_id"));
+    }
+
+    #[test]
+    fn test_resolve_column_lineage_star_expansion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("mart.sql");
+        std::fs::write(&sql_path, "SELECT * FROM {{ ref('stg_orders') }}").unwrap();
+
+        let mut graph = LineageGraph::new();
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["order_id".into(), "status".into()],
+        });
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.mart".into(),
+            label: "mart".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: Some(sql_path),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+
+        let lineage = resolve_column_lineage(&graph);
+        let star_edges: Vec<_> = lineage
+            .edges
+            .iter()
+            .filter(|e| e.confidence == ColumnConfidence::Star)
+            .collect();
+        assert_eq!(star_edges.len(), 2);
+        assert!(star_edges.iter().any(|e| e.target_column == "order_id"));
+        assert!(star_edges.iter().any(|e| e.target_column == "status"));
+    }
+
+    #[test]
+    fn test_resolve_column_lineage_aliased_columns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("model_a.sql");
+        std::fs::write(
+            &sql_path,
+            "SELECT o.order_id AS id FROM {{ ref('stg_orders') }} o",
+        )
+        .unwrap();
+
+        let mut graph = LineageGraph::new();
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["order_id".into()],
+        });
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.model_a".into(),
+            label: "model_a".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: Some(sql_path),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+
+        let lineage = resolve_column_lineage(&graph);
+        let aliased: Vec<_> = lineage
+            .edges
+            .iter()
+            .filter(|e| e.target_node == "model.model_a")
+            .collect();
+        assert_eq!(aliased.len(), 1);
+        assert_eq!(aliased[0].confidence, ColumnConfidence::Aliased);
+        assert_eq!(aliased[0].target_column, "id");
+        assert_eq!(aliased[0].source_column, "order_id");
+    }
+
+    #[test]
+    fn test_resolve_column_lineage_derived_columns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("model_b.sql");
+        std::fs::write(
+            &sql_path,
+            "SELECT SUM(amount) AS total FROM {{ ref('stg_orders') }}",
+        )
+        .unwrap();
+
+        let mut graph = LineageGraph::new();
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["amount".into()],
+        });
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.model_b".into(),
+            label: "model_b".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: Some(sql_path),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+
+        let lineage = resolve_column_lineage(&graph);
+        let derived: Vec<_> = lineage
+            .edges
+            .iter()
+            .filter(|e| e.target_node == "model.model_b")
+            .collect();
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].confidence, ColumnConfidence::Derived);
+        assert_eq!(derived[0].target_column, "total");
+    }
+
+    #[test]
+    fn test_resolve_column_lineage_missing_file() {
+        let mut graph = LineageGraph::new();
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.missing".into(),
+            label: "missing".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: Some("/nonexistent/path/model.sql".into()),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+
+        let lineage = resolve_column_lineage(&graph);
+        assert!(lineage.edges.is_empty());
+    }
+
+    #[test]
+    fn test_find_column_source_alias_as() {
+        let sql = "SELECT o.order_id AS oid, o.status FROM orders o";
+        let (alias, col, derived) = find_column_source(sql, "oid");
+        assert_eq!(alias.as_deref(), Some("o"));
+        assert_eq!(col.as_deref(), Some("order_id"));
+        assert!(!derived);
+    }
+
+    #[test]
+    fn test_find_column_source_function_call() {
+        let sql = "SELECT COUNT(*) AS cnt FROM orders";
+        let (alias, col, derived) = find_column_source(sql, "cnt");
+        assert!(alias.is_none());
+        assert!(col.is_none());
+        assert!(derived);
+    }
+
+    #[test]
+    fn test_find_column_source_no_match() {
+        let sql = "SELECT something_else FROM orders";
+        let (alias, col, derived) = find_column_source(sql, "order_id");
+        assert!(alias.is_none());
+        assert_eq!(col.as_deref(), Some("order_id"));
+        assert!(!derived);
+    }
+
+    #[test]
+    fn test_extract_select_items_derived() {
+        let sql = "SELECT {{ dbt_utils.star(from=ref('x')) }}, order_id FROM {{ ref('x') }}";
+        let items = extract_select_items(sql);
+        assert!(items
+            .iter()
+            .any(|i| i.column_name == "__jinja__" && i.is_derived));
+        assert!(items
+            .iter()
+            .any(|i| i.column_name == "order_id" && !i.is_derived));
+    }
+
+    #[test]
+    fn test_resolve_column_lineage_multiple_table_refs() {
+        // Covers line 159: default_source = None when multiple table refs
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("joined.sql");
+        std::fs::write(
+            &sql_path,
+            "SELECT o.order_id, c.name FROM {{ ref('orders') }} o JOIN {{ ref('customers') }} c ON o.customer_id = c.id",
+        )
+        .unwrap();
+
+        let mut graph = LineageGraph::new();
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.orders".into(),
+            label: "orders".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["order_id".into(), "customer_id".into()],
+        });
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.customers".into(),
+            label: "customers".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["id".into(), "name".into()],
+        });
+        graph.add_node(crate::graph::types::NodeData {
+            unique_id: "model.joined".into(),
+            label: "joined".into(),
+            node_type: crate::graph::types::NodeType::Model,
+            file_path: Some(sql_path),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+
+        let lineage = resolve_column_lineage(&graph);
+        let joined_edges: Vec<_> = lineage
+            .edges
+            .iter()
+            .filter(|e| e.target_node == "model.joined")
+            .collect();
+        // Should have edges for order_id and name
+        assert!(!joined_edges.is_empty());
+    }
 }

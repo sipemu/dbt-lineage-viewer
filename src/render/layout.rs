@@ -169,6 +169,45 @@ mod tests {
         assert_eq!(layout.num_layers, 0);
     }
 
+    fn make_node(unique_id: &str, node_type: NodeType) -> NodeData {
+        NodeData {
+            unique_id: unique_id.into(),
+            label: unique_id.into(),
+            node_type,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        }
+    }
+
+    #[test]
+    fn test_disconnected_node_in_layer() {
+        // Create a graph where one node is disconnected from others
+        // This exercises the f64::MAX barycenter fallback (line 146)
+        let mut g = LineageGraph::new();
+        let a = g.add_node(make_node("a", NodeType::Source));
+        let b = g.add_node(make_node("b", NodeType::Model));
+        let c = g.add_node(make_node("c", NodeType::Model)); // disconnected
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        // c has no edges — it's a disconnected node
+        let _ = c; // used for graph construction
+
+        let layout = sugiyama_layout(&g);
+        // Should handle disconnected nodes without panicking
+        assert!(layout.num_layers >= 1);
+        assert!(layout.positions.contains_key(&a));
+        assert!(layout.positions.contains_key(&b));
+        assert!(layout.positions.contains_key(&c));
+    }
+
     #[test]
     fn test_linear_graph() {
         let mut g = LineageGraph::new();
@@ -225,5 +264,34 @@ mod tests {
         let (lc, _) = layout.positions[&c];
         assert!(la < lb);
         assert!(lb < lc);
+    }
+
+    #[test]
+    fn test_cyclic_graph_fallback() {
+        // Covers lines 78-79: cyclic graph fallback in assign_layers
+        let mut g = LineageGraph::new();
+        let a = g.add_node(make_node("a", NodeType::Model));
+        let b = g.add_node(make_node("b", NodeType::Model));
+        // Create a cycle: a -> b -> a
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        g.add_edge(
+            b,
+            a,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+
+        let layout = sugiyama_layout(&g);
+        // Should not panic; each node gets its own layer in fallback
+        assert_eq!(layout.positions.len(), 2);
+        assert!(layout.positions.contains_key(&a));
+        assert!(layout.positions.contains_key(&b));
     }
 }

@@ -367,4 +367,95 @@ mod tests {
         assert!(output.contains("[ b ]"), "Output:\n{}", output);
         assert!(output.contains("──ref──>"));
     }
+
+    #[test]
+    fn test_format_edge_arrow_all_types() {
+        assert_eq!(format_edge_arrow(EdgeType::Ref), "──ref──>");
+        assert_eq!(format_edge_arrow(EdgeType::Source), "──src──>");
+        assert_eq!(format_edge_arrow(EdgeType::Test), "──test─>");
+        assert_eq!(format_edge_arrow(EdgeType::Exposure), "──exp──>");
+    }
+
+    #[test]
+    fn test_uneven_layers_padding() {
+        // Create a graph where layers have different numbers of nodes
+        // to cover the else branch in render_row (row >= layer.len())
+        let mut graph = LineageGraph::new();
+        let src1 = graph.add_node(make_node("source.raw.a", "raw.a", NodeType::Source));
+        let src2 = graph.add_node(make_node("source.raw.b", "raw.b", NodeType::Source));
+        let model = graph.add_node(make_node("model.combined", "combined", NodeType::Model));
+        graph.add_edge(
+            src1,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            src2,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+
+        let output = render_to_string(&graph);
+        // First layer has 2 nodes, second has 1 — should render without panic
+        assert!(output.contains("raw.a"));
+        assert!(output.contains("raw.b"));
+        assert!(output.contains("combined"));
+        assert!(output.contains("Edges:"));
+    }
+
+    #[test]
+    fn test_compute_col_offsets() {
+        let widths = vec![10, 20, 15];
+        let offsets = compute_col_offsets(&widths, 4);
+        assert_eq!(offsets, vec![0, 14, 38]);
+    }
+
+    #[test]
+    fn test_all_edge_arrows_in_output() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
+        let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
+        let t = graph.add_node(make_node("test.t", "t", NodeType::Test));
+        let e = graph.add_node(make_node("exposure.e", "e", NodeType::Exposure));
+        let s = graph.add_node(make_node("source.raw.s", "raw.s", NodeType::Source));
+
+        graph.add_edge(
+            s,
+            a,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            b,
+            t,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+        graph.add_edge(
+            b,
+            e,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
+
+        let output = render_to_string(&graph);
+        assert!(output.contains("──src──>"));
+        assert!(output.contains("──ref──>"));
+        assert!(output.contains("──test─>"));
+        assert!(output.contains("──exp──>"));
+    }
 }

@@ -210,4 +210,76 @@ mod tests {
         assert!(output.contains("Lineage Diff"));
         assert!(output.contains("Nodes added:"));
     }
+
+    #[test]
+    fn test_render_diff_text_with_removed_edges() {
+        let diff = LineageDiff {
+            base_ref: "main".to_string(),
+            head_ref: "feature".to_string(),
+            summary: DiffSummary {
+                nodes_added: 0,
+                nodes_removed: 0,
+                nodes_modified: 0,
+                edges_added: 1,
+                edges_removed: 1,
+            },
+            nodes: vec![],
+            edges: vec![
+                DiffEdge {
+                    source: "model.a".to_string(),
+                    target: "model.b".to_string(),
+                    edge_type: "ref".to_string(),
+                    status: DiffStatus::Added,
+                },
+                DiffEdge {
+                    source: "model.c".to_string(),
+                    target: "model.d".to_string(),
+                    edge_type: "ref".to_string(),
+                    status: DiffStatus::Removed,
+                },
+            ],
+        };
+        let mut buf = Vec::new();
+        render_diff_text_to_writer(&diff, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("Changed Edges:"));
+        assert!(output.contains("model.a"));
+        assert!(output.contains("model.b"));
+        assert!(output.contains("model.c"));
+        assert!(output.contains("model.d"));
+        assert!(output.contains("Edges removed:"));
+    }
+
+    #[test]
+    fn test_render_diff_text_with_change_details() {
+        let diff = LineageDiff {
+            base_ref: "v1".to_string(),
+            head_ref: "v2".to_string(),
+            summary: DiffSummary {
+                nodes_added: 0,
+                nodes_removed: 0,
+                nodes_modified: 1,
+                edges_added: 0,
+                edges_removed: 0,
+            },
+            nodes: vec![DiffNode {
+                unique_id: "model.orders".to_string(),
+                label: "orders".to_string(),
+                node_type: "model".to_string(),
+                status: DiffStatus::Modified,
+                changes: vec![
+                    "materialization: view -> table".to_string(),
+                    "columns: 3 -> 5".to_string(),
+                ],
+            }],
+            edges: vec![],
+        };
+        let mut buf = Vec::new();
+        render_diff_text_to_writer(&diff, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("orders"));
+        assert!(output.contains("modified"));
+        assert!(output.contains("materialization: view -> table"));
+        assert!(output.contains("columns: 3 -> 5"));
+    }
 }

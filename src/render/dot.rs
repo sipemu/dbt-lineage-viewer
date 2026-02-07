@@ -215,4 +215,75 @@ mod tests {
         assert!(output.contains("style=dotted"));
         assert!(output.contains("style=bold"));
     }
+
+    #[test]
+    fn test_all_node_types_render() {
+        let mut graph = LineageGraph::new();
+        graph.add_node(make_node("model.m", "m", NodeType::Model));
+        graph.add_node(make_node("source.s", "s", NodeType::Source));
+        graph.add_node(make_node("seed.sd", "sd", NodeType::Seed));
+        graph.add_node(make_node("snapshot.sn", "sn", NodeType::Snapshot));
+        graph.add_node(make_node("test.t", "t", NodeType::Test));
+        graph.add_node(make_node("exposure.e", "e", NodeType::Exposure));
+        graph.add_node(make_node("phantom.p", "p", NodeType::Phantom));
+
+        let output = render_to_string(&graph);
+        // Verify all node colors appear
+        assert!(output.contains("#4A90D9")); // Model
+        assert!(output.contains("#27AE60")); // Source
+        assert!(output.contains("#F39C12")); // Seed
+        assert!(output.contains("#8E44AD")); // Snapshot
+        assert!(output.contains("#1ABC9C")); // Test
+        assert!(output.contains("#E74C3C")); // Exposure
+        assert!(output.contains("#BDC3C7")); // Phantom
+        assert!(output.contains("fontcolor=\"black\"")); // Phantom font
+    }
+
+    #[test]
+    fn test_all_four_edge_styles_in_render() {
+        let mut graph = LineageGraph::new();
+        let s = graph.add_node(make_node("source.raw.o", "raw.o", NodeType::Source));
+        let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
+        let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
+        let t = graph.add_node(make_node("test.t", "t", NodeType::Test));
+        let e = graph.add_node(make_node("exposure.e", "e", NodeType::Exposure));
+
+        graph.add_edge(
+            s,
+            a,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            b,
+            t,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+        graph.add_edge(
+            b,
+            e,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
+
+        let output = render_to_string(&graph);
+        assert!(output.contains("label=\"source\""));
+        assert!(output.contains("label=\"ref\""));
+        assert!(output.contains("label=\"test\""));
+        assert!(output.contains("label=\"exposure\""));
+        assert!(output.contains("style=dashed"));
+        assert!(output.contains("style=dotted"));
+        assert!(output.contains("style=bold"));
+    }
 }

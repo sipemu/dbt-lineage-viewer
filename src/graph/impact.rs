@@ -396,4 +396,17 @@ mod tests {
         assert!(report.impacted_nodes.is_empty());
         assert_eq!(report.longest_path_length, 0);
     }
+
+    #[test]
+    fn test_classify_severity_source_seed_snapshot() {
+        // Covers the wildcard arm (line 76): Source, Seed, Snapshot → Medium
+        let source = make_node("source.raw.o", "raw.o", NodeType::Source, None, None);
+        assert_eq!(classify_severity(&source), ImpactSeverity::Medium);
+
+        let seed = make_node("seed.countries", "countries", NodeType::Seed, None, None);
+        assert_eq!(classify_severity(&seed), ImpactSeverity::Medium);
+
+        let snap = make_node("snapshot.snap", "snap", NodeType::Snapshot, None, None);
+        assert_eq!(classify_severity(&snap), ImpactSeverity::Medium);
+    }
 }

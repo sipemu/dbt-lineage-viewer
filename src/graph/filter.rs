@@ -651,4 +651,108 @@ mod tests {
             &[Selector::ModelName("customers".into())]
         ));
     }
+
+    #[test]
+    fn test_type_filter_excludes_test_seed_snapshot() {
+        let mut g = LineageGraph::new();
+        let model = g.add_node(make_node(
+            "model.orders",
+            "orders",
+            NodeType::Model,
+            None,
+            vec![],
+        ));
+        let test = g.add_node(make_node(
+            "test.orders_positive",
+            "orders_positive",
+            NodeType::Test,
+            None,
+            vec![],
+        ));
+        let seed = g.add_node(make_node(
+            "seed.countries",
+            "countries",
+            NodeType::Seed,
+            None,
+            vec![],
+        ));
+        let snap = g.add_node(make_node(
+            "snapshot.orders_hist",
+            "orders_hist",
+            NodeType::Snapshot,
+            None,
+            vec![],
+        ));
+        g.add_edge(
+            model,
+            test,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+        g.add_edge(
+            seed,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        g.add_edge(
+            model,
+            snap,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+
+        // Exclude all optional types
+        let filter = NodeTypeFilter {
+            include_tests: false,
+            include_seeds: false,
+            include_snapshots: false,
+            include_exposures: false,
+        };
+        let filtered = filter_graph(&g, None, None, None, &filter, &[]).unwrap();
+        assert_eq!(filtered.node_count(), 1); // Only the model remains
+        let labels: Vec<String> = filtered
+            .node_indices()
+            .map(|i| filtered[i].label.clone())
+            .collect();
+        assert!(labels.contains(&"orders".to_string()));
+
+        // Include tests only
+        let filter2 = NodeTypeFilter {
+            include_tests: true,
+            include_seeds: false,
+            include_snapshots: false,
+            include_exposures: false,
+        };
+        let filtered2 = filter_graph(&g, None, None, None, &filter2, &[]).unwrap();
+        assert_eq!(filtered2.node_count(), 2); // model + test
+    }
+
+    #[test]
+    fn test_filter_graph_rejects_cycle() {
+        // Covers line 85: CycleDetected error
+        let mut g = LineageGraph::new();
+        let a = g.add_node(make_node("model.a", "a", NodeType::Model, None, vec![]));
+        let b = g.add_node(make_node("model.b", "b", NodeType::Model, None, vec![]));
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        g.add_edge(
+            b,
+            a,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+
+        let result = filter_graph(&g, None, None, None, &default_type_filter(), &[]);
+        assert!(result.is_err());
+    }
 }

@@ -173,4 +173,48 @@ mod tests {
         assert!(output.contains("Impact Analysis: isolated"));
         assert!(output.contains("Affected models:    0"));
     }
+
+    #[test]
+    fn test_severity_color_all_levels() {
+        assert_eq!(severity_color(ImpactSeverity::Low), colored::Color::Green);
+        assert_eq!(
+            severity_color(ImpactSeverity::Medium),
+            colored::Color::Yellow
+        );
+        assert_eq!(severity_color(ImpactSeverity::High), colored::Color::Red);
+        assert_eq!(
+            severity_color(ImpactSeverity::Critical),
+            colored::Color::BrightRed
+        );
+    }
+
+    #[test]
+    fn test_render_impact_text_medium_severity() {
+        let report = ImpactReport {
+            source_model: "stg_payments".to_string(),
+            overall_severity: ImpactSeverity::Medium,
+            affected_models: 2,
+            affected_tests: 0,
+            affected_exposures: 0,
+            longest_path_length: 2,
+            longest_path: vec!["stg_payments".to_string(), "payments".to_string()],
+            impacted_nodes: vec![ImpactedNode {
+                unique_id: "model.payments".to_string(),
+                label: "payments".to_string(),
+                node_type: "model".to_string(),
+                severity: ImpactSeverity::Medium,
+                distance: 1,
+            }],
+        };
+        let mut buf = Vec::new();
+        render_impact_text_to_writer(&report, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("Impact Analysis: stg_payments"));
+        assert!(output.contains("MEDIUM"));
+        assert!(output.contains("Affected models:    2"));
+        assert!(output.contains("Longest Path:"));
+        assert!(output.contains("stg_payments -> payments"));
+        assert!(output.contains("Impacted Nodes:"));
+        assert!(output.contains("payments"));
+    }
 }

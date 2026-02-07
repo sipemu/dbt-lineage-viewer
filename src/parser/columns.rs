@@ -409,4 +409,32 @@ mod tests {
         let cols = extract_select_columns(sql);
         assert_eq!(cols, vec!["col1", "col2"]);
     }
+
+    #[test]
+    fn test_extract_alias_after_paren_no_alias() {
+        // Subquery with no alias after the closing paren
+        let result = extract_alias_after_paren("(SELECT 1)");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_alias_after_paren_bare_alias() {
+        // Subquery with bare alias (no AS keyword)
+        let result = extract_alias_after_paren("(SELECT 1) my_alias");
+        assert_eq!(result, Some("my_alias".to_string()));
+    }
+
+    #[test]
+    fn test_extract_alias_after_paren_as_alias() {
+        // Subquery with AS alias
+        let result = extract_alias_after_paren("(SELECT 1) AS my_alias");
+        assert_eq!(result, Some("my_alias".to_string()));
+    }
+
+    #[test]
+    fn test_extract_alias_after_paren_no_paren() {
+        // No closing paren at all
+        let result = extract_alias_after_paren("SELECT 1");
+        assert!(result.is_none());
+    }
 }

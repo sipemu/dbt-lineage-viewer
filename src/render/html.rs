@@ -302,4 +302,111 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["nodes"].as_array().unwrap().len(), 1);
     }
+
+    #[test]
+    fn test_node_with_full_metadata() {
+        let mut graph = LineageGraph::new();
+        graph.add_node(NodeData {
+            unique_id: "model.orders".into(),
+            label: "orders".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: Some("All completed orders".into()),
+            materialization: Some("table".into()),
+            tags: vec!["nightly".into(), "finance".into()],
+            columns: vec!["order_id".into(), "customer_id".into(), "amount".into()],
+        });
+
+        let json = build_html_json(&graph);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let node = &parsed["nodes"][0];
+        assert_eq!(node["unique_id"], "model.orders");
+        assert_eq!(node["label"], "orders");
+        assert_eq!(node["node_type"], "model");
+        assert_eq!(node["description"], "All completed orders");
+        assert_eq!(node["materialization"], "table");
+        assert_eq!(node["tags"].as_array().unwrap().len(), 2);
+        assert_eq!(node["tags"][0], "nightly");
+        assert_eq!(node["tags"][1], "finance");
+        assert_eq!(node["columns"].as_array().unwrap().len(), 3);
+        assert_eq!(node["columns"][0], "order_id");
+    }
+
+    #[test]
+    fn test_all_edge_types_in_json() {
+        let mut graph = LineageGraph::new();
+        let src = graph.add_node(make_node(
+            "source.raw.orders",
+            "raw.orders",
+            NodeType::Source,
+        ));
+        let model = graph.add_node(make_node("model.orders", "orders", NodeType::Model));
+        let test = graph.add_node(make_node("test.t", "t", NodeType::Test));
+        let exp = graph.add_node(make_node("exposure.dash", "dash", NodeType::Exposure));
+
+        graph.add_edge(
+            src,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            model,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            model,
+            test,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+        graph.add_edge(
+            model,
+            exp,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
+
+        let json = build_html_json(&graph);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let edges = parsed["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 4);
+
+        let edge_types: Vec<&str> = edges
+            .iter()
+            .map(|e| e["edge_type"].as_str().unwrap())
+            .collect();
+        assert!(edge_types.contains(&"ref"));
+        assert!(edge_types.contains(&"source"));
+        assert!(edge_types.contains(&"test"));
+        assert!(edge_types.contains(&"exposure"));
+    }
+
+    #[test]
+    fn test_html_output_contains_interactive_elements() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
+        let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
+        graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+
+        let output = render_to_string(&graph);
+        assert!(output.contains("search-bar"));
+        assert!(output.contains("detail-panel"));
+        assert!(output.contains("zoom-in"));
+        assert!(output.contains("zoom-out"));
+        assert!(output.contains("fit-btn"));
+        assert!(output.contains("const data ="));
+    }
 }

@@ -812,4 +812,80 @@ exposures:
         assert_eq!(graph.node_count(), 0);
         assert_eq!(graph.edge_count(), 0);
     }
+
+    #[test]
+    fn test_build_graph_model_config_merge() {
+        // Covers lines 168-170: YAML model config with materialization and tags
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().to_path_buf();
+
+        let models_dir = project_dir.join("models");
+        fs::create_dir_all(&models_dir).unwrap();
+
+        fs::write(models_dir.join("stg_orders.sql"), "SELECT 1").unwrap();
+
+        fs::write(
+            models_dir.join("schema.yml"),
+            r#"
+version: 2
+sources: []
+models:
+  - name: stg_orders
+    description: "Staged orders"
+    tags:
+      - staging
+    config:
+      materialized: table
+      tags:
+        - daily
+"#,
+        )
+        .unwrap();
+
+        let files = DiscoveredFiles {
+            model_sql_files: vec![project_dir.join("models/stg_orders.sql")],
+            yaml_files: vec![project_dir.join("models/schema.yml")],
+            ..Default::default()
+        };
+
+        let graph = build_graph(&project_dir, &files).unwrap();
+        let stg = graph
+            .node_indices()
+            .find(|&i| graph[i].label == "stg_orders")
+            .unwrap();
+        assert_eq!(graph[stg].materialization.as_deref(), Some("table"));
+        assert!(graph[stg].tags.contains(&"staging".to_string()));
+        assert!(graph[stg].tags.contains(&"daily".to_string()));
+    }
+
+    #[test]
+    fn test_build_graph_duplicate_model_name() {
+        // Covers line 197: duplicate model name warning
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().to_path_buf();
+
+        let models_dir = project_dir.join("models");
+        let subdir = models_dir.join("subdir");
+        fs::create_dir_all(&subdir).unwrap();
+
+        fs::write(models_dir.join("orders.sql"), "SELECT 1").unwrap();
+        fs::write(subdir.join("orders.sql"), "SELECT 2").unwrap();
+
+        let files = DiscoveredFiles {
+            model_sql_files: vec![
+                project_dir.join("models/orders.sql"),
+                project_dir.join("models/subdir/orders.sql"),
+            ],
+            ..Default::default()
+        };
+
+        // Should not panic, just warn on stderr about the duplicate
+        let graph = build_graph(&project_dir, &files).unwrap();
+        // Both SQL files produce nodes (duplicate warning is informational)
+        let order_nodes: Vec<_> = graph
+            .node_indices()
+            .filter(|&i| graph[i].label == "orders")
+            .collect();
+        assert_eq!(order_nodes.len(), 2);
+    }
 }

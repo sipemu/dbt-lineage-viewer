@@ -202,6 +202,23 @@ mod tests {
     }
 
     #[test]
+    fn test_test_edge() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("model.a", "a", NodeType::Model));
+        let t = graph.add_node(make_node("test.t", "t", NodeType::Test));
+        graph.add_edge(
+            a,
+            t,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+
+        let output = render_to_string(&graph);
+        assert!(output.contains("-.->|test|"));
+    }
+
+    #[test]
     fn test_style_classes() {
         let mut graph = LineageGraph::new();
         graph.add_node(make_node("model.a", "a", NodeType::Model));

@@ -593,4 +593,292 @@ mod tests {
         assert!(diff.edges.is_empty());
         assert_eq!(diff.summary.nodes_added, 0);
     }
+
+    #[test]
+    fn test_detect_node_changes_columns() {
+        let base = NodeData {
+            unique_id: "model.a".into(),
+            label: "a".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["col1".into(), "col2".into()],
+        };
+        let head = NodeData {
+            unique_id: "model.a".into(),
+            label: "a".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec!["col1".into(), "col2".into(), "col3".into()],
+        };
+        let changes = detect_node_changes(&base, &head);
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].contains("columns"));
+        assert!(changes[0].contains("2 -> 3"));
+    }
+
+    #[test]
+    fn test_edge_type_str_all_variants() {
+        assert_eq!(edge_type_str(EdgeType::Ref), "ref");
+        assert_eq!(edge_type_str(EdgeType::Source), "source");
+        assert_eq!(edge_type_str(EdgeType::Test), "test");
+        assert_eq!(edge_type_str(EdgeType::Exposure), "exposure");
+    }
+
+    #[test]
+    fn test_build_graph_from_ref_sql_fallback() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        // Init git repo
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+
+        // Create model directory with SQL and YAML files
+        std::fs::create_dir_all(path.join("models")).unwrap();
+        std::fs::write(
+            path.join("models/stg_orders.sql"),
+            "SELECT order_id, status FROM {{ source('raw', 'orders') }}",
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("models/schema.yml"),
+            r#"version: 2
+sources:
+  - name: raw
+    tables:
+      - name: orders
+        description: Raw orders table
+"#,
+        )
+        .unwrap();
+
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+
+        let result = build_graph_from_ref(&path, "HEAD");
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+        // Should have at least the source node and the model node
+        assert!(graph.node_count() >= 2);
+    }
+
+    #[test]
+    fn test_build_graph_from_ref_empty_repo() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        std::fs::write(path.join("README.md"), "# test\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+
+        let result = build_graph_from_ref(&path, "HEAD");
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+        assert_eq!(graph.node_count(), 0);
+    }
+
+    #[test]
+    fn test_build_graph_from_ref_invalid_ref() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        std::fs::write(path.join("README.md"), "# test\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+
+        // Invalid ref returns an empty graph (git_ls_tree returns empty for bad refs)
+        let result = build_graph_from_ref(&path, "nonexistent_branch_abc123");
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+        assert_eq!(graph.node_count(), 0);
+    }
+
+    #[test]
+    fn test_build_graph_from_ref_with_manifest() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+
+        std::fs::create_dir_all(path.join("target")).unwrap();
+        let manifest = r#"{
+            "metadata": {"dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v11.json"},
+            "nodes": {
+                "model.project.orders": {
+                    "unique_id": "model.project.orders",
+                    "resource_type": "model",
+                    "name": "orders",
+                    "original_file_path": "models/orders.sql",
+                    "description": "",
+                    "config": {"materialized": "table", "tags": []},
+                    "tags": [],
+                    "columns": {},
+                    "depends_on": {"nodes": ["source.project.raw.orders"]},
+                    "refs": [{"name": "stg_orders", "package": null, "version": null}],
+                    "sources": [["raw", "orders"]]
+                }
+            },
+            "sources": {
+                "source.project.raw.orders": {
+                    "unique_id": "source.project.raw.orders",
+                    "resource_type": "source",
+                    "name": "orders",
+                    "source_name": "raw",
+                    "original_file_path": "models/schema.yml",
+                    "description": "Raw orders",
+                    "columns": {},
+                    "tags": []
+                }
+            },
+            "exposures": {},
+            "metrics": {},
+            "child_map": {},
+            "parent_map": {}
+        }"#;
+        std::fs::write(path.join("target/manifest.json"), manifest).unwrap();
+
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "with manifest"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+
+        let result = build_graph_from_ref(&path, "HEAD");
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+        assert!(graph.node_count() >= 2);
+    }
+
+    #[test]
+    fn test_collect_edge_set() {
+        let mut g = LineageGraph::new();
+        let a = g.add_node(make_node("model.a", "a", NodeType::Model, None));
+        let b = g.add_node(make_node("model.b", "b", NodeType::Model, None));
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+
+        let edges = collect_edge_set(&g);
+        assert_eq!(edges.len(), 1);
+        let edge = edges.iter().next().unwrap();
+        assert_eq!(edge.source, "model.a");
+        assert_eq!(edge.target, "model.b");
+        assert_eq!(edge.edge_type, "ref");
+    }
+
+    #[test]
+    fn test_collect_node_map() {
+        let mut g = LineageGraph::new();
+        g.add_node(make_node("model.a", "a", NodeType::Model, None));
+        g.add_node(make_node("model.b", "b", NodeType::Model, None));
+
+        let map = collect_node_map(&g);
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("model.a"));
+        assert!(map.contains_key("model.b"));
+    }
 }

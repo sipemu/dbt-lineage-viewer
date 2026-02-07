@@ -555,6 +555,75 @@ mod tests {
     }
 
     #[test]
+    fn test_load_run_results_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("target")).unwrap();
+        std::fs::write(
+            tmp.path().join("target/run_results.json"),
+            r#"{"results": [{"unique_id": "model.x.y", "status": "success", "message": "OK", "timing": []}]}"#,
+        )
+        .unwrap();
+        let result = load_run_results(tmp.path()).unwrap();
+        assert!(result.is_some());
+        let rr = result.unwrap();
+        assert_eq!(rr.results.len(), 1);
+        assert_eq!(rr.results[0].status, "success");
+    }
+
+    #[test]
+    fn test_check_freshness_outdated() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a model file
+        let sql_path = tmp.path().join("models");
+        std::fs::create_dir_all(&sql_path).unwrap();
+        std::fs::write(sql_path.join("stg_orders.sql"), "SELECT 1 FROM x").unwrap();
+
+        let node = NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: NodeType::Model,
+            file_path: Some(std::path::PathBuf::from("models/stg_orders.sql")),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        };
+
+        // Use a timestamp in the past so the file modification is newer
+        let old_time = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = check_freshness(&node, tmp.path(), old_time);
+        assert!(matches!(result, Some(RunStatus::Outdated { .. })));
+    }
+
+    #[test]
+    fn test_check_freshness_not_outdated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("models");
+        std::fs::create_dir_all(&sql_path).unwrap();
+        std::fs::write(sql_path.join("stg_orders.sql"), "SELECT 1 FROM x").unwrap();
+
+        let node = NodeData {
+            unique_id: "model.stg_orders".into(),
+            label: "stg_orders".into(),
+            node_type: NodeType::Model,
+            file_path: Some(std::path::PathBuf::from("models/stg_orders.sql")),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        };
+
+        // Use a timestamp far in the future
+        let future_time = chrono::DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = check_freshness(&node, tmp.path(), future_time);
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_resolve_run_status_error_no_message() {
         let result = RunResult {
             unique_id: "model.x".into(),

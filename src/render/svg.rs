@@ -327,4 +327,96 @@ mod tests {
         let s = super::render_svg_to_string(&graph);
         assert!(s.contains("<svg"));
     }
+
+    #[test]
+    fn test_multi_node_all_edge_types() {
+        let mut graph = LineageGraph::new();
+        let src = graph.add_node(make_node(
+            "source.raw.orders",
+            "raw.orders",
+            NodeType::Source,
+        ));
+        let model = graph.add_node(make_node("model.orders", "orders", NodeType::Model));
+        let test = graph.add_node(make_node(
+            "test.orders_not_null",
+            "orders_not_null",
+            NodeType::Test,
+        ));
+        let exp = graph.add_node(make_node(
+            "exposure.dashboard",
+            "dashboard",
+            NodeType::Exposure,
+        ));
+
+        graph.add_edge(
+            src,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        graph.add_edge(
+            src,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        graph.add_edge(
+            model,
+            test,
+            EdgeData {
+                edge_type: EdgeType::Test,
+            },
+        );
+        graph.add_edge(
+            model,
+            exp,
+            EdgeData {
+                edge_type: EdgeType::Exposure,
+            },
+        );
+
+        let output = render_to_string(&graph);
+        // Source edge style: dashed
+        assert!(output.contains("stroke-dasharray:5,3"));
+        // Test edge style: dotted
+        assert!(output.contains("stroke-dasharray:2,2"));
+        // Exposure edge style: thick
+        assert!(output.contains("stroke-width:2.5"));
+        // Ref edge style: basic
+        assert!(output.contains("stroke-width:1.5"));
+        // All nodes present
+        assert!(output.contains("data-id=\"source.raw.orders\""));
+        assert!(output.contains("data-id=\"model.orders\""));
+        assert!(output.contains("data-id=\"test.orders_not_null\""));
+        assert!(output.contains("data-id=\"exposure.dashboard\""));
+    }
+
+    #[test]
+    fn test_node_font_color_all_types() {
+        assert_eq!(node_font_color(NodeType::Phantom), "#000000");
+        assert_eq!(node_font_color(NodeType::Model), "#ffffff");
+        assert_eq!(node_font_color(NodeType::Source), "#ffffff");
+        assert_eq!(node_font_color(NodeType::Seed), "#ffffff");
+        assert_eq!(node_font_color(NodeType::Snapshot), "#ffffff");
+        assert_eq!(node_font_color(NodeType::Test), "#ffffff");
+        assert_eq!(node_font_color(NodeType::Exposure), "#ffffff");
+    }
+
+    #[test]
+    fn test_edge_style_all_types() {
+        let ref_style = edge_style(EdgeType::Ref);
+        assert!(ref_style.contains("stroke-width:1.5"));
+        assert!(!ref_style.contains("dasharray"));
+
+        let source_style = edge_style(EdgeType::Source);
+        assert!(source_style.contains("dasharray:5,3"));
+
+        let test_style = edge_style(EdgeType::Test);
+        assert!(test_style.contains("dasharray:2,2"));
+
+        let exp_style = edge_style(EdgeType::Exposure);
+        assert!(exp_style.contains("stroke-width:2.5"));
+    }
 }

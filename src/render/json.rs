@@ -227,4 +227,27 @@ mod tests {
         // Should parse as valid JSON
         let _: serde_json::Value = serde_json::from_str(&output).unwrap();
     }
+
+    #[test]
+    fn test_node_with_materialization_tags_columns() {
+        let mut graph = LineageGraph::new();
+        graph.add_node(NodeData {
+            unique_id: "model.orders".into(),
+            label: "orders".into(),
+            node_type: NodeType::Model,
+            file_path: None,
+            description: None,
+            materialization: Some("table".into()),
+            tags: vec!["daily".into(), "core".into()],
+            columns: vec!["order_id".into(), "customer_id".into()],
+        });
+        let output = render_to_string(&graph);
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let node = &parsed["nodes"][0];
+        assert_eq!(node["materialization"], "table");
+        assert_eq!(node["tags"][0], "daily");
+        assert_eq!(node["tags"][1], "core");
+        assert_eq!(node["columns"][0], "order_id");
+        assert_eq!(node["columns"][1], "customer_id");
+    }
 }
