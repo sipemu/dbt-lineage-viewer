@@ -323,8 +323,6 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::types::*;
-    use std::path::PathBuf;
 
     fn make_node(
         unique_id: &str,
