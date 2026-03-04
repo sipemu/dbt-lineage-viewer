@@ -75,13 +75,17 @@ fn is_word_boundary(b: u8) -> bool {
     !b.is_ascii_alphanumeric() && b != b'_'
 }
 
-/// Check if position `i` in string `s` starts a top-level `FROM` keyword with proper boundaries
-fn check_from_at(s: &str, bytes: &[u8], i: usize, len: usize) -> bool {
+/// Check if position `i` in string `s` starts a top-level `FROM` keyword with proper boundaries.
+/// Uses byte-level comparison to avoid panics on multi-byte UTF-8 characters.
+fn check_from_at(_s: &str, bytes: &[u8], i: usize, len: usize) -> bool {
     if i + 4 > len {
         return false;
     }
-    let candidate = &s[i..i + 4];
-    if !candidate.eq_ignore_ascii_case("from") {
+    let from_match = matches!(bytes[i], b'f' | b'F')
+        && matches!(bytes[i + 1], b'r' | b'R')
+        && matches!(bytes[i + 2], b'o' | b'O')
+        && matches!(bytes[i + 3], b'm' | b'M');
+    if !from_match {
         return false;
     }
     let before_ok = i == 0 || is_word_boundary(bytes[i - 1]);
@@ -159,9 +163,11 @@ fn extract_alias_after_paren(item: &str) -> Option<String> {
     if after.is_empty() {
         return None;
     }
-    // Strip leading AS (case-insensitive)
+    // Strip leading AS (case-insensitive) using byte comparison to avoid
+    // panics on multi-byte UTF-8 characters
     let after = if after.len() >= 3
-        && after[..2].eq_ignore_ascii_case("as")
+        && matches!(after.as_bytes()[0], b'a' | b'A')
+        && matches!(after.as_bytes()[1], b's' | b'S')
         && after.as_bytes()[2].is_ascii_whitespace()
     {
         after[2..].trim()
@@ -203,13 +209,13 @@ fn extract_column_name(item: &str) -> String {
 
 /// Check if position `i` (a whitespace char) starts a top-level ` AS ` token.
 /// Returns the position after "AS " if matched.
-fn is_as_keyword_at(item: &str, bytes: &[u8], i: usize, len: usize) -> Option<usize> {
+/// Uses byte-level comparison to avoid panics on multi-byte UTF-8 characters.
+fn is_as_keyword_at(_item: &str, bytes: &[u8], i: usize, len: usize) -> Option<usize> {
     if i + 3 >= len {
         return None;
     }
-    let candidate = &item[i + 1..i + 3];
-    let after = bytes[i + 3];
-    if candidate.eq_ignore_ascii_case("as") && matches!(after, b' ' | b'\t' | b'\n' | b'\r') {
+    let as_match = matches!(bytes[i + 1], b'a' | b'A') && matches!(bytes[i + 2], b's' | b'S');
+    if as_match && matches!(bytes[i + 3], b' ' | b'\t' | b'\n' | b'\r') {
         Some(i + 4)
     } else {
         None
@@ -415,6 +421,42 @@ mod tests {
         let sql = "select col1, col2 from my_table";
         let cols = extract_select_columns(sql);
         assert_eq!(cols, vec!["col1", "col2"]);
+    }
+
+    #[test]
+    fn test_select_with_multibyte_utf8_comment() {
+        // GitHub Issue #1: panic on multi-byte UTF-8 characters
+        let sql = r#"SELECT
+    case
+      when flag = true then false -- 日本語コメント
+      else flag
+    end as flag
+FROM my_table"#;
+        let cols = extract_select_columns(sql);
+        assert_eq!(cols, vec!["flag"]);
+    }
+
+    #[test]
+    fn test_select_with_multibyte_utf8_string_literal() {
+        let sql = "SELECT '中文字符' AS label, col1 FROM my_table";
+        let cols = extract_select_columns(sql);
+        assert_eq!(cols, vec!["label", "col1"]);
+    }
+
+    #[test]
+    fn test_select_with_korean_comment_no_panic() {
+        // Verify no panic on Korean characters (comment stripping is a separate concern)
+        let sql = "SELECT col1, col2 -- 한국어 코멘트\nFROM my_table";
+        let cols = extract_select_columns(sql);
+        assert!(!cols.is_empty());
+    }
+
+    #[test]
+    fn test_select_with_emoji_comment_no_panic() {
+        // Verify no panic on emoji characters (comment stripping is a separate concern)
+        let sql = "SELECT col1 -- 🎉 celebration\nFROM my_table";
+        let cols = extract_select_columns(sql);
+        assert!(!cols.is_empty());
     }
 
     #[test]
