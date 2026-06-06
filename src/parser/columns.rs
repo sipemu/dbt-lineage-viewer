@@ -75,13 +75,15 @@ fn is_word_boundary(b: u8) -> bool {
     !b.is_ascii_alphanumeric() && b != b'_'
 }
 
-/// Check if position `i` in string `s` starts a top-level `FROM` keyword with proper boundaries
-fn check_from_at(s: &str, bytes: &[u8], i: usize, len: usize) -> bool {
+/// Check if position `i` starts a top-level `FROM` keyword with proper boundaries.
+/// Works at the byte level: continuation bytes of multi-byte UTF-8 chars (>= 0x80)
+/// never match ASCII letters, so byte comparison is safe and avoids panicking on
+/// non-char-boundary slices.
+fn check_from_at(bytes: &[u8], i: usize, len: usize) -> bool {
     if i + 4 > len {
         return false;
     }
-    let candidate = &s[i..i + 4];
-    if !candidate.eq_ignore_ascii_case("from") {
+    if !bytes[i..i + 4].eq_ignore_ascii_case(b"from") {
         return false;
     }
     let before_ok = i == 0 || is_word_boundary(bytes[i - 1]);
@@ -106,7 +108,7 @@ fn find_top_level_from(s: &str) -> Option<usize> {
                 }
             }
             b'f' | b'F' if depth == 0 => {
-                if check_from_at(s, bytes, i, len) {
+                if check_from_at(bytes, i, len) {
                     return Some(i);
                 }
             }
@@ -159,10 +161,12 @@ fn extract_alias_after_paren(item: &str) -> Option<String> {
     if after.is_empty() {
         return None;
     }
-    // Strip leading AS (case-insensitive)
-    let after = if after.len() >= 3
-        && after[..2].eq_ignore_ascii_case("as")
-        && after.as_bytes()[2].is_ascii_whitespace()
+    // Strip leading AS (case-insensitive). Match at byte level so a leading
+    // multi-byte UTF-8 char doesn't panic on `after[..2]`.
+    let after_bytes = after.as_bytes();
+    let after = if after_bytes.len() >= 3
+        && after_bytes[..2].eq_ignore_ascii_case(b"as")
+        && after_bytes[2].is_ascii_whitespace()
     {
         after[2..].trim()
     } else {
@@ -203,13 +207,16 @@ fn extract_column_name(item: &str) -> String {
 
 /// Check if position `i` (a whitespace char) starts a top-level ` AS ` token.
 /// Returns the position after "AS " if matched.
-fn is_as_keyword_at(item: &str, bytes: &[u8], i: usize, len: usize) -> Option<usize> {
+/// Byte-level comparison avoids panicking when `i + 1..i + 3` lands in the
+/// middle of a multi-byte UTF-8 char.
+fn is_as_keyword_at(bytes: &[u8], i: usize, len: usize) -> Option<usize> {
     if i + 3 >= len {
         return None;
     }
-    let candidate = &item[i + 1..i + 3];
     let after = bytes[i + 3];
-    if candidate.eq_ignore_ascii_case("as") && matches!(after, b' ' | b'\t' | b'\n' | b'\r') {
+    if bytes[i + 1..i + 3].eq_ignore_ascii_case(b"as")
+        && matches!(after, b' ' | b'\t' | b'\n' | b'\r')
+    {
         Some(i + 4)
     } else {
         None
@@ -233,7 +240,7 @@ fn find_last_as_alias(item: &str) -> Option<String> {
                 }
             }
             b' ' | b'\t' | b'\n' | b'\r' if depth == 0 => {
-                if let Some(pos) = is_as_keyword_at(item, bytes, i, len) {
+                if let Some(pos) = is_as_keyword_at(bytes, i, len) {
                     last_as_pos = Some(pos);
                 }
             }
@@ -450,5 +457,29 @@ mod tests {
         // No closing paren at all
         let result = extract_alias_after_paren("SELECT 1");
         assert!(result.is_none());
+    }
+
+    // Regression test for GH issue #1: panic when SQL contains multi-byte
+    // UTF-8 characters (e.g. Japanese in a -- comment or string literal).
+    #[test]
+    fn test_select_with_multibyte_utf8_in_comment() {
+        let sql = "SELECT\n    case\n      when flag = true then false -- 日本語コメント\n      else flag\n    end as flag\nFROM my_table";
+        let cols = extract_select_columns(sql);
+        assert_eq!(cols, vec!["flag"]);
+    }
+
+    #[test]
+    fn test_select_with_multibyte_utf8_in_string_literal() {
+        let sql = "SELECT '日本語' AS greeting, name FROM users";
+        let cols = extract_select_columns(sql);
+        assert_eq!(cols, vec!["greeting", "name"]);
+    }
+
+    #[test]
+    fn test_extract_alias_after_paren_multibyte_leading() {
+        // Trimmed remainder starts with a multi-byte UTF-8 char.
+        // Must not panic on slicing.
+        let result = extract_alias_after_paren("(SELECT 1) 日本語");
+        assert_eq!(result, Some("日本語".to_string()));
     }
 }
