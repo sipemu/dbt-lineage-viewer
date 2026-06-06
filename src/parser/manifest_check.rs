@@ -1,10 +1,17 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use serde::Serialize;
 
 use super::manifest::Manifest;
+
+/// Normalize a path to its project-relative, forward-slash string form. Used as
+/// the comparison key so that filesystem-walked paths (which use backslashes on
+/// Windows) match the manifest's forward-slash paths.
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 
 /// Result of comparing a `manifest.json` against the current state of the project's
 /// SQL/YAML files. Stale if any of `missing`, `modified`, or `untracked` is non-empty.
@@ -46,18 +53,18 @@ pub fn check_manifest(project_dir: &Path, manifest_path: &Path) -> Result<Manife
             source: e,
         })?;
 
-    let referenced: HashSet<PathBuf> = collect_referenced_paths(&manifest);
+    let referenced: HashSet<String> = collect_referenced_paths(&manifest);
 
     let mut missing = Vec::new();
     let mut modified = Vec::new();
     for rel in &referenced {
         let abs = project_dir.join(rel);
         match std::fs::metadata(&abs) {
-            Err(_) => missing.push(rel.to_string_lossy().to_string()),
+            Err(_) => missing.push(rel.clone()),
             Ok(meta) => {
                 if let Ok(mtime) = meta.modified() {
                     if mtime > manifest_mtime {
-                        modified.push(rel.to_string_lossy().to_string());
+                        modified.push(rel.clone());
                     }
                 }
             }
@@ -82,17 +89,18 @@ pub fn check_manifest(project_dir: &Path, manifest_path: &Path) -> Result<Manife
     })
 }
 
-/// Collect every project-relative path referenced anywhere in the manifest.
-fn collect_referenced_paths(manifest: &Manifest) -> HashSet<PathBuf> {
-    let mut out: HashSet<PathBuf> = HashSet::new();
+/// Collect every project-relative path referenced anywhere in the manifest, normalized
+/// to forward-slash strings for portable cross-platform comparison.
+fn collect_referenced_paths(manifest: &Manifest) -> HashSet<String> {
+    let mut out: HashSet<String> = HashSet::new();
     for n in manifest.nodes.values() {
         if let Some(p) = &n.path {
-            out.insert(PathBuf::from(p));
+            out.insert(p.replace('\\', "/"));
         }
     }
     for s in manifest.sources.values() {
         if let Some(p) = &s.path {
-            out.insert(PathBuf::from(p));
+            out.insert(p.replace('\\', "/"));
         }
     }
     out
@@ -102,7 +110,7 @@ fn collect_referenced_paths(manifest: &Manifest) -> HashSet<PathBuf> {
 /// isn't already in `referenced`. We intentionally only flag SQL (not YAML) as
 /// "untracked" — YAML files often live outside the manifest's path list, so we'd get
 /// noisy false positives.
-fn scan_untracked_sql(project_dir: &Path, referenced: &HashSet<PathBuf>) -> Result<Vec<String>> {
+fn scan_untracked_sql(project_dir: &Path, referenced: &HashSet<String>) -> Result<Vec<String>> {
     const DBT_ROOTS: &[&str] = &["models", "seeds", "snapshots", "tests", "analyses"];
     let mut untracked = Vec::new();
     for root in DBT_ROOTS {
@@ -126,8 +134,9 @@ fn scan_untracked_sql(project_dir: &Path, referenced: &HashSet<PathBuf>) -> Resu
                 .strip_prefix(project_dir)
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|_| path.to_path_buf());
-            if !referenced.contains(&rel) {
-                untracked.push(rel.to_string_lossy().to_string());
+            let rel_str = normalize_path(&rel);
+            if !referenced.contains(&rel_str) {
+                untracked.push(rel_str);
             }
         }
     }
@@ -139,6 +148,7 @@ fn scan_untracked_sql(project_dir: &Path, referenced: &HashSet<PathBuf>) -> Resu
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
 
     fn write_at(path: &Path, mtime: SystemTime, contents: &str) {
