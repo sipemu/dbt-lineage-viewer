@@ -53,6 +53,59 @@ pub struct Cli {
     /// Use manifest.json instead of parsing SQL (path to manifest file or directory containing target/manifest.json)
     #[arg(long)]
     pub manifest: Option<PathBuf>,
+
+    /// Mermaid only: inline column names inside each node's label.
+    #[arg(long)]
+    pub show_columns: bool,
+
+    /// Mermaid only: group nodes by directory using Mermaid subgraphs.
+    #[arg(long, value_enum, default_value = "none")]
+    pub group_by: GroupBy,
+
+    /// How errors are written to stderr: human-readable text (default) or one JSON
+    /// object per line (`{level, what, why, hint}`) for agent/CI consumers.
+    #[arg(long, value_enum, default_value = "plain", global = true)]
+    pub error_format: ErrorFormat,
+
+    /// Drop intermediate nodes and replace transitive paths with `(via N)` edges.
+    /// Bare `--collapse` is equivalent to `--collapse auto` (keep endpoints + focus);
+    /// `--collapse focal` keeps only sources, exposures, and the focus model.
+    #[arg(
+        long,
+        value_enum,
+        num_args = 0..=1,
+        default_missing_value = "auto",
+        default_value = "none"
+    )]
+    pub collapse: CollapseMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum CollapseMode {
+    /// Do not collapse (default).
+    None,
+    /// Keep endpoints (no predecessors or no successors), plus sources/exposures
+    /// and the positional focus model.
+    Auto,
+    /// Keep only sources, exposures, and the positional focus model. BFS-window
+    /// pseudo-endpoints are NOT kept; pair with `-u`/`-d` to bound traversal.
+    Focal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ErrorFormat {
+    /// Human-readable, multi-line errors (default).
+    Plain,
+    /// One JSON object per line on stderr.
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum GroupBy {
+    /// No grouping (default).
+    None,
+    /// Group nodes by source-file directory.
+    Directory,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -85,6 +138,49 @@ pub enum Command {
         manifest: Option<PathBuf>,
     },
 
+    /// Print a one-shot project overview: counts, tags, top fan-out, orphans
+    Summary {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Output format: text (default) or json
+        #[arg(short = 'o', long, default_value = "text")]
+        output: SummaryOutputFormat,
+
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
+
+    /// Run an MCP (Model Context Protocol) stdio server exposing lineage tools
+    /// to AI agents. Reads JSON-RPC requests on stdin, writes responses to stdout.
+    Mcp {
+        /// Path to dbt project directory (used to find target/manifest.json if --manifest is omitted)
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Manifest file or directory containing target/manifest.json
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
+
+    /// Verify a manifest.json is still in sync with the project's SQL files.
+    /// Exits with code 1 on staleness, making it directly usable in CI pipelines.
+    CheckManifest {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Use manifest.json instead of the default `<project>/target/manifest.json`
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// Output format: text (default) or json
+        #[arg(short = 'o', long, default_value = "text")]
+        output: CheckManifestOutputFormat,
+    },
+
     /// Compare lineage between git refs
     Diff {
         /// Base git ref to compare from (e.g., main, HEAD~1)
@@ -113,6 +209,18 @@ pub enum ImpactOutputFormat {
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum DiffOutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum SummaryOutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum CheckManifestOutputFormat {
     Text,
     Json,
 }

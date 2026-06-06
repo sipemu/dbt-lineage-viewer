@@ -16,10 +16,16 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **Direct SQL parsing** — extracts `ref()` and `source()` calls via regex, no `dbt compile` needed
 - **Manifest support** — optionally read `manifest.json` for column metadata, materializations, and full graph fidelity
 - **Interactive TUI** — navigate, search, and explore lineage in a terminal UI (ratatui) with Unicode box-drawing nodes, orthogonal edge routing, and full mouse support
+- **Project summary** — `dbt-lineage summary` prints a one-shot overview (counts, tags, top fan-out, orphans)
 - **Impact analysis** — `dbt-lineage impact <model>` computes downstream impact with severity scoring (Critical/High/Medium/Low)
 - **Lineage diff** — `dbt-lineage diff --base <ref>` compares lineage between git refs, showing added/removed/modified nodes and edges
+- **Manifest freshness check** — `dbt-lineage check-manifest` flags drift between `manifest.json` and current SQL files; exits non-zero for CI gating
+- **MCP server** — `dbt-lineage mcp` exposes lineage as stdio MCP tools (summary, search, lineage, impact) for direct AI-agent integration
+- **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and replaces transitive paths with `(via N)` edges for readable big-project diagrams
 - **Column-level lineage** — trace column provenance through the DAG with confidence levels (Direct, Aliased, Derived, Star)
 - **6 output formats** — ASCII, Graphviz DOT, JSON, Mermaid, self-contained SVG, and interactive HTML (pan/zoom/search)
+- **Mermaid niceties** — `--show-columns` inlines column names in node labels; `--group-by directory` emits Mermaid subgraphs
+- **Structured errors** — `--error-format json` writes `{level, what, why, hint}` to stderr for deterministic agent/CI error handling
 - **Run dbt from TUI** — execute `dbt run` / `dbt test` on selected models with scope control (`+upstream`, `downstream+`, `+all+`) via keyboard menu or right-click context menu
 - **Run status tracking** — color-coded nodes show success (green), error (red), outdated (yellow), or never-run (default)
 - **Path highlighting** — trace upstream/downstream paths with impact analysis in the TUI
@@ -114,32 +120,103 @@ dbt-lineage diff --base HEAD~1 -o json                 # JSON for CI integration
 
 Shows added, removed, and modified nodes and edges with a summary of changes.
 
+### Project summary
+
+One-shot project overview, designed as the first thing an agent (or human) runs against an unfamiliar dbt project:
+
+```sh
+dbt-lineage summary -p path/to/project                 # text
+dbt-lineage summary --manifest target/manifest.json    # manifest mode
+dbt-lineage summary -o json                            # structured for piping into jq
+```
+
+Reports counts per node type, tag distribution, top downstream-reach models, and orphan models (no downstream consumers).
+
+### Manifest freshness
+
+CI-friendly drift check between a distributed `manifest.json` and current SQL files:
+
+```sh
+dbt-lineage check-manifest -p path/to/project           # text; exit 1 if stale
+dbt-lineage check-manifest -o json                      # JSON for tooling
+```
+
+Flags three kinds of drift: SQL files referenced by the manifest that are now missing, files modified since the manifest was generated, and SQL files added but not yet compiled into the manifest.
+
+### Graph collapse
+
+Collapse intermediate nodes so big projects render as just their endpoints, with transitive paths labeled `(via N)`:
+
+```sh
+dbt-lineage --collapse -o mermaid                       # keep endpoints + focus model
+dbt-lineage orders --collapse=focal -u 3 -o mermaid     # focal: only sources/exposures/focus
+dbt-lineage --collapse -o json                          # JSON edges carry a via_hops field
+```
+
+Positional focus models (e.g. `dbt-lineage orders --collapse`) are always preserved even when they would otherwise be classified as intermediate.
+
+### Mermaid options
+
+```sh
+dbt-lineage -o mermaid --show-columns                   # inline column names in node labels
+dbt-lineage -o mermaid --group-by directory             # group nodes by directory via subgraph
+dbt-lineage -o mermaid --show-columns --collapse        # combine: endpoint nodes with full column lists
+```
+
+### Structured errors for agents and CI
+
+```sh
+dbt-lineage --error-format json some_unknown_model
+# stderr: {"level":"error","what":"model not found","why":"...","hint":"..."}
+```
+
+`--error-format json` writes one JSON object per line to stderr. `stdout` is unaffected, so piping into `jq` still works.
+
+### MCP server (experimental)
+
+Expose lineage as stdio MCP tools that Claude Code, Claude Desktop, and other MCP-aware clients can call directly:
+
+```sh
+dbt-lineage mcp -p path/to/project
+dbt-lineage mcp --manifest path/to/manifest.json
+```
+
+Available tools: `summary`, `search_models`, `lineage`, `impact`. The server reads JSON-RPC 2.0 requests on stdin and writes responses on stdout (one line per message). Manifest mode only — run `dbt compile` first.
+
 ## CLI Reference
 
 ```
 Usage: dbt-lineage [OPTIONS] [MODEL] [COMMAND]
 
 Commands:
-  impact  Compute downstream impact analysis for a model
-  diff    Compare lineage between git refs
+  summary         Project overview: counts, tags, top fan-out, orphans
+  impact          Compute downstream impact analysis for a model
+  diff            Compare lineage between git refs
+  check-manifest  Verify manifest.json is in sync with current SQL files (exit 1 if stale)
+  mcp             Run an MCP stdio server exposing lineage tools to AI agents
 
 Arguments:
   [MODEL]  Model name to focus on (shows full lineage if omitted)
 
 Options:
   -p, --project-dir <PATH>    Path to dbt project directory [default: .]
-  -u, --upstream <N>           Upstream levels to show (default: all)
-  -d, --downstream <N>         Downstream levels to show (default: all)
-  -i, --interactive            Launch interactive TUI mode
-  -o, --output <FORMAT>        Output format [default: ascii]
-                               [values: ascii, dot, json, mermaid, svg, html]
-  -s, --select <SELECTOR>      Selector expression: tag:X, path:Y, or model name (comma-separated)
-      --manifest <PATH>        Use manifest.json instead of parsing SQL
-      --include-tests          Include test nodes
-      --include-seeds          Include seed nodes
-      --include-snapshots      Include snapshot nodes
-      --include-exposures      Include exposure nodes
-  -h, --help                   Print help
+  -u, --upstream <N>          Upstream levels to show (default: all)
+  -d, --downstream <N>        Downstream levels to show (default: all)
+  -i, --interactive           Launch interactive TUI mode
+  -o, --output <FORMAT>       Output format [default: ascii]
+                              [values: ascii, dot, json, mermaid, svg, html]
+  -s, --select <SELECTOR>     Selector expression: tag:X, path:Y, or model name (comma-separated)
+      --manifest <PATH>       Use manifest.json instead of parsing SQL
+      --include-tests         Include test nodes
+      --include-seeds         Include seed nodes
+      --include-snapshots     Include snapshot nodes
+      --include-exposures     Include exposure nodes
+      --show-columns          Mermaid only: inline column names inside node labels
+      --group-by <MODE>       Mermaid only: group nodes by directory [values: none, directory]
+      --collapse [<MODE>]     Drop intermediate nodes, label transitive edges with (via N)
+                              [values: none, auto, focal]  [default: none]  [bare: auto]
+      --error-format <FORMAT> Error output: plain (default) or json [global]
+  -h, --help                  Print help
 ```
 
 ## TUI Keybindings
@@ -263,6 +340,10 @@ The TUI is enabled by default. To build a minimal binary with only static output
 ```sh
 cargo build --release --no-default-features
 ```
+
+## Credits
+
+The agent-oriented additions in 0.3.0 — `summary`, `check-manifest`, `mcp`, `--collapse`, `--error-format json`, and the Mermaid `--show-columns` / `--group-by directory` options — were inspired by [eitsupi/dlin](https://github.com/eitsupi/dlin), a hard fork that focuses on non-interactive (CI/agent) workflows. dbt-lineage retains its TUI focus and brings these ideas back upstream.
 
 ## License
 

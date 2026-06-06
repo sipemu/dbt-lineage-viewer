@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::io::Write;
 
+use petgraph::stable_graph::EdgeIndex;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use serde::Serialize;
 
@@ -33,14 +35,27 @@ struct JsonEdge {
     source: String,
     target: String,
     edge_type: String,
+    /// Number of intermediate nodes folded into this edge by `--collapse`.
+    /// Omitted when 0 or when collapse was not used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    via_hops: Option<usize>,
 }
 
 /// Render the lineage graph as JSON to stdout
 pub fn render_json(graph: &LineageGraph) {
-    render_json_to_writer(graph, &mut std::io::stdout().lock());
+    render_json_to_writer(graph, None, &mut std::io::stdout().lock());
 }
 
-fn render_json_to_writer<W: Write>(graph: &LineageGraph, w: &mut W) {
+/// Render with optional per-edge `via_hops` annotations (from collapse).
+pub fn render_json_with_via(graph: &LineageGraph, via_hops: &HashMap<EdgeIndex, usize>) {
+    render_json_to_writer(graph, Some(via_hops), &mut std::io::stdout().lock());
+}
+
+fn render_json_to_writer<W: Write>(
+    graph: &LineageGraph,
+    via_hops: Option<&HashMap<EdgeIndex, usize>>,
+    w: &mut W,
+) {
     let nodes: Vec<JsonNode> = graph
         .node_indices()
         .map(|idx| {
@@ -63,10 +78,14 @@ fn render_json_to_writer<W: Write>(graph: &LineageGraph, w: &mut W) {
         .map(|edge| {
             let source = &graph[edge.source()];
             let target = &graph[edge.target()];
+            let via = via_hops
+                .and_then(|m| m.get(&edge.id()).copied())
+                .filter(|&n| n > 0);
             JsonEdge {
                 source: source.unique_id.clone(),
                 target: target.unique_id.clone(),
                 edge_type: edge_type_label(edge.weight().edge_type),
+                via_hops: via,
             }
         })
         .collect();
@@ -106,7 +125,13 @@ mod tests {
 
     fn render_to_string(graph: &LineageGraph) -> String {
         let mut buf = Vec::new();
-        render_json_to_writer(graph, &mut buf);
+        render_json_to_writer(graph, None, &mut buf);
+        String::from_utf8(buf).unwrap()
+    }
+
+    fn render_with_via(graph: &LineageGraph, via: &HashMap<EdgeIndex, usize>) -> String {
+        let mut buf = Vec::new();
+        render_json_to_writer(graph, Some(via), &mut buf);
         String::from_utf8(buf).unwrap()
     }
 
@@ -117,6 +142,32 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(parsed["nodes"].as_array().unwrap().len(), 0);
         assert_eq!(parsed["edges"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_edge_emits_via_hops_when_set() {
+        let mut graph = LineageGraph::new();
+        let a = graph.add_node(make_node("source.a", "a", NodeType::Source));
+        let b = graph.add_node(make_node("model.b", "b", NodeType::Model));
+        let eid = graph.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        let mut via = HashMap::new();
+        via.insert(eid, 3usize);
+
+        let out = render_with_via(&graph, &via);
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let edges = parsed["edges"].as_array().unwrap();
+        assert_eq!(edges[0]["via_hops"], 3);
+
+        // And the default rendering omits via_hops entirely.
+        let out = render_to_string(&graph);
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(parsed["edges"][0].get("via_hops").is_none());
     }
 
     #[test]

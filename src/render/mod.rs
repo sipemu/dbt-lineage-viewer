@@ -5,5 +5,7 @@ pub mod html;
 pub mod impact;
 pub mod json;
 pub mod layout;
+pub mod manifest_check;
 pub mod mermaid;
+pub mod summary;
 pub mod svg;

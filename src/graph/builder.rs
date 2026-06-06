@@ -175,7 +175,7 @@ fn process_yaml_files(
             model_meta.insert(model_def.name.clone(), meta);
         }
 
-        exposures.extend(schema.exposures.into_iter());
+        exposures.extend(schema.exposures);
     }
 
     Ok((model_meta, exposures))

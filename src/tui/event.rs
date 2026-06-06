@@ -491,11 +491,12 @@ fn handle_mouse_normal(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::Down(MouseButton::Right) => {
             handle_graph_right_click(app, mouse.column, mouse.row);
         }
-        MouseEventKind::Down(MouseButton::Left) => {
-            if !handle_node_list_click(app, mouse.column, mouse.row) {
-                handle_graph_left_click(app, mouse.column, mouse.row);
-            }
+        MouseEventKind::Down(MouseButton::Left)
+            if !handle_node_list_click(app, mouse.column, mouse.row) =>
+        {
+            handle_graph_left_click(app, mouse.column, mouse.row);
         }
+        MouseEventKind::Down(MouseButton::Left) => {}
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some(ref drag) = app.drag_state {
                 app.viewport_x = drag.viewport_x0 - (mouse.column as i32 - drag.start_x as i32);

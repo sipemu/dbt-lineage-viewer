@@ -102,16 +102,8 @@ fn find_top_level_from(s: &str) -> Option<usize> {
     while i < len {
         match bytes[i] {
             b'(' => depth += 1,
-            b')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
-            b'f' | b'F' if depth == 0 => {
-                if check_from_at(bytes, i, len) {
-                    return Some(i);
-                }
-            }
+            b')' if depth > 0 => depth -= 1,
+            b'f' | b'F' if depth == 0 && check_from_at(bytes, i, len) => return Some(i),
             _ => {}
         }
         i += 1;
@@ -234,11 +226,7 @@ fn find_last_as_alias(item: &str) -> Option<String> {
     while i < len {
         match bytes[i] {
             b'(' => depth += 1,
-            b')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            b')' if depth > 0 => depth -= 1,
             b' ' | b'\t' | b'\n' | b'\r' if depth == 0 => {
                 if let Some(pos) = is_as_keyword_at(bytes, i, len) {
                     last_as_pos = Some(pos);
