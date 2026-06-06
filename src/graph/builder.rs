@@ -5,6 +5,9 @@ use std::path::Path;
 
 use crate::parser::columns::extract_select_columns;
 use crate::parser::discovery::DiscoveredFiles;
+use crate::parser::macros::{
+    detect_wrappers_in_files, discover_macro_files, extract_wrapper_calls, WrapperMacro,
+};
 use crate::parser::sql::{extract_config, extract_refs, extract_sources};
 use crate::parser::yaml_schema::{parse_schema_file, ExposureDefinition};
 
@@ -282,6 +285,7 @@ fn process_sql_edges(
     gb: &mut GraphBuilder,
     files: &DiscoveredFiles,
     project_dir: &Path,
+    wrappers: &[WrapperMacro],
 ) -> Result<()> {
     let all_sql_files: Vec<(&std::path::PathBuf, &str)> = files
         .model_sql_files
@@ -319,7 +323,11 @@ fn process_sql_edges(
             None => continue,
         };
 
-        for ref_call in extract_refs(&content) {
+        let direct_refs = extract_refs(&content);
+        let direct_sources = extract_sources(&content);
+        let (wrapped_refs, wrapped_sources) = extract_wrapper_calls(&content, wrappers);
+
+        for ref_call in direct_refs.iter().chain(wrapped_refs.iter()) {
             let dep_idx = gb.get_or_create_phantom_ref(&ref_call.name, sql_path);
             gb.graph.add_edge(
                 dep_idx,
@@ -330,7 +338,7 @@ fn process_sql_edges(
             );
         }
 
-        for source_call in extract_sources(&content) {
+        for source_call in direct_sources.iter().chain(wrapped_sources.iter()) {
             let source_idx = gb.get_or_create_phantom_source(
                 &source_call.source_name,
                 &source_call.table_name,
@@ -401,7 +409,12 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
         "snapshot",
         NodeType::Snapshot,
     );
-    process_sql_edges(&mut gb, files, project_dir)?;
+    // Detect simple ref/source wrapper macros so SQL-parse mode follows
+    // `{{ smart_ref('orders') }}` calls without a dbt compile step.
+    let macro_files = discover_macro_files(project_dir);
+    let wrappers = detect_wrappers_in_files(&macro_files);
+
+    process_sql_edges(&mut gb, files, project_dir, &wrappers)?;
     process_exposures(&mut gb, &exposures);
 
     Ok(gb.graph)

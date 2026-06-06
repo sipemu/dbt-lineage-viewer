@@ -532,7 +532,8 @@ fn run_mcp_command(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<()>
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    dbt_lineage::mcp::server::run(graph, stdin.lock(), &mut stdout)?;
+    let ctx = dbt_lineage::mcp::server::McpContext { graph, project_dir };
+    dbt_lineage::mcp::server::run(ctx, stdin.lock(), &mut stdout)?;
     Ok(())
 }
 

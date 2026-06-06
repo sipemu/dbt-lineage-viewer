@@ -5,5 +5,7 @@
 //! serves a small set of tools that AI agents can call directly instead of
 //! shelling out to the CLI and parsing text. See GH issue #3.
 
+pub mod prompts;
+pub mod resources;
 pub mod server;
 pub mod tools;

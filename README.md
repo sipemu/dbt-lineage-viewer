@@ -19,8 +19,14 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **Project summary** — `dbt-lineage summary` prints a one-shot overview (counts, tags, top fan-out, orphans)
 - **Impact analysis** — `dbt-lineage impact <model>` computes downstream impact with severity scoring (Critical/High/Medium/Low)
 - **Lineage diff** — `dbt-lineage diff --base <ref>` compares lineage between git refs, showing added/removed/modified nodes and edges
+- **CI rebuild planner** — `dbt-lineage plan --base main` emits a dbt selector for the minimal rebuild set after a diff; pipes into `dbt run -s "$(…)"`
+- **Test coverage** — `dbt-lineage coverage` maps tests-per-model + per-column; text, JSON, or SARIF (PR annotations)
+- **Lint** — `dbt-lineage lint` flags unused sources, undefined refs, dead-end models, missing descriptions
+- **Markdown docs** — `dbt-lineage docs` generates per-model Markdown with description, upstream/downstream, columns, embedded Mermaid lineage
+- **Performance report** — `dbt-lineage perf` joins `run_results.json` with the DAG: slowest models, critical paths
+- **Macro-aware ref()** — SQL-parse mode now follows simple `{% macro smart_ref(name) %}{{ ref(name) }}{% endmacro %}` wrappers automatically
 - **Manifest freshness check** — `dbt-lineage check-manifest` flags drift between `manifest.json` and current SQL files; exits non-zero for CI gating
-- **MCP server** — `dbt-lineage mcp` exposes lineage as stdio MCP tools (summary, search, lineage, impact) for direct AI-agent integration
+- **MCP server** — `dbt-lineage mcp` exposes lineage as stdio MCP tools, resources, and prompts for direct AI-agent integration. Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`. Resources: model SQL, lineage diagrams, summary. Prompts: `review-impact`, `propose-tests`, `explain-column`, `find-bottleneck`, `document-model`, `onboard-project`
 - **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and replaces transitive paths with `(via N)` edges for readable big-project diagrams
 - **Column-level lineage** — trace column provenance through the DAG with confidence levels (Direct, Aliased, Derived, Star)
 - **6 output formats** — ASCII, Graphviz DOT, JSON, Mermaid, self-contained SVG, and interactive HTML (pan/zoom/search)

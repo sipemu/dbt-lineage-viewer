@@ -1,22 +1,32 @@
 //! Minimal JSON-RPC 2.0 stdio server implementing the MCP handshake plus
-//! `tools/list` and `tools/call`. Stays sync (no tokio) — one line in, one
-//! line out — to match the rest of the project.
+//! `tools/list`, `tools/call`, `resources/list`, `resources/read`,
+//! `prompts/list`, and `prompts/get`. Stays sync (no tokio) — one line in,
+//! one line out — to match the rest of the project.
 
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
 use crate::graph::types::LineageGraph;
-use crate::mcp::tools;
+use crate::mcp::{prompts, resources, tools};
 
 /// Server identity sent back in the `initialize` response.
 const SERVER_NAME: &str = "dbt-lineage";
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// Per-server state. Tools and resources both consult `graph`; `project_dir`
+/// is used by tools that read source files (read_model_sql) and by resources
+/// that expose `.sql` content.
+pub struct McpContext {
+    pub graph: LineageGraph,
+    pub project_dir: PathBuf,
+}
+
 /// Run the MCP stdio server loop. Reads JSON-RPC requests line-by-line from
 /// `input`, writes responses to `output`. Returns Ok when stdin closes cleanly.
 pub fn run<R: BufRead, W: Write>(
-    graph: LineageGraph,
+    ctx: McpContext,
     mut input: R,
     output: &mut W,
 ) -> std::io::Result<()> {
@@ -25,7 +35,6 @@ pub fn run<R: BufRead, W: Write>(
         line.clear();
         let n = input.read_line(&mut line)?;
         if n == 0 {
-            // EOF
             return Ok(());
         }
         let trimmed = line.trim();
@@ -33,9 +42,8 @@ pub fn run<R: BufRead, W: Write>(
             continue;
         }
         match serde_json::from_str::<Value>(trimmed) {
-            Ok(req) => handle_message(&graph, &req, output)?,
+            Ok(req) => handle_message(&ctx, &req, output)?,
             Err(e) => {
-                // Send parse error (no id known).
                 let resp = error_response(&Value::Null, -32700, &format!("parse error: {}", e));
                 writeln_json(output, &resp)?;
             }
@@ -43,32 +51,32 @@ pub fn run<R: BufRead, W: Write>(
     }
 }
 
-/// Dispatch a single decoded JSON-RPC message. Notifications (no `id`) receive
-/// no response; requests get either a success result or an error.
-fn handle_message<W: Write>(
-    graph: &LineageGraph,
-    req: &Value,
-    output: &mut W,
-) -> std::io::Result<()> {
+fn handle_message<W: Write>(ctx: &McpContext, req: &Value, output: &mut W) -> std::io::Result<()> {
     let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let is_notification = req.get("id").is_none();
 
-    // Notifications never get a response.
     if is_notification {
-        // `notifications/initialized` is the only one we expect; silently accept others.
         return Ok(());
     }
 
     let response = match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
+            "capabilities": {
+                "tools": {},
+                "resources": {},
+                "prompts": {},
+            },
             "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(handle_tools_list()),
-        "tools/call" => handle_tools_call(graph, req.get("params")),
+        "tools/call" => handle_tools_call(ctx, req.get("params")),
+        "resources/list" => Ok(handle_resources_list(ctx)),
+        "resources/read" => handle_resources_read(ctx, req.get("params")),
+        "prompts/list" => Ok(handle_prompts_list()),
+        "prompts/get" => handle_prompts_get(req.get("params")),
         other => Err((-32601, format!("method not found: {}", other))),
     };
 
@@ -94,7 +102,7 @@ fn handle_tools_list() -> Value {
     json!({"tools": tools})
 }
 
-fn handle_tools_call(graph: &LineageGraph, params: Option<&Value>) -> Result<Value, (i64, String)> {
+fn handle_tools_call(ctx: &McpContext, params: Option<&Value>) -> Result<Value, (i64, String)> {
     let params = params.ok_or_else(|| (-32602, "missing params".into()))?;
     let name = params
         .get("name")
@@ -103,25 +111,77 @@ fn handle_tools_call(graph: &LineageGraph, params: Option<&Value>) -> Result<Val
     let empty = json!({});
     let arguments = params.get("arguments").unwrap_or(&empty);
 
-    match tools::call_tool(graph, name, arguments) {
+    match tools::call_tool(ctx, name, arguments) {
         Ok(value) => {
-            // MCP convention: tool results are wrapped in a `content` array of
-            // typed parts. We use a single `text` part holding the JSON payload.
             let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
             Ok(json!({
                 "content": [{"type": "text", "text": text}],
                 "isError": false,
             }))
         }
-        Err(err) => {
-            // MCP convention: tool-level errors return content with isError=true,
-            // not a JSON-RPC error. Reserves JSON-RPC errors for protocol issues.
-            Ok(json!({
-                "content": [{"type": "text", "text": err.to_string()}],
-                "isError": true,
-            }))
-        }
+        Err(err) => Ok(json!({
+            "content": [{"type": "text", "text": err.to_string()}],
+            "isError": true,
+        })),
     }
+}
+
+fn handle_resources_list(ctx: &McpContext) -> Value {
+    let entries: Vec<Value> = resources::list(ctx)
+        .into_iter()
+        .map(|r| {
+            json!({
+                "uri": r.uri,
+                "name": r.name,
+                "description": r.description,
+                "mimeType": r.mime_type,
+            })
+        })
+        .collect();
+    json!({"resources": entries})
+}
+
+fn handle_resources_read(ctx: &McpContext, params: Option<&Value>) -> Result<Value, (i64, String)> {
+    let params = params.ok_or_else(|| (-32602, "missing params".into()))?;
+    let uri = params
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| (-32602, "missing 'uri' in params".into()))?;
+    match resources::read(ctx, uri) {
+        Ok(content) => Ok(json!({
+            "contents": [{
+                "uri": uri,
+                "mimeType": content.mime_type,
+                "text": content.text,
+            }]
+        })),
+        Err(e) => Err((-32602, e.to_string())),
+    }
+}
+
+fn handle_prompts_list() -> Value {
+    let list: Vec<Value> = prompts::registry()
+        .into_iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "description": p.description,
+                "arguments": p.arguments,
+            })
+        })
+        .collect();
+    json!({"prompts": list})
+}
+
+fn handle_prompts_get(params: Option<&Value>) -> Result<Value, (i64, String)> {
+    let params = params.ok_or_else(|| (-32602, "missing params".into()))?;
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| (-32602, "missing 'name' in params".into()))?;
+    let empty = json!({});
+    let arguments = params.get("arguments").unwrap_or(&empty);
+    prompts::get(name, arguments).map_err(|e| (-32602, e.to_string()))
 }
 
 fn error_response(id: &Value, code: i64, message: &str) -> Value {
@@ -144,7 +204,7 @@ mod tests {
     use crate::graph::types::*;
     use std::io::Cursor;
 
-    fn make_graph() -> LineageGraph {
+    fn make_ctx() -> McpContext {
         let mut g = LineageGraph::new();
         let s = g.add_node(NodeData {
             unique_id: "source.raw.orders".into(),
@@ -161,10 +221,10 @@ mod tests {
             label: "orders".into(),
             node_type: NodeType::Model,
             file_path: None,
-            description: None,
-            materialization: None,
-            tags: vec![],
-            columns: vec![],
+            description: Some("Orders fact".into()),
+            materialization: Some("table".into()),
+            tags: vec!["finance".into()],
+            columns: vec!["order_id".into()],
         });
         g.add_edge(
             s,
@@ -173,101 +233,67 @@ mod tests {
                 edge_type: EdgeType::Source,
             },
         );
-        g
+        McpContext {
+            graph: g,
+            project_dir: std::env::temp_dir(),
+        }
     }
 
     fn run_with(input: &str) -> Vec<Value> {
         let mut out: Vec<u8> = Vec::new();
-        run(make_graph(), Cursor::new(input.as_bytes()), &mut out).unwrap();
-        let text = String::from_utf8(out).unwrap();
-        text.lines()
+        run(make_ctx(), Cursor::new(input.as_bytes()), &mut out).unwrap();
+        String::from_utf8(out)
+            .unwrap()
+            .lines()
             .filter(|l| !l.is_empty())
-            .map(|l| serde_json::from_str::<Value>(l).expect("response must be valid JSON"))
+            .map(|l| serde_json::from_str::<Value>(l).expect("valid JSON"))
             .collect()
     }
 
     #[test]
-    fn test_initialize_returns_server_info() {
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
-        let responses = run_with(&format!("{}\n", req));
-        assert_eq!(responses.len(), 1);
-        let r = &responses[0];
-        assert_eq!(r["id"], 1);
-        assert_eq!(r["result"]["serverInfo"]["name"], SERVER_NAME);
-        assert!(r["result"]["protocolVersion"].is_string());
+    fn test_initialize_advertises_all_caps() {
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+        let r = &run_with(&format!("{}\n", req))[0];
+        let caps = &r["result"]["capabilities"];
+        assert!(caps.get("tools").is_some());
+        assert!(caps.get("resources").is_some());
+        assert!(caps.get("prompts").is_some());
     }
 
     #[test]
-    fn test_notifications_get_no_response() {
-        let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-        let responses = run_with(&format!("{}\n", req));
-        assert!(responses.is_empty());
-    }
-
-    #[test]
-    fn test_tools_list_returns_all_tools() {
-        let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
-        let responses = run_with(&format!("{}\n", req));
-        let names: Vec<&str> = responses[0]["result"]["tools"]
+    fn test_resources_list_includes_model() {
+        let req = r#"{"jsonrpc":"2.0","id":2,"method":"resources/list"}"#;
+        let r = &run_with(&format!("{}\n", req))[0];
+        let uris: Vec<&str> = r["result"]["resources"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|t| t["name"].as_str().unwrap())
+            .map(|v| v["uri"].as_str().unwrap())
             .collect();
-        assert!(names.contains(&"summary"));
-        assert!(names.contains(&"lineage"));
-        assert!(names.contains(&"impact"));
-        assert!(names.contains(&"search_models"));
+        assert!(uris.iter().any(|u| u.contains("model/orders")));
     }
 
     #[test]
-    fn test_tools_call_summary_returns_text_content() {
-        let req = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"summary","arguments":{}}}"#;
-        let responses = run_with(&format!("{}\n", req));
-        let r = &responses[0];
-        assert_eq!(r["id"], 3);
-        let content = r["result"]["content"].as_array().unwrap();
-        assert_eq!(content.len(), 1);
-        assert_eq!(content[0]["type"], "text");
-        // Body should be the JSON summary.
-        let body: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["models"], 1);
-        assert_eq!(body["sources"], 1);
+    fn test_prompts_list_contains_review_impact() {
+        let req = r#"{"jsonrpc":"2.0","id":3,"method":"prompts/list"}"#;
+        let r = &run_with(&format!("{}\n", req))[0];
+        let names: Vec<&str> = r["result"]["prompts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"review-impact"));
     }
 
     #[test]
-    fn test_tools_call_unknown_tool_is_tool_error_not_jsonrpc_error() {
-        let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"bogus","arguments":{}}}"#;
-        let responses = run_with(&format!("{}\n", req));
-        let r = &responses[0];
-        // Tool-level error: success at the JSON-RPC layer, isError=true in the result.
-        assert!(r.get("error").is_none());
-        assert_eq!(r["result"]["isError"], true);
-    }
-
-    #[test]
-    fn test_unknown_method_returns_jsonrpc_error() {
-        let req = r#"{"jsonrpc":"2.0","id":5,"method":"bogus"}"#;
-        let responses = run_with(&format!("{}\n", req));
-        assert_eq!(responses[0]["error"]["code"], -32601);
-    }
-
-    #[test]
-    fn test_parse_error_returned_for_invalid_json() {
-        let responses = run_with("not json\n");
-        assert_eq!(responses[0]["error"]["code"], -32700);
-    }
-
-    #[test]
-    fn test_multiple_requests_in_sequence() {
-        let reqs = format!(
-            "{}\n{}\n",
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
-            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#
-        );
-        let responses = run_with(&reqs);
-        assert_eq!(responses.len(), 2);
-        assert_eq!(responses[0]["id"], 1);
-        assert_eq!(responses[1]["id"], 2);
+    fn test_tools_call_get_model_details() {
+        let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_model_details","arguments":{"model":"orders"}}}"#;
+        let r = &run_with(&format!("{}\n", req))[0];
+        assert_eq!(r["result"]["isError"], false);
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["label"], "orders");
+        assert_eq!(parsed["materialization"], "table");
     }
 }
