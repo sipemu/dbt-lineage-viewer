@@ -29,6 +29,15 @@ pub fn render_mermaid_with_options(graph: &LineageGraph, options: MermaidOptions
     render_mermaid_to_writer(graph, &options, &mut std::io::stdout().lock());
 }
 
+/// Public writer variant — used by other renderers (e.g. docs) that embed Mermaid.
+pub fn render_mermaid_with_options_to_writer<W: Write>(
+    graph: &LineageGraph,
+    options: MermaidOptions<'_>,
+    w: &mut W,
+) {
+    render_mermaid_to_writer(graph, &options, w);
+}
+
 fn render_mermaid_to_writer<W: Write>(
     graph: &LineageGraph,
     options: &MermaidOptions<'_>,

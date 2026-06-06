@@ -23,8 +23,9 @@ pub struct RunResult {
 
 #[derive(Debug, Deserialize)]
 pub struct TimingEntry {
-    #[allow(dead_code)]
     pub name: String,
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
 }
 
@@ -34,6 +35,27 @@ impl RunResult {
         self.timing
             .as_ref()
             .and_then(|entries| entries.iter().rev().find_map(|t| t.completed_at))
+    }
+
+    /// Wall-clock seconds spent executing this model (sum of all `execute` timings).
+    pub fn execute_seconds(&self) -> Option<f64> {
+        let timings = self.timing.as_ref()?;
+        let mut total = 0.0;
+        let mut found_any = false;
+        for t in timings {
+            if t.name != "execute" {
+                continue;
+            }
+            if let (Some(s), Some(c)) = (t.started_at, t.completed_at) {
+                total += (c - s).num_milliseconds() as f64 / 1000.0;
+                found_any = true;
+            }
+        }
+        if found_any {
+            Some(total)
+        } else {
+            None
+        }
     }
 }
 
@@ -317,6 +339,7 @@ mod tests {
                     timing: Some(vec![TimingEntry {
                         name: "execute".to_string(),
                         completed_at: Some(Utc::now()),
+                        started_at: None,
                     }]),
                 })
                 .collect(),
@@ -425,10 +448,12 @@ mod tests {
                 TimingEntry {
                     name: "compile".into(),
                     completed_at: None,
+                    started_at: None,
                 },
                 TimingEntry {
                     name: "execute".into(),
                     completed_at: Some(Utc::now()),
+                    started_at: None,
                 },
             ]),
         };
@@ -491,6 +516,7 @@ mod tests {
             timing: Some(vec![TimingEntry {
                 name: "execute".into(),
                 completed_at: Some(Utc::now()),
+                started_at: None,
             }]),
         };
         let node = NodeData {

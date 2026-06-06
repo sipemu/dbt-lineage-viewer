@@ -1,11 +1,16 @@
 pub mod ascii;
+pub mod coverage;
 pub mod diff;
+pub mod docs;
 pub mod dot;
 pub mod html;
 pub mod impact;
 pub mod json;
 pub mod layout;
+pub mod lint;
 pub mod manifest_check;
 pub mod mermaid;
+pub mod perf;
+pub mod plan;
 pub mod summary;
 pub mod svg;

@@ -165,6 +165,79 @@ pub enum Command {
         manifest: Option<PathBuf>,
     },
 
+    /// Critical-path and slowest-model performance report from target/run_results.json.
+    Perf {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// How many entries to show in the slowest / critical-path lists
+        #[arg(long, default_value = "10")]
+        top: usize,
+
+        /// Output: text (default) or json
+        #[arg(short = 'o', long, default_value = "text")]
+        output: PerfOutputFormat,
+    },
+
+    /// Generate Markdown documentation per model (or one consolidated file).
+    Docs {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// Output directory (one .md per model). Mutually exclusive with --single.
+        #[arg(long, default_value = "docs/models")]
+        out: PathBuf,
+
+        /// Write all models into one concatenated Markdown file at this path.
+        #[arg(long, conflicts_with = "out")]
+        single: Option<PathBuf>,
+
+        /// Render a single model's docs to stdout (overrides --out / --single).
+        model: Option<String>,
+    },
+
+    /// Structural lint: dead-end models, unused sources, undefined refs, missing docs.
+    /// Exit code 1 if any error-severity finding is reported.
+    Lint {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// Output: text (default), json, or sarif (for GitHub PR annotations)
+        #[arg(short = 'o', long, default_value = "text")]
+        output: LintOutputFormat,
+
+        /// Disable a rule (repeatable). Available: unused-source, undefined-source,
+        /// dead-end-model, missing-description.
+        #[arg(long = "disable")]
+        disable: Vec<String>,
+    },
+
+    /// Test coverage map: which models have which tests, column coverage gaps.
+    Coverage {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Output: text (default), json, or sarif (for GitHub PR annotations)
+        #[arg(short = 'o', long, default_value = "text")]
+        output: CoverageOutputFormat,
+    },
+
     /// Verify a manifest.json is still in sync with the project's SQL files.
     /// Exits with code 1 on staleness, making it directly usable in CI pipelines.
     CheckManifest {
@@ -179,6 +252,34 @@ pub enum Command {
         /// Output format: text (default) or json
         #[arg(short = 'o', long, default_value = "text")]
         output: CheckManifestOutputFormat,
+    },
+
+    /// Emit a dbt selector expression covering models added or modified since
+    /// `--base`. Designed to pipe into `dbt run -s "$(dbt-lineage plan --base main)"`.
+    Plan {
+        /// Base git ref to compare from (e.g., main, HEAD~1)
+        #[arg(long)]
+        base: String,
+
+        /// Head git ref to compare to (defaults to working tree)
+        #[arg(long)]
+        head: Option<String>,
+
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Output: `selector` (default; whitespace-joined for piping) or `json`.
+        #[arg(short = 'o', long, default_value = "selector")]
+        output: PlanOutputFormat,
+
+        /// Drop the `+` prefix and emit only the changed models themselves (no downstream).
+        #[arg(long)]
+        leaf_only: bool,
+
+        /// Include test nodes in the plan (dbt rebuilds them with parents by default).
+        #[arg(long)]
+        include_tests: bool,
     },
 
     /// Compare lineage between git refs
@@ -221,6 +322,32 @@ pub enum SummaryOutputFormat {
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum CheckManifestOutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum PlanOutputFormat {
+    Selector,
+    Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum CoverageOutputFormat {
+    Text,
+    Json,
+    Sarif,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum LintOutputFormat {
+    Text,
+    Json,
+    Sarif,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum PerfOutputFormat {
     Text,
     Json,
 }

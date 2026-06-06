@@ -72,6 +72,50 @@ fn run(cli: Cli) -> Result<()> {
                 project_dir,
                 manifest,
             } => run_mcp_command(project_dir, manifest.as_ref()),
+            Command::Plan {
+                base,
+                head,
+                project_dir,
+                output,
+                leaf_only,
+                include_tests,
+            } => run_plan_command(
+                base,
+                head.as_deref(),
+                project_dir,
+                output,
+                *leaf_only,
+                *include_tests,
+            ),
+            Command::Coverage {
+                project_dir,
+                output,
+            } => run_coverage_command(project_dir, output),
+            Command::Lint {
+                project_dir,
+                manifest,
+                output,
+                disable,
+            } => run_lint_command(project_dir, manifest.as_ref(), output, disable),
+            Command::Docs {
+                project_dir,
+                manifest,
+                out,
+                single,
+                model,
+            } => run_docs_command(
+                project_dir,
+                manifest.as_ref(),
+                out,
+                single.as_ref(),
+                model.as_deref(),
+            ),
+            Command::Perf {
+                project_dir,
+                manifest,
+                top,
+                output,
+            } => run_perf_command(project_dir, manifest.as_ref(), *top, output),
             Command::Diff {
                 base,
                 head,
@@ -265,6 +309,205 @@ fn run_summary_command(
         cli::SummaryOutputFormat::Json => render::summary::render_summary_json(&report),
     }
 
+    Ok(())
+}
+
+/// Run the `plan` subcommand: emit a dbt selector for the rebuild set.
+#[cfg(not(tarpaulin_include))]
+fn run_plan_command(
+    base: &str,
+    head: Option<&str>,
+    project_dir: &Path,
+    output: &cli::PlanOutputFormat,
+    leaf_only: bool,
+    include_tests: bool,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+
+    if !dbt_lineage::git::is_git_repo(&project_dir) {
+        anyhow::bail!("Not a git repository: {}", project_dir.display());
+    }
+    dbt_lineage::git::validate_ref(&project_dir, base)?;
+
+    let base_graph = graph::diff::build_graph_from_ref(&project_dir, base)?;
+    let (head_graph, head_label) = if let Some(head_ref) = head {
+        dbt_lineage::git::validate_ref(&project_dir, head_ref)?;
+        let g = graph::diff::build_graph_from_ref(&project_dir, head_ref)?;
+        (g, head_ref.to_string())
+    } else {
+        let g = build_working_tree_graph(&project_dir)?;
+        let label = dbt_lineage::git::current_ref(&project_dir).unwrap_or_else(|_| "HEAD".into());
+        (g, label)
+    };
+
+    let diff = graph::diff::compute_diff(&base_graph, &head_graph, base, &head_label);
+    let style = if leaf_only {
+        graph::plan::PlanStyle::LeafOnly
+    } else {
+        graph::plan::PlanStyle::Downstream
+    };
+    let report = graph::plan::build_plan(&diff, style, !include_tests);
+
+    match output {
+        cli::PlanOutputFormat::Selector => render::plan::render_plan_selector(&report),
+        cli::PlanOutputFormat::Json => render::plan::render_plan_json(&report),
+    }
+    Ok(())
+}
+
+/// Run the `perf` subcommand: read run_results.json + compute critical paths.
+#[cfg(not(tarpaulin_include))]
+fn run_perf_command(
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    top: usize,
+    output: &cli::PerfOutputFormat,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+
+    let dag = if let Some(m) = manifest {
+        let manifest_path = resolve_manifest_path(m)?;
+        parser::manifest::build_graph_from_manifest(&manifest_path)?
+    } else {
+        let project = parser::project::DbtProject::load(&project_dir)?;
+        let paths = project.resolve_paths(&project_dir);
+        let files = parser::discovery::discover_files(&paths)?;
+        graph::builder::build_graph(&project_dir, &files)?
+    };
+
+    let run_results = parser::artifacts::load_run_results(&project_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no run_results.json in {}/target — run 'dbt build' first",
+            project_dir.display()
+        )
+    })?;
+    let report = graph::perf::compute_perf(&dag, &run_results);
+
+    match output {
+        cli::PerfOutputFormat::Text => render::perf::render_perf_text(&report, top),
+        cli::PerfOutputFormat::Json => render::perf::render_perf_json(&report),
+    }
+    Ok(())
+}
+
+/// Run the `docs` subcommand: write per-model Markdown.
+#[cfg(not(tarpaulin_include))]
+fn run_docs_command(
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    out: &Path,
+    single: Option<&PathBuf>,
+    model: Option<&str>,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = if let Some(m) = manifest {
+        let manifest_path = resolve_manifest_path(m)?;
+        parser::manifest::build_graph_from_manifest(&manifest_path)?
+    } else {
+        let project = parser::project::DbtProject::load(&project_dir)?;
+        let paths = project.resolve_paths(&project_dir);
+        let files = parser::discovery::discover_files(&paths)?;
+        graph::builder::build_graph(&project_dir, &files)?
+    };
+
+    // Single-model mode → stdout.
+    if let Some(label) = model {
+        let idx = dag
+            .node_indices()
+            .find(|&i| dag[i].label == label)
+            .ok_or_else(|| anyhow::anyhow!("model '{}' not found in project", label))?;
+        let mut out = std::io::stdout().lock();
+        render::docs::render_model_md(&dag, idx, &mut out)?;
+        return Ok(());
+    }
+
+    if let Some(path) = single {
+        let mut buf: Vec<u8> = Vec::new();
+        render::docs::for_each_model_doc(&dag, |_label, md| {
+            use std::io::Write;
+            buf.write_all(md.as_bytes())?;
+            buf.write_all(b"\n---\n\n")?;
+            Ok(())
+        })?;
+        std::fs::write(path, buf)?;
+        eprintln!("docs: wrote consolidated file to {}", path.display());
+        return Ok(());
+    }
+
+    let count = render::docs::write_models_to_dir(&dag, out)?;
+    eprintln!("docs: wrote {} model files to {}", count, out.display());
+    Ok(())
+}
+
+/// Run the `lint` subcommand. Exits 1 if there are any error-severity findings.
+#[cfg(not(tarpaulin_include))]
+fn run_lint_command(
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    output: &cli::LintOutputFormat,
+    disabled: &[String],
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+
+    let dag = if let Some(m) = manifest {
+        let manifest_path = resolve_manifest_path(m)?;
+        parser::manifest::build_graph_from_manifest(&manifest_path)?
+    } else {
+        let project = parser::project::DbtProject::load(&project_dir)?;
+        let paths = project.resolve_paths(&project_dir);
+        let files = parser::discovery::discover_files(&paths)?;
+        graph::builder::build_graph(&project_dir, &files)?
+    };
+
+    let mut config = graph::lint::LintConfig::default();
+    for d in disabled {
+        match d.as_str() {
+            "unused-source" => config.unused_source = false,
+            "undefined-source" => config.undefined_source = false,
+            "dead-end-model" => config.dead_end_model = false,
+            "missing-description" => config.missing_description = false,
+            other => anyhow::bail!("unknown lint rule: {}", other),
+        }
+    }
+    let report = graph::lint::lint(&dag, &config);
+
+    match output {
+        cli::LintOutputFormat::Text => render::lint::render_lint_text(&report),
+        cli::LintOutputFormat::Json => render::lint::render_lint_json(&report),
+        cli::LintOutputFormat::Sarif => render::lint::render_lint_sarif(&report),
+    }
+
+    if report.count_by_severity(graph::lint::LintSeverity::Error) > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Run the `coverage` subcommand: walk YAML schema files and aggregate test data.
+#[cfg(not(tarpaulin_include))]
+fn run_coverage_command(project_dir: &Path, output: &cli::CoverageOutputFormat) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+
+    let project = parser::project::DbtProject::load(&project_dir)?;
+    let paths = project.resolve_paths(&project_dir);
+    let files = parser::discovery::discover_files(&paths)?;
+    let report = graph::coverage::compute_coverage(&project_dir, &files)?;
+
+    match output {
+        cli::CoverageOutputFormat::Text => render::coverage::render_coverage_text(&report),
+        cli::CoverageOutputFormat::Json => render::coverage::render_coverage_json(&report),
+        cli::CoverageOutputFormat::Sarif => render::coverage::render_coverage_sarif(&report),
+    }
     Ok(())
 }
 

@@ -1,7 +1,11 @@
 pub mod builder;
 pub mod collapse;
+pub mod coverage;
 pub mod diff;
 pub mod filter;
 pub mod impact;
+pub mod lint;
+pub mod perf;
+pub mod plan;
 pub mod summary;
 pub mod types;
