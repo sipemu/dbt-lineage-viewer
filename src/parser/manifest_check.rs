@@ -143,7 +143,14 @@ mod tests {
 
     fn write_at(path: &Path, mtime: SystemTime, contents: &str) {
         fs::write(path, contents).unwrap();
-        let f = fs::File::open(path).unwrap();
+        // Windows requires write access to call set_modified; read-only File::open
+        // panics with PermissionDenied. OpenOptions::write works on all platforms.
+        let f = fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.set_modified(mtime).unwrap();
+    }
+
+    fn touch_mtime(path: &Path, mtime: SystemTime) {
+        let f = fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_modified(mtime).unwrap();
     }
 
@@ -184,10 +191,7 @@ mod tests {
 
         let manifest = write_manifest(project, &["models/marts/orders.sql"]);
         // Bump the manifest mtime to NOW so the SQL file is older.
-        fs::File::open(&manifest)
-            .unwrap()
-            .set_modified(SystemTime::now())
-            .unwrap();
+        touch_mtime(&manifest, SystemTime::now());
 
         let report = check_manifest(project, &manifest).unwrap();
         assert!(
@@ -220,10 +224,7 @@ mod tests {
 
         let manifest = write_manifest(project, &["models/marts/orders.sql"]);
         // Manifest mtime in the past.
-        fs::File::open(&manifest)
-            .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(300))
-            .unwrap();
+        touch_mtime(&manifest, SystemTime::now() - Duration::from_secs(300));
         // SQL file fresher than the manifest.
         write_at(
             &project.join("models/marts/orders.sql"),
@@ -255,10 +256,7 @@ mod tests {
         );
         // Manifest is the freshest thing on disk → no "modified" entry, but the
         // brand_new.sql isn't referenced → untracked.
-        fs::File::open(&manifest)
-            .unwrap()
-            .set_modified(SystemTime::now())
-            .unwrap();
+        touch_mtime(&manifest, SystemTime::now());
 
         let report = check_manifest(project, &manifest).unwrap();
         assert!(report.is_stale);
