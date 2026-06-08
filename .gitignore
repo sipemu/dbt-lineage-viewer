@@ -1,2 +1,5 @@
 /target
 demo.tape
+# Per-project parse cache (created automatically when dbt-lineage runs against
+# a project). Safe to delete; see docs/CACHE.md.
+.dbt-lineage/
