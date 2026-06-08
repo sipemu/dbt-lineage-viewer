@@ -1,6 +1,6 @@
 [package]
 name = "dbt-lineage"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 description = "A Rust CLI tool for visualizing dbt model lineage"
 license = "MIT"
@@ -34,6 +34,7 @@ indexmap = "2"
 rayon = "1"
 blake3 = "1"
 bincode = "1"
+sqlparser = "0.52"
 
 # TUI dependencies (feature-gated)
 ratatui = { version = "0.29", optional = true }

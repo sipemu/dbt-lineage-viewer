@@ -29,7 +29,7 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **Manifest freshness check** — `dbt-lineage check-manifest` flags drift between `manifest.json` and current SQL files; exits non-zero for CI gating
 - **MCP server** — `dbt-lineage mcp` exposes lineage as stdio MCP tools, resources, and prompts for direct AI-agent integration. Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`. Resources: model SQL, lineage diagrams, summary. Prompts: `review-impact`, `propose-tests`, `explain-column`, `find-bottleneck`, `document-model`, `onboard-project`
 - **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and replaces transitive paths with `(via N)` edges for readable big-project diagrams
-- **Column-level lineage** — trace column provenance through the DAG with confidence levels (Direct, Aliased, Derived, Star)
+- **Column-level lineage** — trace column provenance through the DAG with confidence levels (Direct, Aliased, Derived, Star). 0.6.0 adds an AST-backed analyzer via [`sqlparser`](https://crates.io/crates/sqlparser) that handles aliases, JOINs, aggregations, and CTEs; falls back to the regex analyzer where dialect-specific syntax can't be parsed.
 - **6 output formats** — ASCII, Graphviz DOT, JSON, Mermaid, self-contained SVG, and interactive HTML (pan/zoom/search)
 - **Mermaid niceties** — `--show-columns` inlines column names in node labels; `--group-by directory` emits Mermaid subgraphs
 - **Structured errors** — `--error-format json` writes `{level, what, why, hint}` to stderr for deterministic agent/CI error handling

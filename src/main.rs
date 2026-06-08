@@ -519,6 +519,32 @@ fn run_coverage_command(project_dir: &Path, output: &cli::CoverageOutputFormat) 
     Ok(())
 }
 
+/// Union two `ColumnLineage` outputs, deduplicating by (source_node,
+/// source_column, target_node, target_column). The AST analyzer's edges take
+/// precedence on ties (better confidence). Edges unique to either analyzer
+/// are kept as-is.
+#[cfg(not(tarpaulin_include))]
+fn merge_column_lineage(
+    primary: parser::column_lineage::ColumnLineage,
+    secondary: parser::column_lineage::ColumnLineage,
+) -> parser::column_lineage::ColumnLineage {
+    use std::collections::HashSet;
+    let mut seen: HashSet<(String, String, String, String)> = HashSet::new();
+    let mut edges = Vec::with_capacity(primary.edges.len() + secondary.edges.len());
+    for e in primary.edges.into_iter().chain(secondary.edges) {
+        let key = (
+            e.source_node.clone(),
+            e.source_column.clone(),
+            e.target_node.clone(),
+            e.target_column.clone(),
+        );
+        if seen.insert(key) {
+            edges.push(e);
+        }
+    }
+    parser::column_lineage::ColumnLineage { edges }
+}
+
 /// Run the `mcp` subcommand: load the graph (manifest preferred, SQL-parse fallback)
 /// and serve JSON-RPC over stdio.
 #[cfg(not(tarpaulin_include))]
@@ -551,7 +577,13 @@ fn run_mcp_command(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<()>
         }
     };
 
-    let column_lineage = parser::column_lineage::resolve_column_lineage(&graph);
+    // Union the AST-backed analyzer (#35) and the regex-backed analyzer. The AST
+    // path is accurate when it parses, the regex path provides coverage for SQL
+    // dialects/shapes sqlparser can't yet handle. Duplicate edges are deduped.
+    let column_lineage = merge_column_lineage(
+        parser::ast_column_lineage::resolve_column_lineage_ast(&graph),
+        parser::column_lineage::resolve_column_lineage(&graph),
+    );
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();

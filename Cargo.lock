@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "dbt-lineage"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -491,6 +491,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sqlparser",
  "tempfile",
  "thiserror",
  "walkdir",
@@ -1304,6 +1305,15 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "sqlparser"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a875d8cd437cc8a97e9aeaeea352ec9a19aea99c23e9effb17757291de80b08"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "static_assertions"

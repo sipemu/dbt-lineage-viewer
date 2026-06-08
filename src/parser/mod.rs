@@ -1,4 +1,5 @@
 pub mod artifacts;
+pub mod ast_column_lineage;
 pub mod cache;
 pub mod column_lineage;
 pub mod columns;
