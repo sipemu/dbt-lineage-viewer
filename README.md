@@ -13,31 +13,56 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 
 ## Features
 
-- **Direct SQL parsing** — extracts `ref()` and `source()` calls via regex, no `dbt compile` needed
+### Source modes
+
+- **Direct SQL parsing** — extracts `ref()` and `source()` via a Jinja-aware lexer, no `dbt compile` needed
 - **Manifest support** — optionally read `manifest.json` for column metadata, materializations, and full graph fidelity
-- **Interactive TUI** — navigate, search, and explore lineage in a terminal UI (ratatui) with Unicode box-drawing nodes, orthogonal edge routing, and full mouse support
-- **Project summary** — `dbt-lineage summary` prints a one-shot overview (counts, tags, top fan-out, orphans)
-- **Impact analysis** — `dbt-lineage impact <model>` computes downstream impact with severity scoring (Critical/High/Medium/Low)
-- **Lineage diff** — `dbt-lineage diff --base <ref>` compares lineage between git refs, showing added/removed/modified nodes and edges
-- **CI rebuild planner** — `dbt-lineage plan --base main` emits a dbt selector for the minimal rebuild set after a diff; pipes into `dbt run -s "$(…)"`
-- **Test coverage** — `dbt-lineage coverage` maps tests-per-model + per-column; text, JSON, or SARIF (PR annotations)
-- **Lint** — `dbt-lineage lint` flags unused sources, undefined refs, dead-end models, missing descriptions
-- **Markdown docs** — `dbt-lineage docs` generates per-model Markdown with description, upstream/downstream, columns, embedded Mermaid lineage
-- **Performance report** — `dbt-lineage perf` joins `run_results.json` with the DAG: slowest models, critical paths
-- **Macro-aware ref()** — SQL-parse mode now follows simple `{% macro smart_ref(name) %}{{ ref(name) }}{% endmacro %}` wrappers automatically
-- **Parallel parsing + on-disk cache** — SQL-parse mode uses [`rayon`](https://crates.io/crates/rayon) for parallel file reading + extraction and a content-hash cache at `.dbt-lineage/cache.bin` so warm runs are near-instant on large monorepos. Bypass with `--no-cache`
-- **Manifest freshness check** — `dbt-lineage check-manifest` flags drift between `manifest.json` and current SQL files; exits non-zero for CI gating
-- **MCP server** — `dbt-lineage mcp` exposes lineage as stdio MCP tools, resources, and prompts for direct AI-agent integration. Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`. Resources: model SQL, lineage diagrams, summary. Prompts: `review-impact`, `propose-tests`, `explain-column`, `find-bottleneck`, `document-model`, `onboard-project`
-- **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and replaces transitive paths with `(via N)` edges for readable big-project diagrams
-- **Column-level lineage** — trace column provenance through the DAG with confidence levels (Direct, Aliased, Derived, Star). 0.6.0 adds an AST-backed analyzer via [`sqlparser`](https://crates.io/crates/sqlparser) that handles aliases, JOINs, aggregations, and CTEs; falls back to the regex analyzer where dialect-specific syntax can't be parsed.
-- **6 output formats** — ASCII, Graphviz DOT, JSON, Mermaid, self-contained SVG, and interactive HTML (pan/zoom/search)
+- **Macro-aware ref()** — SQL-parse mode follows simple `{% macro smart_ref(name) %}{{ ref(name) }}{% endmacro %}` wrappers automatically
+- **Parallel parsing + on-disk cache** — [`rayon`](https://crates.io/crates/rayon)-parallelized parsing and a content-hash cache at `.dbt-lineage/cache.bin`; warm runs are near-instant on large monorepos. Bypass with `--no-cache`. See [`docs/CACHE.md`](docs/CACHE.md)
+
+### Analysis subcommands
+
+- **`summary`** — one-shot project overview (counts, tags, top fan-out, orphans)
+- **`impact <model>`** — downstream impact with severity scoring (Critical / High / Medium / Low)
+- **`diff --base <ref>`** — compares lineage between git refs, showing added / removed / modified nodes and edges
+- **`plan --base <ref>`** — emits a dbt selector for the minimal rebuild set; pipes into `dbt run -s "$(…)"`
+- **`coverage`** — tests-per-model + per-column map; text, JSON, or SARIF (PR annotations)
+- **`lint`** — flags unused sources, undefined refs, dead-end models, missing descriptions, models with only unresolved upstream, circular refs
+- **`docs`** — generates per-model Markdown with description, upstream / downstream, columns, embedded Mermaid lineage
+- **`perf`** — joins `run_results.json` with the DAG: slowest models, critical paths
+- **`check-manifest`** — flags drift between `manifest.json` and current SQL files using dbt's recorded SHA-256 (mtime fallback); exits non-zero for CI gating
+
+### Column-level lineage
+
+- AST-backed analyzer via [`sqlparser`](https://crates.io/crates/sqlparser) (0.6.0+) handles aliases, JOINs, aggregations, and CTEs with proper transformation classification (`Direct`, `Aliased`, `Derived`)
+- Regex-based analyzer remains as a fallback for dialect-specific syntax sqlparser can't yet parse
+
+### MCP server (AI-agent integration)
+
+- **`dbt-lineage mcp`** — stdio Model Context Protocol server. See [`docs/MCP.md`](docs/MCP.md) for setup and cookbook.
+- **10 tools**: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`
+- **Resources**: model SQL, focused lineage diagrams, source/exposure metadata, always-fresh summary
+- **Prompts**: `review-impact`, `propose-tests`, `explain-column`, `find-bottleneck`, `document-model`, `onboard-project`
+
+### Output
+
+- **6 formats** — ASCII, Graphviz DOT, JSON, Mermaid, self-contained SVG, interactive HTML (pan / zoom / search)
 - **Mermaid niceties** — `--show-columns` inlines column names in node labels; `--group-by directory` emits Mermaid subgraphs
-- **Structured errors** — `--error-format json` writes `{level, what, why, hint}` to stderr for deterministic agent/CI error handling
+- **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and labels transitive paths with `(via N)` edges
+- **Structured errors** — `--error-format json` writes `{level, what, why, hint}` to stderr for deterministic agent / CI consumers
+
+### Interactive TUI
+
+- Navigate, search, and explore lineage in a terminal UI ([`ratatui`](https://crates.io/crates/ratatui)) with Unicode box-drawing nodes, orthogonal edge routing, and full mouse support
 - **Run dbt from TUI** — execute `dbt run` / `dbt test` on selected models with scope control (`+upstream`, `downstream+`, `+all+`) via keyboard menu or right-click context menu
 - **Run status tracking** — color-coded nodes show success (green), error (red), outdated (yellow), or never-run (default)
-- **Path highlighting** — trace upstream/downstream paths with impact analysis in the TUI
-- **Selector expressions** — filter by tag, path, or model name (`-s tag:finance,path:marts`)
-- **Node type support** — models, sources, seeds, snapshots, tests, exposures
+- **Path highlighting** — trace upstream / downstream paths with impact analysis
+
+### Filtering and node types
+
+- **Selector expressions** — `-s tag:finance,path:marts` filters by tag, path, or model name (comma-separated)
+- **Node-type filters** — `--include-tests`, `--include-seeds`, `--include-snapshots`, `--include-exposures`
+- **Node-type support** — models, sources, seeds, snapshots, tests, exposures
 
 ## Installation
 
@@ -351,6 +376,13 @@ The TUI is enabled by default. To build a minimal binary with only static output
 ```sh
 cargo build --release --no-default-features
 ```
+
+## Further reading
+
+- [`CHANGELOG.md`](CHANGELOG.md) — per-release notes from 0.1.0 onward.
+- [`docs/MCP.md`](docs/MCP.md) — cookbook for the MCP server: setup, tool reference, prompt walkthroughs, composition recipes.
+- [`docs/CACHE.md`](docs/CACHE.md) — parse-cache contract, file format, when it helps.
+- [`BENCHMARKS.md`](BENCHMARKS.md) — baseline numbers from the bench harness.
 
 ## Credits
 
