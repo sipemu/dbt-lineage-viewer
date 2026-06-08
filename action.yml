@@ -1,8 +1,5 @@
 name: dbt-lineage
-description: >
-  Run dbt-lineage diff / impact / plan / coverage / lint against a dbt project
-  and post a Markdown summary as a PR comment. Optionally uploads SARIF from
-  lint and coverage so findings render inline on the PR diff.
+description: "PR-time dbt lineage: diff, impact, plan selectors, lint, coverage. Posts a Markdown summary; uploads SARIF inline."
 
 branding:
   icon: git-branch
