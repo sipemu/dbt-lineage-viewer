@@ -138,10 +138,10 @@ pub fn call_tool(ctx: &McpContext, name: &str, args: &Value) -> Result<Value> {
         "impact" => tool_impact(&ctx.graph, args),
         "get_model_details" => tool_get_model_details(&ctx.graph, args),
         "read_model_sql" => tool_read_model_sql(ctx, args),
-        "column_upstream" => tool_column_upstream(&ctx.graph, args),
-        "column_downstream" => tool_column_downstream(&ctx.graph, args),
+        "column_upstream" => tool_column_upstream(ctx, args),
+        "column_downstream" => tool_column_downstream(ctx, args),
         "lineage_bundle" => tool_lineage_bundle(ctx, args),
-        "propose_test" => tool_propose_test(&ctx.graph, args),
+        "propose_test" => tool_propose_test(ctx, args),
         _ => Err(anyhow!("unknown tool: {}", name)),
     }
 }
@@ -334,37 +334,96 @@ fn tool_read_model_sql(ctx: &McpContext, args: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("'model' is required"))?;
     let idx = find_node(&ctx.graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
     let node = &ctx.graph[idx];
-    let rel = node
-        .file_path
-        .as_ref()
-        .ok_or_else(|| anyhow!("model '{}' has no file_path (manifest-only mode?)", model))?;
-    let abs = if rel.is_absolute() {
-        rel.clone()
-    } else {
-        ctx.project_dir.join(rel)
-    };
-    let content = std::fs::read_to_string(&abs)
-        .map_err(|e| anyhow!("failed to read {}: {}", abs.display(), e))?;
-    Ok(json!({"path": abs.to_string_lossy(), "content": content}))
+
+    // Disk first — closer to what the developer sees.
+    if let Some(rel) = node.file_path.as_ref() {
+        let abs = if rel.is_absolute() {
+            rel.clone()
+        } else {
+            ctx.project_dir.join(rel)
+        };
+        if let Ok(content) = std::fs::read_to_string(&abs) {
+            return Ok(json!({
+                "source": "disk",
+                "path": abs.to_string_lossy(),
+                "content": content,
+            }));
+        }
+    }
+
+    // Manifest fallback. Useful for analysts running from a distributed
+    // `manifest.json` with no SQL files on disk.
+    if let Some(sql) = ctx.manifest_sql.get(&node.unique_id) {
+        return Ok(json!({
+            "source": "manifest",
+            "content": sql,
+        }));
+    }
+
+    Err(anyhow!(
+        "no SQL available for model '{}' (no readable file_path on disk, no raw_code/compiled_code in manifest)",
+        model
+    ))
 }
 
-/// Column upstream tracing. Best-effort using only the graph + nodes' `columns`
-/// lists: we walk upstream from the model and surface any same-named columns we
-/// find. Not as deep as the dedicated column-lineage analyzer, but actionable
-/// without requiring a compiled manifest.
-fn tool_column_upstream(graph: &LineageGraph, args: &Value) -> Result<Value> {
+/// Column upstream tracing using the precomputed `ColumnLineage` from
+/// `parser::column_lineage`. Each emitted hop carries the actual transformation
+/// kind (direct / aliased / derived / star) and the source column name even when
+/// it differs from the target column. Falls back to the name-matching heuristic
+/// for projects where the analyzer can't produce edges (e.g. unparseable SQL).
+fn tool_column_upstream(ctx: &McpContext, args: &Value) -> Result<Value> {
     let model = args
         .get("model")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("'model' is required"))?;
     let column = args.get("column").and_then(|v| v.as_str());
-    let idx = find_node(graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
+    let idx = find_node(&ctx.graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
+    let focus_unique_id = ctx.graph[idx].unique_id.clone();
     let target_cols: Vec<String> = match column {
         Some(c) => vec![c.to_string()],
-        None => graph[idx].columns.clone(),
+        None => ctx.graph[idx].columns.clone(),
     };
 
-    // BFS upstream collecting (col, upstream_model, kind).
+    // Real lineage path: BFS through ColumnEdges where target_node==current.
+    let mut hops: Vec<Value> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut frontier: std::collections::VecDeque<(String, String)> =
+        std::collections::VecDeque::new();
+    for c in &target_cols {
+        frontier.push_back((focus_unique_id.clone(), c.clone()));
+        seen.insert((focus_unique_id.clone(), c.clone()));
+    }
+    while let Some((node, col)) = frontier.pop_front() {
+        for edge in ctx
+            .column_lineage
+            .edges
+            .iter()
+            .filter(|e| e.target_node == node && e.target_column == col)
+        {
+            hops.push(json!({
+                "from": {"model": edge.source_node, "column": edge.source_column},
+                "to": {"model": edge.target_node, "column": edge.target_column},
+                "kind": edge.confidence.label().to_lowercase(),
+            }));
+            let key = (edge.source_node.clone(), edge.source_column.clone());
+            if seen.insert(key.clone()) {
+                frontier.push_back(key);
+            }
+        }
+    }
+
+    // Heuristic fallback (preserves prior behavior for projects with no parseable SQL).
+    let traces = heuristic_upstream(&ctx.graph, idx, &target_cols);
+
+    Ok(json!({
+        "focus": {"model": model, "columns": target_cols},
+        "hops": hops,
+        "traces": traces,
+        "source": if hops.is_empty() { "heuristic" } else { "analyzer" },
+    }))
+}
+
+fn heuristic_upstream(graph: &LineageGraph, idx: NodeIndex, target_cols: &[String]) -> Vec<Value> {
     let mut traces: Vec<Value> = Vec::new();
     let mut visited: std::collections::HashSet<NodeIndex> = std::collections::HashSet::new();
     visited.insert(idx);
@@ -377,7 +436,7 @@ fn tool_column_upstream(graph: &LineageGraph, args: &Value) -> Result<Value> {
                 continue;
             }
             let up = &graph[n];
-            for col in &target_cols {
+            for col in target_cols {
                 if up.columns.iter().any(|c| c == col) {
                     traces.push(json!({
                         "column": col,
@@ -390,13 +449,10 @@ fn tool_column_upstream(graph: &LineageGraph, args: &Value) -> Result<Value> {
             queue.push_back(n);
         }
     }
-    Ok(json!({
-        "focus": {"model": model, "columns": target_cols},
-        "traces": traces,
-    }))
+    traces
 }
 
-fn tool_column_downstream(graph: &LineageGraph, args: &Value) -> Result<Value> {
+fn tool_column_downstream(ctx: &McpContext, args: &Value) -> Result<Value> {
     let model = args
         .get("model")
         .and_then(|v| v.as_str())
@@ -405,8 +461,47 @@ fn tool_column_downstream(graph: &LineageGraph, args: &Value) -> Result<Value> {
         .get("column")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("'column' is required"))?;
-    let idx = find_node(graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
+    let idx = find_node(&ctx.graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
+    let focus_unique_id = ctx.graph[idx].unique_id.clone();
 
+    // Real lineage path: BFS through ColumnEdges where source_node==current.
+    let mut hops: Vec<Value> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut frontier: std::collections::VecDeque<(String, String)> =
+        std::collections::VecDeque::new();
+    frontier.push_back((focus_unique_id.clone(), column.to_string()));
+    seen.insert((focus_unique_id, column.to_string()));
+    while let Some((node, col)) = frontier.pop_front() {
+        for edge in ctx
+            .column_lineage
+            .edges
+            .iter()
+            .filter(|e| e.source_node == node && e.source_column == col)
+        {
+            hops.push(json!({
+                "from": {"model": edge.source_node, "column": edge.source_column},
+                "to": {"model": edge.target_node, "column": edge.target_column},
+                "kind": edge.confidence.label().to_lowercase(),
+            }));
+            let key = (edge.target_node.clone(), edge.target_column.clone());
+            if seen.insert(key.clone()) {
+                frontier.push_back(key);
+            }
+        }
+    }
+
+    // Heuristic fallback (existing behavior).
+    let traces = heuristic_downstream(&ctx.graph, idx, column);
+
+    Ok(json!({
+        "focus": {"model": model, "column": column},
+        "hops": hops,
+        "traces": traces,
+        "source": if hops.is_empty() { "heuristic" } else { "analyzer" },
+    }))
+}
+
+fn heuristic_downstream(graph: &LineageGraph, idx: NodeIndex, column: &str) -> Vec<Value> {
     let mut traces: Vec<Value> = Vec::new();
     let mut visited: std::collections::HashSet<NodeIndex> = std::collections::HashSet::new();
     visited.insert(idx);
@@ -430,10 +525,7 @@ fn tool_column_downstream(graph: &LineageGraph, args: &Value) -> Result<Value> {
             queue.push_back(n);
         }
     }
-    Ok(json!({
-        "focus": {"model": model, "column": column},
-        "traces": traces,
-    }))
+    traces
 }
 
 fn tool_lineage_bundle(ctx: &McpContext, args: &Value) -> Result<Value> {
@@ -498,7 +590,7 @@ fn tool_lineage_bundle(ctx: &McpContext, args: &Value) -> Result<Value> {
     }))
 }
 
-fn tool_propose_test(graph: &LineageGraph, args: &Value) -> Result<Value> {
+fn tool_propose_test(ctx: &McpContext, args: &Value) -> Result<Value> {
     let model = args
         .get("model")
         .and_then(|v| v.as_str())
@@ -511,29 +603,47 @@ fn tool_propose_test(graph: &LineageGraph, args: &Value) -> Result<Value> {
         .get("kind")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("'kind' is required"))?;
-    if !matches!(
-        kind,
-        "not_null" | "unique" | "accepted_values" | "relationships"
-    ) {
-        return Err(anyhow!(
-            "unsupported kind '{}' (expected not_null|unique|accepted_values|relationships)",
-            kind
-        ));
-    }
-    let idx = find_node(graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
-    let node = &graph[idx];
-    if !node.columns.iter().any(|c| c == column) {
+    crate::mcp::propose::validate_kind(kind)?;
+
+    let idx = find_node(&ctx.graph, model).ok_or_else(|| anyhow!("model '{}' not found", model))?;
+    let node = &ctx.graph[idx];
+    if !node.columns.is_empty() && !node.columns.iter().any(|c| c == column) {
         return Err(anyhow!(
             "column '{}' not found on model '{}'",
             column,
             model
         ));
     }
+
+    let req = crate::mcp::propose::ProposeTestRequest {
+        project_dir: &ctx.project_dir,
+        model,
+        column,
+        kind,
+        yaml_files: vec![],
+    };
+    let result = crate::mcp::propose::build_proposal(&req)?;
+
     let yaml_snippet = format!(
         "  - name: {}\n    columns:\n      - name: {}\n        tests:\n          - {}\n",
         model, column, kind
     );
-    let rationale = match kind {
+    let rationale = rationale_for(kind, column);
+    Ok(json!({
+        "model": model,
+        "column": column,
+        "kind": kind,
+        "file": result.file.to_string_lossy(),
+        "diff": result.diff,
+        "already_present": result.already_present,
+        "new_file": result.new_file,
+        "yaml_snippet": yaml_snippet,
+        "rationale": rationale,
+    }))
+}
+
+fn rationale_for(kind: &str, column: &str) -> String {
+    match kind {
         "not_null" => format!(
             "Column '{}' is referenced in downstream queries; a not_null test catches upstream data quality regressions early.",
             column
@@ -551,15 +661,7 @@ fn tool_propose_test(graph: &LineageGraph, args: &Value) -> Result<Value> {
             column
         ),
         _ => String::new(),
-    };
-    Ok(json!({
-        "model": model,
-        "column": column,
-        "kind": kind,
-        "yaml_snippet": yaml_snippet,
-        "rationale": rationale,
-        "note": "This is a draft. Review the YAML snippet, locate the model's schema.yml, and integrate by hand.",
-    }))
+    }
 }
 
 fn find_node(graph: &LineageGraph, label: &str) -> Option<NodeIndex> {
@@ -631,6 +733,8 @@ mod tests {
         McpContext {
             graph: g,
             project_dir: PathBuf::from("/tmp"),
+            manifest_sql: std::collections::HashMap::new(),
+            column_lineage: crate::parser::column_lineage::ColumnLineage::default(),
         }
     }
 
@@ -684,6 +788,46 @@ mod tests {
     }
 
     #[test]
+    fn test_column_upstream_uses_analyzer_when_edges_present() {
+        use crate::parser::column_lineage::{ColumnConfidence, ColumnEdge, ColumnLineage};
+        let mut ctx = ctx_with_graph();
+        // Inject a precomputed column edge: stg_orders.order_id → orders.order_id (aliased).
+        ctx.column_lineage = ColumnLineage {
+            edges: vec![ColumnEdge {
+                source_node: "model.stg_orders".into(),
+                source_column: "order_id".into(),
+                target_node: "model.orders".into(),
+                target_column: "order_id".into(),
+                confidence: ColumnConfidence::Aliased,
+            }],
+        };
+        let v = call_tool(
+            &ctx,
+            "column_upstream",
+            &json!({"model": "orders", "column": "order_id"}),
+        )
+        .unwrap();
+        assert_eq!(v["source"], "analyzer");
+        let hops = v["hops"].as_array().unwrap();
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0]["from"]["model"], "model.stg_orders");
+        assert_eq!(hops[0]["kind"], "aliased");
+    }
+
+    #[test]
+    fn test_column_upstream_falls_back_to_heuristic() {
+        let ctx = ctx_with_graph(); // empty column_lineage
+        let v = call_tool(
+            &ctx,
+            "column_upstream",
+            &json!({"model": "orders", "column": "order_id"}),
+        )
+        .unwrap();
+        assert_eq!(v["source"], "heuristic");
+        assert!(v["hops"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn test_propose_test_emits_yaml_snippet() {
         let ctx = ctx_with_graph();
         let v = call_tool(
@@ -711,10 +855,43 @@ mod tests {
     }
 
     #[test]
-    fn test_read_model_sql_errors_without_file_path() {
+    fn test_read_model_sql_errors_when_no_source_at_all() {
+        // No file_path on disk AND empty manifest_sql → clean error.
         let ctx = ctx_with_graph();
         let err = call_tool(&ctx, "read_model_sql", &json!({"model": "orders"})).unwrap_err();
-        assert!(err.to_string().contains("file_path"));
+        let msg = err.to_string();
+        assert!(msg.contains("no SQL available"));
+    }
+
+    #[test]
+    fn test_read_model_sql_falls_back_to_manifest() {
+        let mut ctx = ctx_with_graph();
+        ctx.manifest_sql
+            .insert("model.orders".into(), "select 1 as order_id".into());
+        let v = call_tool(&ctx, "read_model_sql", &json!({"model": "orders"})).unwrap();
+        assert_eq!(v["source"], "manifest");
+        assert_eq!(v["content"], "select 1 as order_id");
+    }
+
+    #[test]
+    fn test_read_model_sql_disk_preferred_over_manifest() {
+        let mut ctx = ctx_with_graph();
+        // Put a temp file on disk and set file_path; manifest also has a different value.
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("orders.sql");
+        std::fs::write(&p, "from-disk").unwrap();
+        ctx.project_dir = tmp.path().to_path_buf();
+        let orders_idx: NodeIndex = ctx
+            .graph
+            .node_indices()
+            .find(|&i| ctx.graph[i].label == "orders")
+            .unwrap();
+        ctx.graph[orders_idx].file_path = Some(std::path::PathBuf::from("orders.sql"));
+        ctx.manifest_sql
+            .insert("model.orders".into(), "from-manifest".into());
+        let v = call_tool(&ctx, "read_model_sql", &json!({"model": "orders"})).unwrap();
+        assert_eq!(v["source"], "disk");
+        assert_eq!(v["content"], "from-disk");
     }
 
     #[test]

@@ -17,10 +17,16 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// Per-server state. Tools and resources both consult `graph`; `project_dir`
 /// is used by tools that read source files (read_model_sql) and by resources
-/// that expose `.sql` content.
+/// that expose `.sql` content. `manifest_sql` is a fallback used by
+/// `read_model_sql` and the SQL resource when the on-disk file isn't readable
+/// (analyst running from a distributed manifest with no source checkout).
+/// `column_lineage` is precomputed at startup and consulted by the
+/// `column_upstream`/`column_downstream` tools.
 pub struct McpContext {
     pub graph: LineageGraph,
     pub project_dir: PathBuf,
+    pub manifest_sql: std::collections::HashMap<String, String>,
+    pub column_lineage: crate::parser::column_lineage::ColumnLineage,
 }
 
 /// Run the MCP stdio server loop. Reads JSON-RPC requests line-by-line from
@@ -236,6 +242,8 @@ mod tests {
         McpContext {
             graph: g,
             project_dir: std::env::temp_dir(),
+            manifest_sql: std::collections::HashMap::new(),
+            column_lineage: crate::parser::column_lineage::ColumnLineage::default(),
         }
     }
 

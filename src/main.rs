@@ -511,28 +511,48 @@ fn run_coverage_command(project_dir: &Path, output: &cli::CoverageOutputFormat) 
     Ok(())
 }
 
-/// Run the `mcp` subcommand: load the manifest, then serve JSON-RPC over stdio.
+/// Run the `mcp` subcommand: load the graph (manifest preferred, SQL-parse fallback)
+/// and serve JSON-RPC over stdio.
 #[cfg(not(tarpaulin_include))]
 fn run_mcp_command(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<()> {
     let project_dir = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
 
-    let manifest_path = match manifest {
-        Some(p) => resolve_manifest_path(p)?,
-        None => project_dir.join("target").join("manifest.json"),
+    // Explicit --manifest is honored as-is and surfaces errors normally.
+    // Otherwise: try target/manifest.json, fall back to SQL-parse mode silently.
+    // When a manifest is involved, also extract its raw/compiled SQL so
+    // read_model_sql can serve content without on-disk files.
+    let (graph, manifest_sql) = if let Some(p) = manifest {
+        let manifest_path = resolve_manifest_path(p)?;
+        let g = parser::manifest::build_graph_from_manifest(&manifest_path)?;
+        let sql_map = parser::manifest::build_sql_map_from_manifest(&manifest_path)?;
+        (g, sql_map)
+    } else {
+        let candidate = project_dir.join("target").join("manifest.json");
+        if candidate.exists() {
+            let g = parser::manifest::build_graph_from_manifest(&candidate)?;
+            let sql_map = parser::manifest::build_sql_map_from_manifest(&candidate)?;
+            (g, sql_map)
+        } else {
+            let project = parser::project::DbtProject::load(&project_dir)?;
+            let paths = project.resolve_paths(&project_dir);
+            let files = parser::discovery::discover_files(&paths)?;
+            let g = graph::builder::build_graph(&project_dir, &files)?;
+            (g, std::collections::HashMap::new())
+        }
     };
-    if !manifest_path.exists() {
-        anyhow::bail!(
-            "manifest required for MCP server but not found at {}",
-            manifest_path.display()
-        );
-    }
-    let graph = parser::manifest::build_graph_from_manifest(&manifest_path)?;
+
+    let column_lineage = parser::column_lineage::resolve_column_lineage(&graph);
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    let ctx = dbt_lineage::mcp::server::McpContext { graph, project_dir };
+    let ctx = dbt_lineage::mcp::server::McpContext {
+        graph,
+        project_dir,
+        manifest_sql,
+        column_lineage,
+    };
     dbt_lineage::mcp::server::run(ctx, stdin.lock(), &mut stdout)?;
     Ok(())
 }

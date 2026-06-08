@@ -106,21 +106,32 @@ fn read_model_sql(ctx: &McpContext, label: &str) -> Result<ResourceContent> {
     let idx =
         find_node_by_label(ctx, label).ok_or_else(|| anyhow!("model '{}' not found", label))?;
     let node = &ctx.graph[idx];
-    let rel = node
-        .file_path
-        .as_ref()
-        .ok_or_else(|| anyhow!("model '{}' has no file_path", label))?;
-    let abs = if rel.is_absolute() {
-        rel.clone()
-    } else {
-        ctx.project_dir.join(rel)
-    };
-    let text =
-        std::fs::read_to_string(&abs).map_err(|e| anyhow!("read {}: {}", abs.display(), e))?;
-    Ok(ResourceContent {
-        text,
-        mime_type: "text/plain",
-    })
+
+    if let Some(rel) = node.file_path.as_ref() {
+        let abs = if rel.is_absolute() {
+            rel.clone()
+        } else {
+            ctx.project_dir.join(rel)
+        };
+        if let Ok(text) = std::fs::read_to_string(&abs) {
+            return Ok(ResourceContent {
+                text,
+                mime_type: "text/plain",
+            });
+        }
+    }
+
+    if let Some(sql) = ctx.manifest_sql.get(&node.unique_id) {
+        return Ok(ResourceContent {
+            text: sql.clone(),
+            mime_type: "text/plain",
+        });
+    }
+
+    Err(anyhow!(
+        "no SQL available for model '{}' (no readable file_path, no manifest fallback)",
+        label
+    ))
 }
 
 fn read_lineage_mermaid(ctx: &McpContext, label: &str) -> Result<ResourceContent> {
@@ -227,6 +238,8 @@ mod tests {
         McpContext {
             graph: g,
             project_dir: PathBuf::from("/tmp"),
+            manifest_sql: std::collections::HashMap::new(),
+            column_lineage: crate::parser::column_lineage::ColumnLineage::default(),
         }
     }
 

@@ -33,6 +33,13 @@ pub struct ManifestNode {
     pub config: ManifestConfig,
     pub description: Option<String>,
     pub path: Option<String>,
+    /// Raw Jinja SQL as authored. Present on `dbt compile` output for models,
+    /// snapshots, and singular tests. Absent on seeds and sources.
+    #[serde(default)]
+    pub raw_code: Option<String>,
+    /// SQL with macros and refs resolved. Available after `dbt compile`.
+    #[serde(default)]
+    pub compiled_code: Option<String>,
 }
 
 /// A source entry in the manifest
@@ -112,6 +119,39 @@ fn simplify_unique_id(unique_id: &str, resource_type: &str) -> String {
 }
 
 /// Build a LineageGraph from a parsed manifest.json file.
+/// Build a map from simplified unique_id → SQL content extracted from the manifest.
+/// Prefers `raw_code` (closer to what a developer would read) over `compiled_code`.
+/// Returns an empty map if no nodes carry SQL.
+pub fn build_sql_map_from_manifest(
+    manifest_path: &Path,
+) -> Result<std::collections::HashMap<String, String>> {
+    let content = std::fs::read_to_string(manifest_path).map_err(|e| {
+        crate::error::DbtLineageError::FileReadError {
+            path: manifest_path.to_path_buf(),
+            source: e,
+        }
+    })?;
+    let manifest: Manifest = serde_json::from_str(&content).map_err(|e| {
+        crate::error::DbtLineageError::ArtifactParseError {
+            path: manifest_path.to_path_buf(),
+            source: e,
+        }
+    })?;
+    Ok(build_sql_map_from_parsed(&manifest))
+}
+
+/// Same as `build_sql_map_from_manifest` but takes a parsed manifest.
+pub fn build_sql_map_from_parsed(manifest: &Manifest) -> std::collections::HashMap<String, String> {
+    let mut out: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (orig_id, node) in &manifest.nodes {
+        if let Some(sql) = node.raw_code.as_ref().or(node.compiled_code.as_ref()) {
+            let simple_id = simplify_unique_id(orig_id, &node.resource_type);
+            out.insert(simple_id, sql.clone());
+        }
+    }
+    out
+}
+
 pub fn build_graph_from_manifest(manifest_path: &Path) -> Result<LineageGraph> {
     let content = std::fs::read_to_string(manifest_path).map_err(|e| {
         crate::error::DbtLineageError::FileReadError {
@@ -380,6 +420,8 @@ mod tests {
                     },
                     description: Some("Staged orders".to_string()),
                     path: Some("models/staging/stg_orders.sql".to_string()),
+                    raw_code: None,
+                    compiled_code: None,
                 },
             )]),
             sources: HashMap::from([(
@@ -434,6 +476,8 @@ mod tests {
                     config: ManifestConfig::default(),
                     description: None,
                     path: None,
+                    raw_code: None,
+                    compiled_code: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -479,6 +523,8 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: Some("seeds/countries.csv".to_string()),
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
                 (
@@ -494,6 +540,8 @@ mod tests {
                         },
                         description: None,
                         path: Some("snapshots/snap_orders.sql".to_string()),
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
             ]),
@@ -531,6 +579,8 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: None,
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
                 (
@@ -545,6 +595,8 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: Some("tests/assert_positive.sql".to_string()),
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
             ]),
@@ -592,6 +644,8 @@ mod tests {
                     config: ManifestConfig::default(),
                     description: None,
                     path: None,
+                    raw_code: None,
+                    compiled_code: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -619,6 +673,8 @@ mod tests {
                     },
                     description: None,
                     path: None,
+                    raw_code: None,
+                    compiled_code: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -699,6 +755,8 @@ mod tests {
                     config: ManifestConfig::default(),
                     description: None,
                     path: None,
+                    raw_code: None,
+                    compiled_code: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -730,6 +788,8 @@ mod tests {
                         },
                         description: None,
                         path: None,
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
                 (
@@ -744,6 +804,8 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: None,
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
                 (
@@ -764,6 +826,8 @@ mod tests {
                         },
                         description: Some("Order fact table".to_string()),
                         path: None,
+                        raw_code: None,
+                        compiled_code: None,
                     },
                 ),
             ]),

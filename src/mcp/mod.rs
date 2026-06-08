@@ -6,6 +6,7 @@
 //! shelling out to the CLI and parsing text. See GH issue #3.
 
 pub mod prompts;
+pub mod propose;
 pub mod resources;
 pub mod server;
 pub mod tools;
