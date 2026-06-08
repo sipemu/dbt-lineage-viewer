@@ -20,6 +20,8 @@ fn node_fill(node_type: NodeType) -> &'static str {
         NodeType::Test => "#1ABC9C",
         NodeType::Exposure => "#E74C3C",
         NodeType::Phantom => "#BDC3C7",
+        NodeType::SemanticModel => "#16A085",
+        NodeType::Metric => "#C0392B",
     }
 }
 

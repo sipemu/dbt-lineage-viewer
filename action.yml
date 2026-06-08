@@ -1,0 +1,180 @@
+name: dbt-lineage
+description: >
+  Run dbt-lineage diff / impact / plan / coverage / lint against a dbt project
+  and post a Markdown summary as a PR comment. Optionally uploads SARIF from
+  lint and coverage so findings render inline on the PR diff.
+
+branding:
+  icon: git-branch
+  color: blue
+
+inputs:
+  version:
+    description: dbt-lineage version to install. `latest` resolves to the most recent release.
+    required: false
+    default: latest
+  project-dir:
+    description: Path to the dbt project (containing dbt_project.yml).
+    required: false
+    default: .
+  base:
+    description: Base git ref to diff against. Required for `diff`, `plan`, and the impact section.
+    required: false
+    default: ""
+  manifest:
+    description: Path to a pre-compiled manifest.json. When set, runs in manifest mode; otherwise SQL-parse mode.
+    required: false
+    default: ""
+  comment:
+    description: When true, post a Markdown comment on the PR with the rendered summary.
+    required: false
+    default: "true"
+  sarif:
+    description: >
+      Comma-separated list of subcommands to also emit SARIF for
+      (e.g. `lint,coverage`). Files are uploaded as workflow artifacts and
+      submitted to GitHub Code Scanning so findings appear inline on the PR.
+    required: false
+    default: ""
+  fail-on:
+    description: >
+      Cause the step to fail when given findings are present. Comma-separated:
+      `lint-errors`, `plan-empty`, `manifest-stale`. Default: lint-errors.
+    required: false
+    default: lint-errors
+
+outputs:
+  selector:
+    description: The dbt-lineage plan selector (when `base` is set). Pipe into `dbt run -s`.
+    value: ${{ steps.run.outputs.selector }}
+  summary:
+    description: Path to the Markdown summary file.
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install dbt-lineage
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="${{ inputs.version }}"
+        if [ "$version" = "latest" ]; then
+          version=$(curl -fsSL https://api.github.com/repos/sipemu/dbt-lineage-viewer/releases/latest | grep -m1 '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+        fi
+        echo "Installing dbt-lineage v${version}"
+        # Detect platform
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)     target="x86_64-unknown-linux-gnu" ;;
+          Linux-ARM64)   target="aarch64-unknown-linux-gnu" ;;
+          macOS-X64)     target="x86_64-apple-darwin" ;;
+          macOS-ARM64)   target="aarch64-apple-darwin" ;;
+          Windows-X64)   target="x86_64-pc-windows-msvc" ;;
+          *) echo "Unsupported platform"; exit 1 ;;
+        esac
+        archive_ext="tar.gz"
+        [ "${{ runner.os }}" = "Windows" ] && archive_ext="zip"
+        url="https://github.com/sipemu/dbt-lineage-viewer/releases/download/v${version}/dbt-lineage-v${version}-${target}.${archive_ext}"
+        curl -fsSL -o "/tmp/dbt-lineage.${archive_ext}" "$url"
+        mkdir -p "$HOME/.dbt-lineage-bin"
+        if [ "$archive_ext" = "zip" ]; then
+          unzip -j "/tmp/dbt-lineage.${archive_ext}" "*/dbt-lineage.exe" -d "$HOME/.dbt-lineage-bin"
+        else
+          tar -xzf "/tmp/dbt-lineage.${archive_ext}" -C "/tmp"
+          mv "/tmp/dbt-lineage-v${version}-${target}/dbt-lineage" "$HOME/.dbt-lineage-bin/"
+        fi
+        echo "$HOME/.dbt-lineage-bin" >> "$GITHUB_PATH"
+
+    - name: Run dbt-lineage
+      id: run
+      shell: bash
+      run: |
+        set -euo pipefail
+        proj="${{ inputs.project-dir }}"
+        base="${{ inputs.base }}"
+        manifest="${{ inputs.manifest }}"
+        manifest_flag=""
+        [ -n "$manifest" ] && manifest_flag="--manifest $manifest"
+
+        summary_md="$(mktemp)"
+        echo "## dbt-lineage report" > "$summary_md"
+        echo >> "$summary_md"
+
+        # Summary section
+        echo "### Project summary" >> "$summary_md"
+        echo '```' >> "$summary_md"
+        dbt-lineage summary -p "$proj" $manifest_flag >> "$summary_md" 2>&1 || true
+        echo '```' >> "$summary_md"
+        echo >> "$summary_md"
+
+        # Diff + plan (only when base is set)
+        if [ -n "$base" ]; then
+          echo "### Changes vs. \`$base\`" >> "$summary_md"
+          echo '```' >> "$summary_md"
+          dbt-lineage diff --base "$base" -p "$proj" >> "$summary_md" 2>&1 || true
+          echo '```' >> "$summary_md"
+          echo >> "$summary_md"
+
+          selector=$(dbt-lineage plan --base "$base" -p "$proj" 2>/dev/null || true)
+          echo "selector=$selector" >> "$GITHUB_OUTPUT"
+          if [ -n "$selector" ]; then
+            echo "### Rebuild selector" >> "$summary_md"
+            echo '```sh' >> "$summary_md"
+            echo "dbt run -s \"$selector\"" >> "$summary_md"
+            echo '```' >> "$summary_md"
+            echo >> "$summary_md"
+          fi
+        fi
+
+        # SARIF outputs (when requested)
+        sarif="${{ inputs.sarif }}"
+        if [ -n "$sarif" ]; then
+          IFS=, read -ra cmds <<< "$sarif"
+          for cmd in "${cmds[@]}"; do
+            case "$cmd" in
+              lint)
+                dbt-lineage lint -p "$proj" $manifest_flag -o sarif > "lint.sarif" 2>/dev/null || true
+                ;;
+              coverage)
+                dbt-lineage coverage -p "$proj" -o sarif > "coverage.sarif" 2>/dev/null || true
+                ;;
+            esac
+          done
+        fi
+
+        echo "summary=$summary_md" >> "$GITHUB_OUTPUT"
+
+    - name: Upload SARIF (if produced)
+      if: inputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: .
+        category: dbt-lineage
+
+    - name: Post PR comment
+      if: github.event_name == 'pull_request' && inputs.comment == 'true'
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        path: ${{ steps.run.outputs.summary }}
+        header: dbt-lineage
+
+    - name: Fail on conditions
+      shell: bash
+      run: |
+        set -euo pipefail
+        fail_on="${{ inputs.fail-on }}"
+        if [[ "$fail_on" == *"lint-errors"* ]]; then
+          # `lint` exits non-zero when errors exist; rerun in JSON mode to count.
+          proj="${{ inputs.project-dir }}"
+          manifest="${{ inputs.manifest }}"
+          manifest_flag=""
+          [ -n "$manifest" ] && manifest_flag="--manifest $manifest"
+          if ! dbt-lineage lint -p "$proj" $manifest_flag -o json > /tmp/lint.json; then
+            errors=$(python3 -c "import json; print(sum(1 for f in json.load(open('/tmp/lint.json'))['findings'] if f['severity']=='error'))")
+            if [ "$errors" -gt 0 ]; then
+              echo "::error::dbt-lineage lint reported $errors error-severity findings"
+              exit 1
+            fi
+          fi
+        fi

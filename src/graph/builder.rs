@@ -291,6 +291,79 @@ fn process_model_files(
             columns: parsed_file.columns.clone(),
         });
     }
+
+    // Python models: same shape, no SQL config / no SELECT columns extracted.
+    // We capture them as Model nodes; refs/sources are added by `process_python_edges`.
+    for py_path in &files.model_python_files {
+        let model_name = file_stem_str(py_path);
+        if let Some(existing_path) = model_name_paths.get(&model_name) {
+            eprintln!(
+                "Warning: duplicate model name '{}' in {} and {}",
+                model_name,
+                existing_path.display(),
+                py_path.display()
+            );
+        }
+        model_name_paths.insert(model_name.clone(), py_path.clone());
+
+        let yaml_meta = model_meta.get(&model_name);
+        let relative_path = py_path
+            .strip_prefix(project_dir)
+            .unwrap_or(py_path)
+            .to_path_buf();
+        gb.add_node(NodeData {
+            unique_id: format!("model.{}", model_name),
+            label: model_name.clone(),
+            node_type: NodeType::Model,
+            file_path: Some(relative_path),
+            description: yaml_meta.and_then(|m| m.description.clone()),
+            materialization: yaml_meta.and_then(|m| m.materialization.clone()),
+            tags: yaml_meta.map(|m| m.tags.clone()).unwrap_or_default(),
+            columns: vec![],
+        });
+    }
+
+    Ok(())
+}
+
+/// Parse Python model files and add ref / source edges.
+fn process_python_edges(gb: &mut GraphBuilder, files: &DiscoveredFiles) -> Result<()> {
+    for py_path in &files.model_python_files {
+        let content = match std::fs::read_to_string(py_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let node_unique_id = format!("model.{}", file_stem_str(py_path));
+        let current_idx = match gb.node_map.get(&node_unique_id) {
+            Some(&idx) => idx,
+            None => continue,
+        };
+
+        for ref_call in crate::parser::python::extract_refs(&content) {
+            let dep_idx = gb.get_or_create_phantom_ref(&ref_call.name, py_path);
+            gb.graph.add_edge(
+                dep_idx,
+                current_idx,
+                EdgeData {
+                    edge_type: EdgeType::Ref,
+                },
+            );
+        }
+        for source_call in crate::parser::python::extract_sources(&content) {
+            let source_idx = gb.get_or_create_phantom_source(
+                &source_call.source_name,
+                &source_call.table_name,
+                py_path,
+            );
+            gb.graph.add_edge(
+                source_idx,
+                current_idx,
+                EdgeData {
+                    edge_type: EdgeType::Source,
+                },
+            );
+        }
+    }
     Ok(())
 }
 
@@ -486,6 +559,7 @@ fn build_graph_with_cache(
     );
 
     process_sql_edges(&mut gb, files, project_dir, &wrappers, cache)?;
+    process_python_edges(&mut gb, files)?;
     process_exposures(&mut gb, &exposures);
 
     if persist {

@@ -133,6 +133,9 @@ fn write_node<W: Write>(node: &NodeData, options: &MermaidOptions<'_>, w: &mut W
         NodeType::Test => format!("{}{{\"{}\"}}\n", id, label),
         NodeType::Exposure => format!("{}>\"{}\"]\n", id, label),
         NodeType::Phantom => format!("{}(\"{}\")\n", id, label),
+        // Semantic Layer: hex shape for semantic_models, asymmetric for metrics.
+        NodeType::SemanticModel => format!("{}{{{{\"sem: {}\"}}}}\n", id, label),
+        NodeType::Metric => format!("{}>\"metric: {}\"]\n", id, label),
     };
     write!(w, "{}{}", indent, shape).unwrap();
 }

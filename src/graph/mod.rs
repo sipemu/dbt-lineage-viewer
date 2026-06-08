@@ -5,6 +5,7 @@ pub mod diff;
 pub mod filter;
 pub mod impact;
 pub mod lint;
+pub mod macros;
 pub mod perf;
 pub mod plan;
 pub mod summary;

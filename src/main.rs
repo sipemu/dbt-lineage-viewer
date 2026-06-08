@@ -97,6 +97,10 @@ fn run(cli: Cli) -> Result<()> {
                 output,
                 disable,
             } => run_lint_command(project_dir, manifest.as_ref(), output, disable),
+            Command::Macros {
+                project_dir,
+                output,
+            } => run_macros_command(project_dir, output),
             Command::Docs {
                 project_dir,
                 manifest,
@@ -398,6 +402,21 @@ fn run_perf_command(
     match output {
         cli::PerfOutputFormat::Text => render::perf::render_perf_text(&report, top),
         cli::PerfOutputFormat::Json => render::perf::render_perf_json(&report),
+    }
+    Ok(())
+}
+
+/// Run the `macros` subcommand: scan `macros/*.sql` and emit the call graph.
+#[cfg(not(tarpaulin_include))]
+fn run_macros_command(project_dir: &Path, output: &cli::MacrosOutputFormat) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let graph = graph::macros::analyze_macros(&project_dir)?;
+    match output {
+        cli::MacrosOutputFormat::Text => render::macros::render_macros_text(&graph),
+        cli::MacrosOutputFormat::Json => render::macros::render_macros_json(&graph),
+        cli::MacrosOutputFormat::Mermaid => render::macros::render_macros_mermaid(&graph),
     }
     Ok(())
 }

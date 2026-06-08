@@ -189,6 +189,17 @@ pub enum Command {
         output: PerfOutputFormat,
     },
 
+    /// Show the macro call graph (macros calling other macros).
+    Macros {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Output: text (default), json, or mermaid
+        #[arg(short = 'o', long, default_value = "text")]
+        output: MacrosOutputFormat,
+    },
+
     /// Generate Markdown documentation per model (or one consolidated file).
     Docs {
         /// Path to dbt project directory
@@ -355,6 +366,13 @@ pub enum LintOutputFormat {
 pub enum PerfOutputFormat {
     Text,
     Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum MacrosOutputFormat {
+    Text,
+    Json,
+    Mermaid,
 }
 
 #[cfg(test)]

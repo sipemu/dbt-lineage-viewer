@@ -8,6 +8,7 @@ use super::project::ResolvedPaths;
 #[derive(Debug, Default)]
 pub struct DiscoveredFiles {
     pub model_sql_files: Vec<PathBuf>,
+    pub model_python_files: Vec<PathBuf>,
     pub seed_files: Vec<PathBuf>,
     pub snapshot_sql_files: Vec<PathBuf>,
     pub test_sql_files: Vec<PathBuf>,
@@ -23,6 +24,7 @@ pub fn discover_files(paths: &ResolvedPaths) -> Result<DiscoveredFiles> {
         let (sql, yaml) = walk_directory(dir);
         discovered.model_sql_files.extend(sql);
         discovered.yaml_files.extend(yaml);
+        discovered.model_python_files.extend(walk_python_files(dir));
     }
 
     // Seeds
@@ -87,6 +89,20 @@ fn walk_csv_files(dir: &Path) -> Vec<PathBuf> {
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("csv"))
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
+/// Walk a directory and return Python model files.
+fn walk_python_files(dir: &Path) -> Vec<PathBuf> {
+    if !dir.exists() {
+        return Vec::new();
+    }
+    WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("py"))
         .map(|e| e.path().to_path_buf())
         .collect()
 }

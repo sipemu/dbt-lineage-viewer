@@ -1,6 +1,6 @@
 [package]
 name = "dbt-lineage"
-version = "0.7.3"
+version = "0.8.0"
 edition = "2021"
 description = "A Rust CLI tool for visualizing dbt model lineage"
 license = "MIT"

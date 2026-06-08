@@ -156,7 +156,11 @@ fn apply_type_filter(
                 NodeType::Seed => type_filter.include_seeds,
                 NodeType::Snapshot => type_filter.include_snapshots,
                 NodeType::Exposure => type_filter.include_exposures,
-                NodeType::Model | NodeType::Source | NodeType::Phantom => true,
+                NodeType::Model
+                | NodeType::Source
+                | NodeType::Phantom
+                | NodeType::SemanticModel
+                | NodeType::Metric => true,
             }
         })
         .collect()

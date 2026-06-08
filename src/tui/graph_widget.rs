@@ -346,6 +346,8 @@ fn node_color(node_type: NodeType) -> Color {
         NodeType::Test => Color::Cyan,
         NodeType::Exposure => Color::Red,
         NodeType::Phantom => Color::DarkGray,
+        NodeType::SemanticModel => Color::LightBlue,
+        NodeType::Metric => Color::LightRed,
     }
 }
 

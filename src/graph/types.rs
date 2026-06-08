@@ -15,6 +15,10 @@ pub enum NodeType {
     Exposure,
     /// Unresolved reference (phantom node)
     Phantom,
+    /// dbt Semantic Layer: a `semantic_model` resource declared in YAML.
+    SemanticModel,
+    /// dbt Semantic Layer: a `metric` resource declared in YAML.
+    Metric,
 }
 
 impl NodeType {
@@ -27,6 +31,8 @@ impl NodeType {
             NodeType::Test => "test:",
             NodeType::Exposure => "exp:",
             NodeType::Phantom => "?:",
+            NodeType::SemanticModel => "sem:",
+            NodeType::Metric => "metric:",
         }
     }
 
@@ -39,6 +45,8 @@ impl NodeType {
             NodeType::Test => "test",
             NodeType::Exposure => "exposure",
             NodeType::Phantom => "phantom",
+            NodeType::SemanticModel => "semantic_model",
+            NodeType::Metric => "metric",
         }
     }
 }

@@ -19,6 +19,34 @@ pub struct Manifest {
     /// Exposures keyed by unique_id
     #[serde(default)]
     pub exposures: HashMap<String, ManifestExposure>,
+    /// dbt Semantic Layer semantic_models (1.6+).
+    #[serde(default)]
+    pub semantic_models: HashMap<String, ManifestSemanticModel>,
+    /// dbt Semantic Layer metrics (1.6+).
+    #[serde(default)]
+    pub metrics: HashMap<String, ManifestMetric>,
+}
+
+/// A semantic_model node from `manifest.semantic_models.*`.
+#[derive(Debug, Deserialize)]
+pub struct ManifestSemanticModel {
+    pub unique_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub depends_on: DependsOn,
+    pub description: Option<String>,
+    pub path: Option<String>,
+}
+
+/// A metric node from `manifest.metrics.*`.
+#[derive(Debug, Deserialize)]
+pub struct ManifestMetric {
+    pub unique_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub depends_on: DependsOn,
+    pub description: Option<String>,
+    pub path: Option<String>,
 }
 
 /// A node entry in the manifest (model, seed, snapshot, test, analysis)
@@ -196,13 +224,111 @@ pub fn build_graph_from_parsed_manifest(manifest: &Manifest) -> Result<LineageGr
     // 3. Add exposure nodes
     add_exposure_nodes(&mut graph, &mut node_map, &manifest.exposures);
 
-    // 4. Add edges from depends_on for regular nodes
+    // 4. Add semantic_model + metric nodes (dbt 1.6+ Semantic Layer).
+    add_semantic_nodes(&mut graph, &mut node_map, &manifest.semantic_models);
+    add_metric_nodes(&mut graph, &mut node_map, &manifest.metrics);
+
+    // 5. Add edges from depends_on for regular nodes
     add_node_edges(&mut graph, &node_map, &manifest.nodes);
 
-    // 5. Add edges from depends_on for exposures
+    // 6. Add edges from depends_on for exposures
     add_exposure_edges(&mut graph, &node_map, &manifest.exposures);
 
+    // 7. Add edges from depends_on for semantic_models and metrics.
+    add_semantic_edges(&mut graph, &node_map, &manifest.semantic_models);
+    add_metric_edges(&mut graph, &node_map, &manifest.metrics);
+
     Ok(graph)
+}
+
+fn add_semantic_nodes(
+    graph: &mut LineageGraph,
+    node_map: &mut HashMap<String, NodeIndex>,
+    semantic: &HashMap<String, ManifestSemanticModel>,
+) {
+    for (orig_id, sm) in semantic {
+        let simple_id = format!("semantic_model.{}", sm.name);
+        let idx = graph.add_node(NodeData {
+            unique_id: simple_id.clone(),
+            label: sm.name.clone(),
+            node_type: NodeType::SemanticModel,
+            file_path: sm.path.as_ref().map(|p| p.into()),
+            description: non_empty_string(&sm.description),
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        node_map.insert(orig_id.clone(), idx);
+        node_map.entry(simple_id).or_insert(idx);
+    }
+}
+
+fn add_metric_nodes(
+    graph: &mut LineageGraph,
+    node_map: &mut HashMap<String, NodeIndex>,
+    metrics: &HashMap<String, ManifestMetric>,
+) {
+    for (orig_id, m) in metrics {
+        let simple_id = format!("metric.{}", m.name);
+        let idx = graph.add_node(NodeData {
+            unique_id: simple_id.clone(),
+            label: m.name.clone(),
+            node_type: NodeType::Metric,
+            file_path: m.path.as_ref().map(|p| p.into()),
+            description: non_empty_string(&m.description),
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        node_map.insert(orig_id.clone(), idx);
+        node_map.entry(simple_id).or_insert(idx);
+    }
+}
+
+fn add_semantic_edges(
+    graph: &mut LineageGraph,
+    node_map: &HashMap<String, NodeIndex>,
+    semantic: &HashMap<String, ManifestSemanticModel>,
+) {
+    for (orig_id, sm) in semantic {
+        let Some(&current_idx) = node_map.get(orig_id) else {
+            continue;
+        };
+        for dep_orig_id in &sm.depends_on.nodes {
+            if let Some(&dep_idx) = node_map.get(dep_orig_id) {
+                graph.add_edge(
+                    dep_idx,
+                    current_idx,
+                    EdgeData {
+                        edge_type: EdgeType::Ref,
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn add_metric_edges(
+    graph: &mut LineageGraph,
+    node_map: &HashMap<String, NodeIndex>,
+    metrics: &HashMap<String, ManifestMetric>,
+) {
+    for (orig_id, m) in metrics {
+        let Some(&current_idx) = node_map.get(orig_id) else {
+            continue;
+        };
+        for dep_orig_id in &m.depends_on.nodes {
+            if let Some(&dep_idx) = node_map.get(dep_orig_id) {
+                graph.add_edge(
+                    dep_idx,
+                    current_idx,
+                    EdgeData {
+                        edge_type: EdgeType::Ref,
+                    },
+                );
+            }
+        }
+    }
 }
 
 fn add_source_nodes(
@@ -447,6 +573,8 @@ mod tests {
                 },
             )]),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -504,6 +632,8 @@ mod tests {
                     description: Some("Weekly dashboard".to_string()),
                 },
             )]),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -561,6 +691,8 @@ mod tests {
             ]),
             sources: HashMap::new(),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -618,6 +750,8 @@ mod tests {
             ]),
             sources: HashMap::new(),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -637,6 +771,8 @@ mod tests {
             nodes: HashMap::new(),
             sources: HashMap::new(),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -667,6 +803,8 @@ mod tests {
             )]),
             sources: HashMap::new(),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -697,6 +835,8 @@ mod tests {
             )]),
             sources: HashMap::new(),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -780,6 +920,8 @@ mod tests {
             )]),
             sources: HashMap::new(),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
@@ -878,6 +1020,8 @@ mod tests {
                 ),
             ]),
             exposures: HashMap::new(),
+            semantic_models: HashMap::new(),
+            metrics: HashMap::new(),
         };
 
         let graph = build_graph_from_parsed_manifest(&manifest).unwrap();

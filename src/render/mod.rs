@@ -8,6 +8,7 @@ pub mod impact;
 pub mod json;
 pub mod layout;
 pub mod lint;
+pub mod macros;
 pub mod manifest_check;
 pub mod mermaid;
 pub mod perf;
