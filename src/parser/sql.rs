@@ -57,14 +57,17 @@ static SOURCE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Strip Jinja comments from SQL content
+/// Strip Jinja comments from SQL content (legacy helper, retained for the
+/// macro-call extractor that doesn't yet route through the full lexer).
 fn strip_jinja_comments(sql: &str) -> String {
     JINJA_COMMENT.replace_all(sql, "").to_string()
 }
 
-/// Extract all ref() calls from SQL content
+/// Extract all ref() calls from SQL content. Pipes through the SQL+Jinja
+/// lexer (#25) first to blank out string literals and comments, so the regex
+/// can't match `ref(` inside `'I prefer ref(x)'` or `-- ref(`.
 pub fn extract_refs(sql: &str) -> Vec<RefCall> {
-    let cleaned = strip_jinja_comments(sql);
+    let cleaned = super::lexer::strip_non_code(sql);
     let mut refs = Vec::new();
 
     for cap in REF_PATTERN.captures_iter(&cleaned) {
@@ -86,9 +89,10 @@ pub fn extract_refs(sql: &str) -> Vec<RefCall> {
     refs
 }
 
-/// Extract all source() calls from SQL content
+/// Extract all source() calls from SQL content. Routes through the lexer so
+/// false matches inside strings and comments are eliminated.
 pub fn extract_sources(sql: &str) -> Vec<SourceCall> {
-    let cleaned = strip_jinja_comments(sql);
+    let cleaned = super::lexer::strip_non_code(sql);
     let mut sources = Vec::new();
 
     for cap in SOURCE_PATTERN.captures_iter(&cleaned) {
@@ -168,6 +172,25 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "stg_orders");
         assert!(refs[0].package.is_none());
+    }
+
+    #[test]
+    fn test_lexer_blocks_ref_in_string_literal() {
+        // Without the lexer (#25), this regex matches the ref( inside the
+        // string. With the lexer, the string literal is blanked and only the
+        // real ref() at the end survives.
+        let sql = "select 'note: {{ ref(\"phantom\") }}' as msg from {{ ref('real') }}";
+        let refs = extract_refs(sql);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "real");
+    }
+
+    #[test]
+    fn test_lexer_blocks_ref_in_line_comment() {
+        let sql = "select 1 -- once we had {{ ref('legacy') }}\nfrom {{ ref('real') }}";
+        let refs = extract_refs(sql);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "real");
     }
 
     #[test]
