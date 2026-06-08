@@ -114,7 +114,23 @@ pub fn build_proposal(req: &ProposeTestRequest<'_>) -> Result<ProposeTestResult>
         ),
     };
 
-    let new_content = upsert_test_in_yaml(&original, req.model, req.column, req.kind)?;
+    // Prefer the line-level editor (preserves comments + indentation). Fall back
+    // to the serde_yaml round-trip when the source YAML doesn't have a layout we
+    // can confidently edit (e.g. flow style, no existing model/column entry).
+    let new_content = match upsert_test_line_level(&original, req.model, req.column, req.kind) {
+        Ok(LineEditOutcome::Updated(s)) => s,
+        Ok(LineEditOutcome::AlreadyPresent) => {
+            return Ok(ProposeTestResult {
+                file: target_file,
+                diff: String::new(),
+                already_present: true,
+                new_file: false,
+            });
+        }
+        Ok(LineEditOutcome::CannotEdit) | Err(_) => {
+            upsert_test_in_yaml(&original, req.model, req.column, req.kind)?
+        }
+    };
 
     if new_content == original {
         return Ok(ProposeTestResult {
@@ -132,6 +148,214 @@ pub fn build_proposal(req: &ProposeTestRequest<'_>) -> Result<ProposeTestResult>
         already_present: false,
         new_file,
     })
+}
+
+/// Outcome of attempting a precise line-level edit.
+#[derive(Debug)]
+enum LineEditOutcome {
+    Updated(String),
+    AlreadyPresent,
+    CannotEdit,
+}
+
+/// Locate the column block in the source text and add the test in place.
+/// Preserves comments, blank lines, and existing indentation. Falls back to
+/// `LineEditOutcome::CannotEdit` whenever the layout doesn't match our
+/// recognized patterns — the caller can then use the round-trip path.
+fn upsert_test_line_level(
+    original: &str,
+    model_name: &str,
+    column_name: &str,
+    test_kind: &str,
+) -> Result<LineEditOutcome> {
+    if original.trim().is_empty() {
+        return Ok(LineEditOutcome::CannotEdit);
+    }
+    // Validate that the file is parseable YAML and contains the model+column —
+    // otherwise we'd be editing blind.
+    let doc: serde_yaml::Value = match serde_yaml::from_str(original) {
+        Ok(v) => v,
+        Err(_) => return Ok(LineEditOutcome::CannotEdit),
+    };
+    if !has_model_column(&doc, model_name, column_name) {
+        return Ok(LineEditOutcome::CannotEdit);
+    }
+
+    let lines: Vec<&str> = original.split_inclusive('\n').collect();
+
+    // Find `- name: <model>` line. Use a simple substring match restricted to
+    // a `- name: …` line; allow surrounding whitespace.
+    let model_start = match find_named_block(&lines, model_name) {
+        Some(i) => i,
+        None => return Ok(LineEditOutcome::CannotEdit),
+    };
+    let model_indent = leading_spaces(lines[model_start]);
+
+    // Find the column entry inside this model's block — same shape, deeper
+    // indent than the model header.
+    let mut column_start: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate().skip(model_start + 1) {
+        let indent = leading_spaces(line);
+        if !line.trim().is_empty() && indent <= model_indent {
+            break; // left the model block
+        }
+        if is_named_entry(line, column_name) {
+            column_start = Some(i);
+            break;
+        }
+    }
+    let column_start = match column_start {
+        Some(i) => i,
+        None => return Ok(LineEditOutcome::CannotEdit),
+    };
+    let column_indent = leading_spaces(lines[column_start]);
+    // Child properties of the column sit at column_indent + 2 (standard dbt
+    // convention). Refine using the FIRST subsequent property line so nested
+    // items (like `- not_null` under `tests:`) don't shift the baseline.
+    let mut child_indent = column_indent + 2;
+    let mut found_child_indent = false;
+    let mut end_of_column: usize = lines.len();
+    for (i, line) in lines.iter().enumerate().skip(column_start + 1) {
+        let indent = leading_spaces(line);
+        if line.trim().is_empty() {
+            continue;
+        }
+        if indent <= column_indent {
+            end_of_column = i;
+            break;
+        }
+        if !found_child_indent && indent > column_indent {
+            child_indent = indent;
+            found_child_indent = true;
+        }
+    }
+
+    // Locate `tests:` within the column block, if present.
+    let mut tests_line: Option<usize> = None;
+    for (i, line) in lines
+        .iter()
+        .enumerate()
+        .take(end_of_column)
+        .skip(column_start + 1)
+    {
+        let trimmed = line.trim_start();
+        if leading_spaces(line) == child_indent && trimmed.starts_with("tests:") {
+            tests_line = Some(i);
+            break;
+        }
+    }
+
+    if let Some(t) = tests_line {
+        // Find the end of the tests list (lines indented > child_indent).
+        let test_item_indent = child_indent + 2;
+        let mut last_test_line = t;
+        let mut already = false;
+        for (i, line) in lines
+            .iter()
+            .enumerate()
+            .skip(t + 1)
+            .take(end_of_column - t - 1)
+        {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if leading_spaces(line) < test_item_indent {
+                break;
+            }
+            last_test_line = i;
+            if is_test_named(line, test_kind) {
+                already = true;
+            }
+        }
+        if already {
+            return Ok(LineEditOutcome::AlreadyPresent);
+        }
+        // Insert after last_test_line.
+        let mut out = String::with_capacity(original.len() + 32);
+        for (i, line) in lines.iter().enumerate() {
+            out.push_str(line);
+            if i == last_test_line {
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(&format!(
+                    "{}- {}\n",
+                    " ".repeat(test_item_indent),
+                    test_kind
+                ));
+            }
+        }
+        return Ok(LineEditOutcome::Updated(out));
+    }
+
+    // No tests: block — insert one at the end of the column block.
+    let mut out = String::with_capacity(original.len() + 64);
+    let last_column_line = (end_of_column - 1).max(column_start);
+    for (i, line) in lines.iter().enumerate() {
+        out.push_str(line);
+        if i == last_column_line {
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&format!("{}tests:\n", " ".repeat(child_indent)));
+            out.push_str(&format!(
+                "{}- {}\n",
+                " ".repeat(child_indent + 2),
+                test_kind
+            ));
+        }
+    }
+    Ok(LineEditOutcome::Updated(out))
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+/// Match `<indent>- name: <name>` allowing optional quotes around the name.
+fn is_named_entry(line: &str, name: &str) -> bool {
+    let trimmed = line.trim_start();
+    let Some(rest) = trimmed.strip_prefix("- name:") else {
+        return false;
+    };
+    let value = rest.trim();
+    let value = value.trim_matches('"').trim_matches('\'').trim();
+    value.split_whitespace().next() == Some(name)
+}
+
+fn find_named_block(lines: &[&str], name: &str) -> Option<usize> {
+    lines.iter().position(|l| is_named_entry(l, name))
+}
+
+/// Match `<indent>- <test_kind>` or `<indent>- <test_kind>:` (complex form).
+fn is_test_named(line: &str, kind: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(rest) = trimmed.strip_prefix("- ") else {
+        return false;
+    };
+    // Take chars up to the first non-identifier byte (`:`, whitespace, end-of-line).
+    let head: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    head == kind
+}
+
+fn has_model_column(doc: &serde_yaml::Value, model: &str, column: &str) -> bool {
+    let Some(models) = doc.get("models").and_then(|v| v.as_sequence()) else {
+        return false;
+    };
+    for m in models {
+        if m.get("name").and_then(|v| v.as_str()) == Some(model) {
+            let Some(cols) = m.get("columns").and_then(|v| v.as_sequence()) else {
+                return false;
+            };
+            return cols
+                .iter()
+                .any(|c| c.get("name").and_then(|v| v.as_str()) == Some(column));
+        }
+    }
+    false
 }
 
 /// Insert (or no-op) a generic test on a column inside a schema YAML document.
@@ -246,34 +470,85 @@ fn equals_test_kind(v: &serde_yaml::Value, kind: &str) -> bool {
 /// Produce a minimal unified diff. Only `--- a/file` / `+++ b/file` headers and
 /// a single hunk that spans the whole document — agents and humans can review,
 /// and `patch` / `git apply` accept this shape.
+/// Produce a unified diff with three lines of context around the changed
+/// region. Assumes a SINGLE contiguous diff hunk — exactly what `propose_test`
+/// produces. For multi-region changes the diff is still valid (one wide hunk
+/// covering both) but less compact than a real Myers-based diff would be.
 fn unified_diff(old: &str, new: &str, path: &Path) -> String {
+    const CONTEXT: usize = 3;
     let label = path.display().to_string();
     let old_lines: Vec<&str> = old.split_inclusive('\n').collect();
     let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
+
+    // Longest common prefix.
+    let mut prefix = 0;
+    while prefix < old_lines.len()
+        && prefix < new_lines.len()
+        && old_lines[prefix] == new_lines[prefix]
+    {
+        prefix += 1;
+    }
+    // Longest common suffix (don't overlap the prefix).
+    let mut suffix = 0;
+    while suffix < old_lines.len() - prefix
+        && suffix < new_lines.len() - prefix
+        && old_lines[old_lines.len() - 1 - suffix] == new_lines[new_lines.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    // No-op (shouldn't happen — caller guards), bail with empty.
+    if prefix == old_lines.len() && new_lines.len() == old_lines.len() {
+        return String::new();
+    }
+
+    let context_before = prefix.saturating_sub(CONTEXT);
+    let old_end = old_lines.len() - suffix;
+    let new_end = new_lines.len() - suffix;
+    let context_after_old = (old_end + CONTEXT).min(old_lines.len());
+    let context_after_new = (new_end + CONTEXT).min(new_lines.len());
+
+    let old_hunk_len = context_after_old - context_before;
+    let new_hunk_len = context_after_new - context_before;
 
     let mut out = String::new();
     out.push_str(&format!("--- a/{}\n", label));
     out.push_str(&format!("+++ b/{}\n", label));
     out.push_str(&format!(
-        "@@ -1,{} +1,{} @@\n",
-        old_lines.len(),
-        new_lines.len()
+        "@@ -{},{} +{},{} @@\n",
+        context_before + 1,
+        old_hunk_len,
+        context_before + 1,
+        new_hunk_len,
     ));
-    for line in &old_lines {
-        out.push('-');
-        out.push_str(line);
-        if !line.ends_with('\n') {
-            out.push('\n');
-        }
+    // Leading context.
+    for line in &old_lines[context_before..prefix] {
+        out.push(' ');
+        push_line(&mut out, line);
     }
-    for line in &new_lines {
+    // Removed lines.
+    for line in &old_lines[prefix..old_end] {
+        out.push('-');
+        push_line(&mut out, line);
+    }
+    // Added lines.
+    for line in &new_lines[prefix..new_end] {
         out.push('+');
-        out.push_str(line);
-        if !line.ends_with('\n') {
-            out.push('\n');
-        }
+        push_line(&mut out, line);
+    }
+    // Trailing context.
+    for line in &old_lines[old_end..context_after_old] {
+        out.push(' ');
+        push_line(&mut out, line);
     }
     out
+}
+
+fn push_line(out: &mut String, line: &str) {
+    out.push_str(line);
+    if !line.ends_with('\n') {
+        out.push('\n');
+    }
 }
 
 /// Helper for tests in other files: count tests on a column for a specific kind.
@@ -403,5 +678,129 @@ mod tests {
     fn test_validate_kind_rejects_garbage() {
         assert!(validate_kind("bogus").is_err());
         assert!(validate_kind("not_null").is_ok());
+    }
+
+    #[test]
+    fn test_line_level_preserves_comments() {
+        // A schema.yml with comments and explicit blank lines. Line-level edit
+        // should leave them untouched.
+        let yaml = "\
+# top-level comment
+version: 2
+
+models:
+  - name: orders
+    description: Orders fact table
+    # column block follows
+    columns:
+      - name: order_id
+        # the primary key
+        description: Unique order ID
+        tests:
+          - unique
+";
+        let outcome = upsert_test_line_level(yaml, "orders", "order_id", "not_null").unwrap();
+        let updated = match outcome {
+            LineEditOutcome::Updated(s) => s,
+            other => panic!("expected Updated, got {:?}", other),
+        };
+        // Comments preserved.
+        assert!(updated.contains("# top-level comment"));
+        assert!(updated.contains("# column block follows"));
+        assert!(updated.contains("# the primary key"));
+        // Original test preserved.
+        assert!(updated.contains("- unique"));
+        // New test inserted under the existing tests: block at matching indent.
+        assert!(updated.contains("          - not_null"));
+    }
+
+    #[test]
+    fn test_line_level_creates_tests_block_when_absent() {
+        let yaml = "\
+models:
+  - name: orders
+    columns:
+      - name: order_id
+        description: PK
+";
+        let outcome = upsert_test_line_level(yaml, "orders", "order_id", "unique").unwrap();
+        let updated = match outcome {
+            LineEditOutcome::Updated(s) => s,
+            other => panic!("expected Updated, got {:?}", other),
+        };
+        assert!(updated.contains("tests:"));
+        assert!(updated.contains("- unique"));
+        // Existing description kept.
+        assert!(updated.contains("description: PK"));
+    }
+
+    #[test]
+    fn test_line_level_idempotent_when_present() {
+        let yaml = "\
+models:
+  - name: orders
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+";
+        let outcome = upsert_test_line_level(yaml, "orders", "order_id", "not_null").unwrap();
+        assert!(matches!(outcome, LineEditOutcome::AlreadyPresent));
+    }
+
+    #[test]
+    fn test_line_level_returns_cannot_edit_when_model_missing() {
+        let yaml = "models:\n  - name: customers\n    columns:\n      - name: id\n";
+        let outcome = upsert_test_line_level(yaml, "orders", "id", "not_null").unwrap();
+        assert!(matches!(outcome, LineEditOutcome::CannotEdit));
+    }
+
+    #[test]
+    fn test_build_proposal_uses_line_level_path() {
+        // Integration: build_proposal should produce a comment-preserving diff
+        // when the YAML is parseable, not the round-trip noise.
+        let tmp = tempfile::tempdir().unwrap();
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).unwrap();
+        fs::write(
+            models_dir.join("schema.yml"),
+            "\
+# annotated schema
+version: 2
+models:
+  - name: orders
+    description: Orders
+    columns:
+      - name: order_id
+        description: PK
+        tests:
+          - unique
+",
+        )
+        .unwrap();
+        let req = ProposeTestRequest {
+            project_dir: tmp.path(),
+            model: "orders",
+            column: "order_id",
+            kind: "not_null",
+            yaml_files: vec![],
+        };
+        let res = build_proposal(&req).unwrap();
+        assert!(!res.already_present);
+        // Diff should be SMALL (~3 lines), not a full-file rewrite.
+        let plus_lines = res.diff.lines().filter(|l| l.starts_with('+')).count();
+        let minus_lines = res.diff.lines().filter(|l| l.starts_with('-')).count();
+        assert!(
+            plus_lines <= 5,
+            "diff has too many additions ({}): {}",
+            plus_lines,
+            res.diff
+        );
+        assert!(
+            minus_lines <= 3, // headers don't count
+            "diff has unexpected deletions ({}): {}",
+            minus_lines,
+            res.diff
+        );
     }
 }
