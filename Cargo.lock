@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "dbt-lineage"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "bincode",

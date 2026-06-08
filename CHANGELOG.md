@@ -3,6 +3,17 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [0.7.3] – 2026-06-08
+
+### Fixed
+
+- `publish.yml` passes `--allow-dirty` to `cargo publish` so the CI runner's
+  in-flight Cargo.lock touch doesn't abort the upload. The committed Cargo.lock
+  stays the source of truth; this just tolerates cargo's internal resolve
+  mutation during the publish step. (0.7.2's docs-pass content didn't make it
+  to crates.io because of this issue; 0.7.3 is the same content with the
+  workflow fix in place.)
+
 ## [0.7.2] – 2026-06-08
 
 ### Added
