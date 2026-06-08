@@ -47,6 +47,10 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 cargo install dbt-lineage
 ```
 
+### Pre-built binaries
+
+Every tagged release ships pre-built binaries for Linux (x86_64 + aarch64), macOS (Intel + Apple Silicon), and Windows (x86_64) as downloadable assets on the [Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases). Download the archive for your platform, extract, and put the binary on your `PATH`.
+
 ### From source
 
 ```sh

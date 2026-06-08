@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
 use super::types::*;
@@ -42,6 +43,9 @@ pub struct LintConfig {
     pub undefined_source: bool,
     pub dead_end_model: bool,
     pub missing_description: bool,
+    pub model_without_source: bool,
+    pub generic_only: bool,
+    pub circular_ref: bool,
 }
 
 impl Default for LintConfig {
@@ -51,6 +55,9 @@ impl Default for LintConfig {
             undefined_source: true,
             dead_end_model: true,
             missing_description: true,
+            model_without_source: true,
+            generic_only: true,
+            circular_ref: true,
         }
     }
 }
@@ -58,6 +65,19 @@ impl Default for LintConfig {
 /// Run all configured rules over the lineage graph.
 pub fn lint(graph: &LineageGraph, config: &LintConfig) -> LintReport {
     let mut findings: Vec<LintFinding> = Vec::new();
+
+    // Whole-graph rules.
+    if config.circular_ref && petgraph::algo::is_cyclic_directed(graph) {
+        findings.push(LintFinding {
+            rule: "circular-ref",
+            severity: LintSeverity::Error,
+            unique_id: String::new(),
+            label: String::new(),
+            message:
+                "Lineage graph contains a cycle. Models can't depend (transitively) on themselves."
+                    .to_string(),
+        });
+    }
 
     for idx in graph.node_indices() {
         let node = &graph[idx];
@@ -120,6 +140,31 @@ pub fn lint(graph: &LineageGraph, config: &LintConfig) -> LintReport {
                     node.label
                 ),
             });
+        }
+
+        // model-without-source: a model whose upstream references are all phantoms
+        // (unresolved). Usually means a source was forgotten or a ref typo'd.
+        if config.model_without_source && node.node_type == NodeType::Model {
+            let upstream: Vec<_> = graph
+                .edges_directed(idx, Direction::Incoming)
+                .map(|e| e.source())
+                .collect();
+            if !upstream.is_empty()
+                && upstream
+                    .iter()
+                    .all(|&u| graph[u].node_type == NodeType::Phantom)
+            {
+                findings.push(LintFinding {
+                    rule: "model-without-source",
+                    severity: LintSeverity::Warning,
+                    unique_id: node.unique_id.clone(),
+                    label: node.label.clone(),
+                    message: format!(
+                        "Model '{}' has only unresolved upstream references. Likely a missing source declaration or a typo'd ref.",
+                        node.label
+                    ),
+                });
+            }
         }
     }
 
@@ -229,6 +274,78 @@ mod tests {
             .iter()
             .any(|f| f.rule == "missing-description" && f.label == "a");
         assert!(!missing_for_a);
+    }
+
+    #[test]
+    fn test_model_without_source_flagged_for_all_phantom_upstream() {
+        let mut g = LineageGraph::new();
+        let phantom = g.add_node(make_node("phantom.x", "x", NodeType::Phantom));
+        let model = g.add_node(make_node("model.mart", "mart", NodeType::Model));
+        g.add_edge(
+            phantom,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        let report = lint(&g, &LintConfig::default());
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.rule == "model-without-source" && f.label == "mart"));
+    }
+
+    #[test]
+    fn test_model_without_source_not_flagged_when_one_real_source() {
+        let mut g = LineageGraph::new();
+        let real = g.add_node(make_node("source.raw.x", "raw.x", NodeType::Source));
+        let phantom = g.add_node(make_node("phantom.y", "y", NodeType::Phantom));
+        let model = g.add_node(make_node("model.mart", "mart", NodeType::Model));
+        g.add_edge(
+            real,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Source,
+            },
+        );
+        g.add_edge(
+            phantom,
+            model,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        let report = lint(&g, &LintConfig::default());
+        assert!(!report
+            .findings
+            .iter()
+            .any(|f| f.rule == "model-without-source"));
+    }
+
+    #[test]
+    fn test_circular_ref_flagged() {
+        let mut g = LineageGraph::new();
+        let a = g.add_node(make_node("model.a", "a", NodeType::Model));
+        let b = g.add_node(make_node("model.b", "b", NodeType::Model));
+        g.add_edge(
+            a,
+            b,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        g.add_edge(
+            b,
+            a,
+            EdgeData {
+                edge_type: EdgeType::Ref,
+            },
+        );
+        let report = lint(&g, &LintConfig::default());
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.rule == "circular-ref" && f.severity == LintSeverity::Error));
     }
 
     #[test]

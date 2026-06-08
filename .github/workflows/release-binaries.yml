@@ -1,0 +1,123 @@
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: dbt-lineage
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # `cross` provides a Docker-based toolchain for aarch64 Linux without
+      # needing the system to have a cross-compiler installed.
+      - name: Install cross (Linux aarch64 only)
+        if: matrix.cross == true
+        run: cargo install cross --locked
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          version="${GITHUB_REF#refs/tags/}"
+          stage="${BIN_NAME}-${version}-${{ matrix.target }}"
+          mkdir -p "dist/${stage}"
+          # Copy the binary.
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/${BIN_NAME}.exe" "dist/${stage}/"
+          else
+            cp "target/${{ matrix.target }}/release/${BIN_NAME}" "dist/${stage}/"
+          fi
+          # Bundle docs.
+          cp README.md LICENSE BENCHMARKS.md "dist/${stage}/" 2>/dev/null || true
+          # Archive.
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "${stage}.zip" "${stage}"
+            sha256sum "${stage}.zip" > "${stage}.zip.sha256" || shasum -a 256 "${stage}.zip" > "${stage}.zip.sha256"
+          else
+            tar czf "${stage}.tar.gz" "${stage}"
+            shasum -a 256 "${stage}.tar.gz" > "${stage}.tar.gz.sha256" 2>/dev/null || sha256sum "${stage}.tar.gz" > "${stage}.tar.gz.sha256"
+          fi
+          ls -la
+
+      - name: Upload as artifact (for the release step)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/${{ env.BIN_NAME }}-*-${{ matrix.target }}.tar.gz
+            dist/${{ env.BIN_NAME }}-*-${{ matrix.target }}.zip
+            dist/${{ env.BIN_NAME }}-*-${{ matrix.target }}.*.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  attach:
+    name: Attach to release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -la dist
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          fail_on_unmatched_files: true

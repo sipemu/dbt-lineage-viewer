@@ -40,6 +40,16 @@ pub struct ManifestNode {
     /// SQL with macros and refs resolved. Available after `dbt compile`.
     #[serde(default)]
     pub compiled_code: Option<String>,
+    /// dbt's recorded checksum of the source file at compile time. Recent dbt
+    /// versions emit `{"name": "sha256", "checksum": "<hex>"}`.
+    #[serde(default)]
+    pub checksum: Option<NodeChecksum>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NodeChecksum {
+    pub name: String,
+    pub checksum: String,
 }
 
 /// A source entry in the manifest
@@ -422,6 +432,7 @@ mod tests {
                     path: Some("models/staging/stg_orders.sql".to_string()),
                     raw_code: None,
                     compiled_code: None,
+                    checksum: None,
                 },
             )]),
             sources: HashMap::from([(
@@ -478,6 +489,7 @@ mod tests {
                     path: None,
                     raw_code: None,
                     compiled_code: None,
+                    checksum: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -525,6 +537,7 @@ mod tests {
                         path: Some("seeds/countries.csv".to_string()),
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
                 (
@@ -542,6 +555,7 @@ mod tests {
                         path: Some("snapshots/snap_orders.sql".to_string()),
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
             ]),
@@ -581,6 +595,7 @@ mod tests {
                         path: None,
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
                 (
@@ -597,6 +612,7 @@ mod tests {
                         path: Some("tests/assert_positive.sql".to_string()),
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
             ]),
@@ -646,6 +662,7 @@ mod tests {
                     path: None,
                     raw_code: None,
                     compiled_code: None,
+                    checksum: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -675,6 +692,7 @@ mod tests {
                     path: None,
                     raw_code: None,
                     compiled_code: None,
+                    checksum: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -757,6 +775,7 @@ mod tests {
                     path: None,
                     raw_code: None,
                     compiled_code: None,
+                    checksum: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -790,6 +809,7 @@ mod tests {
                         path: None,
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
                 (
@@ -806,6 +826,7 @@ mod tests {
                         path: None,
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
                 (
@@ -828,6 +849,7 @@ mod tests {
                         path: None,
                         raw_code: None,
                         compiled_code: None,
+                        checksum: None,
                     },
                 ),
             ]),

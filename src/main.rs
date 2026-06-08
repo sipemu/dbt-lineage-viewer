@@ -482,6 +482,8 @@ fn run_lint_command(
             "undefined-source" => config.undefined_source = false,
             "dead-end-model" => config.dead_end_model = false,
             "missing-description" => config.missing_description = false,
+            "model-without-source" => config.model_without_source = false,
+            "circular-ref" => config.circular_ref = false,
             other => anyhow::bail!("unknown lint rule: {}", other),
         }
     }

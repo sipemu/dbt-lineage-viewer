@@ -20,8 +20,12 @@ pub fn render_check_text_to_writer<W: Write>(report: &ManifestCheckReport, w: &m
         return;
     }
     writeln!(w, "manifest.json: {}", "STALE".red().bold()).unwrap();
-    for f in &report.modified {
-        writeln!(w, "  modified since manifest: {}", f).unwrap();
+    for m in &report.modified {
+        let tag = match m.detection {
+            crate::parser::manifest_check::DetectionMethod::ContentHash => "(content)",
+            crate::parser::manifest_check::DetectionMethod::Mtime => "(mtime)",
+        };
+        writeln!(w, "  modified {} {}", tag, m.file).unwrap();
     }
     for f in &report.missing {
         writeln!(w, "  referenced but missing:  {}", f).unwrap();
@@ -55,10 +59,14 @@ mod tests {
     }
 
     fn stale() -> ManifestCheckReport {
+        use crate::parser::manifest_check::{DetectionMethod, Modification};
         ManifestCheckReport {
             is_stale: true,
             missing: vec!["models/marts/gone.sql".into()],
-            modified: vec!["models/marts/orders.sql".into()],
+            modified: vec![Modification {
+                file: "models/marts/orders.sql".into(),
+                detection: DetectionMethod::Mtime,
+            }],
             untracked: vec!["models/marts/new.sql".into()],
             manifest_node_count: 12,
         }
@@ -92,6 +100,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(parsed["is_stale"], true);
         assert_eq!(parsed["manifest_node_count"], 12);
-        assert_eq!(parsed["modified"][0], "models/marts/orders.sql");
+        assert_eq!(parsed["modified"][0]["file"], "models/marts/orders.sql");
+        assert_eq!(parsed["modified"][0]["detection"], "mtime");
     }
 }

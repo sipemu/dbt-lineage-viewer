@@ -76,23 +76,42 @@ pub fn render_coverage_sarif(report: &CoverageReport) {
 }
 
 pub fn render_coverage_sarif_to_writer<W: Write>(report: &CoverageReport, w: &mut W) {
-    let results: Vec<serde_json::Value> = report
-        .models
-        .iter()
-        .filter(|m| !m.has_any_test())
-        .map(|m| {
-            json!({
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for m in &report.models {
+        if !m.has_any_test() {
+            results.push(json!({
                 "ruleId": "untested-model",
                 "level": "warning",
                 "message": {"text": format!("Model '{}' has no tests in its schema YAML.", m.model)},
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": {"uri": format!("models/{}.sql", m.model)}
-                    }
-                }]
-            })
-        })
-        .collect();
+                "locations": [{"physicalLocation": {"artifactLocation": {"uri": format!("models/{}.sql", m.model)}}}]
+            }));
+        }
+        // Per-column finding: column declared in YAML with zero tests.
+        if m.columns_total > 0 && m.columns_tested < m.columns_total {
+            let untested_count = m.columns_total - m.columns_tested;
+            results.push(json!({
+                "ruleId": "column-untested",
+                "level": "note",
+                "message": {"text": format!(
+                    "Model '{}' has {} of {} columns without any test.",
+                    m.model, untested_count, m.columns_total
+                )},
+                "locations": [{"physicalLocation": {"artifactLocation": {"uri": format!("models/{}.sql", m.model)}}}]
+            }));
+        }
+        // Generic-only: model has tests but only generic ones (no custom semantic tests).
+        if m.generic_tests > 0 && m.custom_tests == 0 {
+            results.push(json!({
+                "ruleId": "generic-only",
+                "level": "note",
+                "message": {"text": format!(
+                    "Model '{}' uses only generic tests (not_null/unique/accepted_values/relationships). Consider adding a custom or singular test for business rules.",
+                    m.model
+                )},
+                "locations": [{"physicalLocation": {"artifactLocation": {"uri": format!("models/{}.sql", m.model)}}}]
+            }));
+        }
+    }
 
     let sarif = json!({
         "version": "2.1.0",
@@ -102,11 +121,23 @@ pub fn render_coverage_sarif_to_writer<W: Write>(report: &CoverageReport, w: &mu
                 "driver": {
                     "name": "dbt-lineage",
                     "informationUri": "https://github.com/sipemu/dbt-lineage-viewer",
-                    "rules": [{
-                        "id": "untested-model",
-                        "shortDescription": {"text": "Model has no tests"},
-                        "helpUri": "https://docs.getdbt.com/docs/build/tests"
-                    }]
+                    "rules": [
+                        {
+                            "id": "untested-model",
+                            "shortDescription": {"text": "Model has no tests"},
+                            "helpUri": "https://docs.getdbt.com/docs/build/tests"
+                        },
+                        {
+                            "id": "column-untested",
+                            "shortDescription": {"text": "Column has no test"},
+                            "helpUri": "https://docs.getdbt.com/reference/resource-properties/data-tests"
+                        },
+                        {
+                            "id": "generic-only",
+                            "shortDescription": {"text": "Model has only generic tests"},
+                            "helpUri": "https://docs.getdbt.com/docs/build/tests#singular-data-tests"
+                        }
+                    ]
                 }
             },
             "results": results
@@ -182,8 +213,20 @@ mod tests {
         render_coverage_sarif_to_writer(&fixture(), &mut buf);
         let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
         let results = v["runs"][0]["results"].as_array().unwrap();
-        // 2 untested models (customers, products). orders has tests so excluded.
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0]["ruleId"], "untested-model");
+        let rule_ids: Vec<&str> = results
+            .iter()
+            .map(|r| r["ruleId"].as_str().unwrap())
+            .collect();
+        // Fixture: customers (untested, 0 cols), products (untested, 2 cols),
+        // orders (tested, 1/4 cols tested, generic-only).
+        assert!(rule_ids.contains(&"untested-model"));
+        assert!(rule_ids.contains(&"column-untested"));
+        assert!(rule_ids.contains(&"generic-only"));
+        // The rules block lists all three with helpUri.
+        let rules = v["runs"][0]["tool"]["driver"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 3);
+        for r in rules {
+            assert!(r.get("helpUri").is_some());
+        }
     }
 }
