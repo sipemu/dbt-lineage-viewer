@@ -130,7 +130,7 @@ fn run(cli: Cli) -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| cli.project_dir.clone());
 
-    let dag = build_dag(&project_dir, cli.manifest.as_ref())?;
+    let dag = build_dag(&project_dir, cli.manifest.as_ref(), cli.no_cache)?;
 
     // Parse selectors
     let selectors = cli
@@ -194,7 +194,11 @@ fn run(cli: Cli) -> Result<()> {
 
 /// Build the lineage DAG from either a manifest file or by parsing SQL files
 #[cfg(not(tarpaulin_include))]
-fn build_dag(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<graph::types::LineageGraph> {
+fn build_dag(
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    no_cache: bool,
+) -> Result<graph::types::LineageGraph> {
     if let Some(manifest_arg) = manifest {
         let manifest_path = resolve_manifest_path(manifest_arg)?;
         parser::manifest::build_graph_from_manifest(&manifest_path)
@@ -202,7 +206,11 @@ fn build_dag(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<graph::ty
         let project = parser::project::DbtProject::load(project_dir)?;
         let paths = project.resolve_paths(project_dir);
         let files = parser::discovery::discover_files(&paths)?;
-        graph::builder::build_graph(project_dir, &files)
+        if no_cache {
+            graph::builder::build_graph_no_cache(project_dir, &files)
+        } else {
+            graph::builder::build_graph(project_dir, &files)
+        }
     }
 }
 

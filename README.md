@@ -25,6 +25,7 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **Markdown docs** — `dbt-lineage docs` generates per-model Markdown with description, upstream/downstream, columns, embedded Mermaid lineage
 - **Performance report** — `dbt-lineage perf` joins `run_results.json` with the DAG: slowest models, critical paths
 - **Macro-aware ref()** — SQL-parse mode now follows simple `{% macro smart_ref(name) %}{{ ref(name) }}{% endmacro %}` wrappers automatically
+- **Parallel parsing + on-disk cache** — SQL-parse mode uses [`rayon`](https://crates.io/crates/rayon) for parallel file reading + extraction and a content-hash cache at `.dbt-lineage/cache.bin` so warm runs are near-instant on large monorepos. Bypass with `--no-cache`
 - **Manifest freshness check** — `dbt-lineage check-manifest` flags drift between `manifest.json` and current SQL files; exits non-zero for CI gating
 - **MCP server** — `dbt-lineage mcp` exposes lineage as stdio MCP tools, resources, and prompts for direct AI-agent integration. Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`. Resources: model SQL, lineage diagrams, summary. Prompts: `review-impact`, `propose-tests`, `explain-column`, `find-bottleneck`, `document-model`, `onboard-project`
 - **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and replaces transitive paths with `(via N)` edges for readable big-project diagrams

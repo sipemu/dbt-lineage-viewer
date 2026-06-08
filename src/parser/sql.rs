@@ -1,8 +1,9 @@
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 /// A reference to another dbt model via ref()
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RefCall {
     /// Optional package name (for cross-project refs)
     pub package: Option<String>,
@@ -11,7 +12,7 @@ pub struct RefCall {
 }
 
 /// A reference to a dbt source via source()
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceCall {
     /// Source name
     pub source_name: String,

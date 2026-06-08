@@ -1,17 +1,65 @@
 use anyhow::Result;
 use petgraph::stable_graph::NodeIndex;
+use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::parser::cache::{hash_bytes, ParseCache, ParsedSqlFile, SqlConfigSerde};
 use crate::parser::columns::extract_select_columns;
 use crate::parser::discovery::DiscoveredFiles;
 use crate::parser::macros::{
     detect_wrappers_in_files, discover_macro_files, extract_wrapper_calls, WrapperMacro,
 };
-use crate::parser::sql::{extract_config, extract_refs, extract_sources};
+use crate::parser::sql::{extract_config, extract_refs, extract_sources, SqlConfig};
 use crate::parser::yaml_schema::{parse_schema_file, ExposureDefinition};
 
 use super::types::*;
+
+/// Parse one SQL file completely. Used by both the parallel pipeline and the
+/// cache-miss path. Pure function of file contents + wrapper macro list.
+fn parse_sql_content(content: &str, wrappers: &[WrapperMacro]) -> ParsedSqlFile {
+    let (wrapped_refs, wrapped_sources) = extract_wrapper_calls(content, wrappers);
+    let config = extract_config(content);
+    ParsedSqlFile {
+        refs: extract_refs(content),
+        sources: extract_sources(content),
+        wrapped_refs,
+        wrapped_sources,
+        columns: extract_select_columns(content),
+        config: SqlConfigSerde::from(config),
+    }
+}
+
+/// Read each file, hash it, look up in cache, parse on miss. Runs in parallel.
+/// Returns a `Vec` in the same order as `paths` so downstream graph assembly
+/// remains deterministic.
+fn parse_files_in_parallel(
+    paths: &[PathBuf],
+    wrappers: &[WrapperMacro],
+    cache: &ParseCache,
+) -> Result<Vec<ParsedSqlFile>> {
+    paths
+        .par_iter()
+        .map(|path| {
+            let bytes =
+                std::fs::read(path).map_err(|e| crate::error::DbtLineageError::FileReadError {
+                    path: path.clone(),
+                    source: e,
+                })?;
+            let hash = hash_bytes(&bytes);
+            if let Some(hit) = cache.get(path, &hash) {
+                return Ok(hit);
+            }
+            let content = match std::str::from_utf8(&bytes) {
+                Ok(s) => s.to_string(),
+                Err(_) => return Ok(ParsedSqlFile::default()),
+            };
+            let parsed = parse_sql_content(&content, wrappers);
+            cache.put(path, hash, parsed.clone());
+            Ok(parsed)
+        })
+        .collect()
+}
 
 /// Shared state threaded through the build_graph helper functions
 struct GraphBuilder {
@@ -184,16 +232,21 @@ fn process_yaml_files(
     Ok((model_meta, exposures))
 }
 
-/// Create nodes for model SQL files (with duplicate detection)
+/// Create nodes for model SQL files (with duplicate detection). Parses files in
+/// parallel; the cache lets the later `process_sql_edges` pass reuse the work.
 fn process_model_files(
     gb: &mut GraphBuilder,
     files: &DiscoveredFiles,
     project_dir: &Path,
     model_meta: &HashMap<String, YamlModelMeta>,
-) {
+    wrappers: &[WrapperMacro],
+    cache: &ParseCache,
+) -> Result<()> {
     let mut model_name_paths: HashMap<String, std::path::PathBuf> = HashMap::new();
 
-    for sql_path in &files.model_sql_files {
+    let parsed = parse_files_in_parallel(&files.model_sql_files, wrappers, cache)?;
+
+    for (sql_path, parsed_file) in files.model_sql_files.iter().zip(parsed.iter()) {
         let model_name = file_stem_str(sql_path);
 
         if let Some(existing_path) = model_name_paths.get(&model_name) {
@@ -206,15 +259,7 @@ fn process_model_files(
         }
         model_name_paths.insert(model_name.clone(), sql_path.clone());
 
-        // Read SQL content once for config extraction and column extraction
-        let sql_content = std::fs::read_to_string(sql_path).ok();
-
-        // Extract config from SQL
-        let sql_config = sql_content
-            .as_ref()
-            .map(|content| extract_config(content))
-            .unwrap_or_default();
-
+        let sql_config: SqlConfig = parsed_file.config.clone().into();
         let yaml_meta = model_meta.get(&model_name);
 
         // SQL config takes precedence over YAML config; merge tags
@@ -235,12 +280,6 @@ fn process_model_files(
             .unwrap_or(sql_path)
             .to_path_buf();
 
-        // Extract columns from SELECT clause
-        let columns = sql_content
-            .as_ref()
-            .map(|content| extract_select_columns(content))
-            .unwrap_or_default();
-
         gb.add_node(NodeData {
             unique_id,
             label: model_name.clone(),
@@ -249,9 +288,10 @@ fn process_model_files(
             description: yaml_meta.and_then(|m| m.description.clone()),
             materialization,
             tags,
-            columns,
+            columns: parsed_file.columns.clone(),
         });
     }
+    Ok(())
 }
 
 /// Create nodes for simple file-based resources (seeds, snapshots)
@@ -280,23 +320,33 @@ fn process_simple_nodes(
     }
 }
 
-/// Parse SQL files for ref()/source() calls and add edges
+/// Parse SQL files for ref()/source() calls and add edges. Phase 1 parses
+/// files in parallel (via `parse_files_in_parallel`); phase 2 walks results in
+/// stable order to mutate the graph builder.
 fn process_sql_edges(
     gb: &mut GraphBuilder,
     files: &DiscoveredFiles,
     project_dir: &Path,
     wrappers: &[WrapperMacro],
+    cache: &ParseCache,
 ) -> Result<()> {
-    let all_sql_files: Vec<(&std::path::PathBuf, &str)> = files
+    let all_sql_files: Vec<(PathBuf, &str)> = files
         .model_sql_files
         .iter()
-        .map(|p| (p, "model"))
-        .chain(files.snapshot_sql_files.iter().map(|p| (p, "snapshot")))
-        .chain(files.test_sql_files.iter().map(|p| (p, "test")))
+        .map(|p| (p.clone(), "model"))
+        .chain(
+            files
+                .snapshot_sql_files
+                .iter()
+                .map(|p| (p.clone(), "snapshot")),
+        )
+        .chain(files.test_sql_files.iter().map(|p| (p.clone(), "test")))
         .collect();
 
-    for (sql_path, file_type) in &all_sql_files {
-        let content = read_file(sql_path)?;
+    let paths: Vec<PathBuf> = all_sql_files.iter().map(|(p, _)| p.clone()).collect();
+    let parsed = parse_files_in_parallel(&paths, wrappers, cache)?;
+
+    for ((sql_path, file_type), parsed_file) in all_sql_files.iter().zip(parsed.iter()) {
         let node_name = file_stem_str(sql_path);
         let node_unique_id = format!("{}.{}", file_type, node_name);
 
@@ -323,11 +373,11 @@ fn process_sql_edges(
             None => continue,
         };
 
-        let direct_refs = extract_refs(&content);
-        let direct_sources = extract_sources(&content);
-        let (wrapped_refs, wrapped_sources) = extract_wrapper_calls(&content, wrappers);
-
-        for ref_call in direct_refs.iter().chain(wrapped_refs.iter()) {
+        for ref_call in parsed_file
+            .refs
+            .iter()
+            .chain(parsed_file.wrapped_refs.iter())
+        {
             let dep_idx = gb.get_or_create_phantom_ref(&ref_call.name, sql_path);
             gb.graph.add_edge(
                 dep_idx,
@@ -338,7 +388,11 @@ fn process_sql_edges(
             );
         }
 
-        for source_call in direct_sources.iter().chain(wrapped_sources.iter()) {
+        for source_call in parsed_file
+            .sources
+            .iter()
+            .chain(parsed_file.wrapped_sources.iter())
+        {
             let source_idx = gb.get_or_create_phantom_source(
                 &source_call.source_name,
                 &source_call.table_name,
@@ -389,12 +443,33 @@ fn process_exposures(gb: &mut GraphBuilder, exposures: &[ExposureDefinition]) {
     }
 }
 
-/// Build the lineage graph from discovered files
+/// Build the lineage graph from discovered files using on-disk parse cache.
 pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<LineageGraph> {
+    build_graph_with_cache(project_dir, files, &ParseCache::load(project_dir), true)
+}
+
+/// Build the lineage graph from discovered files, bypassing the on-disk cache.
+/// Used by `--no-cache`.
+pub fn build_graph_no_cache(project_dir: &Path, files: &DiscoveredFiles) -> Result<LineageGraph> {
+    build_graph_with_cache(project_dir, files, &ParseCache::ephemeral(), false)
+}
+
+fn build_graph_with_cache(
+    project_dir: &Path,
+    files: &DiscoveredFiles,
+    cache: &ParseCache,
+    persist: bool,
+) -> Result<LineageGraph> {
     let mut gb = GraphBuilder::new();
 
     let (model_meta, exposures) = process_yaml_files(&mut gb, files)?;
-    process_model_files(&mut gb, files, project_dir, &model_meta);
+
+    // Detect simple ref/source wrapper macros so SQL-parse mode follows
+    // `{{ smart_ref('orders') }}` calls without a dbt compile step.
+    let macro_files = discover_macro_files(project_dir);
+    let wrappers = detect_wrappers_in_files(&macro_files);
+
+    process_model_files(&mut gb, files, project_dir, &model_meta, &wrappers, cache)?;
     process_simple_nodes(
         &mut gb,
         &files.seed_files,
@@ -409,13 +484,13 @@ pub fn build_graph(project_dir: &Path, files: &DiscoveredFiles) -> Result<Lineag
         "snapshot",
         NodeType::Snapshot,
     );
-    // Detect simple ref/source wrapper macros so SQL-parse mode follows
-    // `{{ smart_ref('orders') }}` calls without a dbt compile step.
-    let macro_files = discover_macro_files(project_dir);
-    let wrappers = detect_wrappers_in_files(&macro_files);
 
-    process_sql_edges(&mut gb, files, project_dir, &wrappers)?;
+    process_sql_edges(&mut gb, files, project_dir, &wrappers, cache)?;
     process_exposures(&mut gb, &exposures);
+
+    if persist {
+        cache.save();
+    }
 
     Ok(gb.graph)
 }

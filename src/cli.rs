@@ -78,6 +78,11 @@ pub struct Cli {
         default_value = "none"
     )]
     pub collapse: CollapseMode,
+
+    /// Bypass the on-disk parse cache (.dbt-lineage/cache.bin). Useful when
+    /// debugging parser changes or you want a clean baseline benchmark.
+    #[arg(long, global = true)]
+    pub no_cache: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
