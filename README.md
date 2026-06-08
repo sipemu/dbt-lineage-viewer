@@ -296,7 +296,7 @@ Options:
 
 | Key | Action |
 |-----|--------|
-| `/` | Open search |
+| `/` | Open search (fuzzy, powered by [nucleo](https://crates.io/crates/nucleo-matcher) — type any few characters in any order) |
 | `Tab` | Next search result |
 | `Esc` / `Enter` | Close search |
 
@@ -306,6 +306,8 @@ Options:
 |-----|--------|
 | `p` | Toggle path highlighting (upstream/downstream trace with impact analysis) |
 | `C` (Shift+C) | Toggle column-level lineage in detail panel |
+| `v` | Toggle in-app SQL viewer (syntax-highlighted SQL of the selected node) |
+| `m` | Toggle minimap overlay (top-right corner of the graph area) |
 
 ### Node list panel
 

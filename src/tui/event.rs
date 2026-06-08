@@ -135,6 +135,8 @@ fn handle_normal_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Char('f') => app.mode = AppMode::Filter,
         KeyCode::Char('p') => app.toggle_path_highlight(),
         KeyCode::Char('C') => app.toggle_column_lineage(),
+        KeyCode::Char('v') => app.show_sql_pane = !app.show_sql_pane,
+        KeyCode::Char('m') => app.show_minimap = !app.show_minimap,
         _ => {}
     }
     false

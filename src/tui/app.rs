@@ -126,6 +126,13 @@ pub struct App {
     // Column-level lineage
     pub column_lineage: ColumnLineage,
     pub show_column_lineage: bool,
+    /// Toggle for the in-app SQL viewer pane (key `v`). When on, the right
+    /// detail area splits to also show the selected node's SQL contents.
+    pub show_sql_pane: bool,
+    /// Toggle for the minimap overlay (key `m`). When on, a small ASCII overview
+    /// of the full graph with the viewport rectangle is pinned to the top-right
+    /// corner of the graph area.
+    pub show_minimap: bool,
 }
 
 impl App {
@@ -208,6 +215,8 @@ impl App {
             impact_report: None,
             column_lineage: ColumnLineage::default(),
             show_column_lineage: false,
+            show_sql_pane: false,
+            show_minimap: false,
         }
     }
 
@@ -494,16 +503,37 @@ impl App {
     }
 
     pub fn update_search(&mut self) {
-        let query = self.search_query.to_lowercase();
-        self.search_results = self
+        use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+        use nucleo_matcher::{Matcher, Utf32String};
+
+        if self.search_query.is_empty() {
+            self.search_results.clear();
+            self.search_cursor = 0;
+            return;
+        }
+
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+        let pattern = Pattern::parse(
+            &self.search_query,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+        );
+
+        // Score every node; keep matches; sort by descending score.
+        let mut scored: Vec<(NodeIndex, u32)> = self
             .graph
             .node_indices()
-            .filter(|&idx| {
+            .filter_map(|idx| {
                 let node = &self.graph[idx];
-                node.label.to_lowercase().contains(&query)
-                    || node.unique_id.to_lowercase().contains(&query)
+                let haystack = Utf32String::from(node.label.as_str());
+                pattern
+                    .score(haystack.slice(..), &mut matcher)
+                    .map(|s| (idx, s))
             })
             .collect();
+        scored.sort_by_key(|s| std::cmp::Reverse(s.1));
+
+        self.search_results = scored.into_iter().map(|(idx, _)| idx).collect();
         self.search_cursor = 0;
         if let Some(&first) = self.search_results.first() {
             self.selected_node = Some(first);

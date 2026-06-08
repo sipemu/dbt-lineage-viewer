@@ -41,7 +41,20 @@ pub fn draw_ui(f: &mut Frame, app: &mut App) {
 
     draw_graph(f, app, left_chunks[0]);
     draw_help_bar(f, app, left_chunks[1]);
-    draw_detail_panel(f, app, detail_area);
+    if app.show_sql_pane {
+        // Split the detail area vertically: top = existing detail, bottom = SQL.
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(detail_area);
+        draw_detail_panel(f, app, split[0]);
+        draw_sql_pane(f, app, split[1]);
+    } else {
+        draw_detail_panel(f, app, detail_area);
+    }
+    if app.show_minimap {
+        draw_minimap(f, app, left_chunks[0]);
+    }
 
     // Draw overlays on top
     match app.mode {
@@ -348,6 +361,181 @@ fn detail_impact_lines(app: &App, selected: petgraph::stable_graph::NodeIndex) -
         )));
     }
     lines
+}
+
+/// Render the SQL viewer pane for the currently-selected node (key `v` toggle).
+/// Reads `file_path` from disk on every frame; manifest-only nodes show a
+/// hint that source SQL isn't available.
+fn draw_sql_pane(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Line::from(vec![
+            Span::raw("SQL "),
+            Span::styled("[v]", Style::default().fg(Color::DarkGray)),
+        ]));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let Some(idx) = app.selected_node else {
+        let p = Paragraph::new("(no node selected)").style(Style::default().fg(Color::DarkGray));
+        f.render_widget(p, inner);
+        return;
+    };
+    let node = &app.graph[idx];
+    let Some(rel) = node.file_path.as_ref() else {
+        let p = Paragraph::new("(no file_path — manifest-only node, SQL not on disk)")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(p, inner);
+        return;
+    };
+    let abs = if rel.is_absolute() {
+        rel.clone()
+    } else {
+        app.project_dir.join(rel)
+    };
+    let content = match std::fs::read_to_string(&abs) {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("(read failed: {}: {})", abs.display(), e);
+            let p = Paragraph::new(msg).style(Style::default().fg(Color::Red));
+            f.render_widget(p, inner);
+            return;
+        }
+    };
+    let highlighted = highlight_sql(&content);
+    let para = Paragraph::new(highlighted)
+        .wrap(Wrap { trim: false })
+        .scroll((0, 0));
+    f.render_widget(para, inner);
+}
+
+/// Best-effort SQL syntax highlight using `syntect`. Falls back to plain text
+/// if anything goes wrong (theme missing, unparseable, etc).
+fn highlight_sql(sql: &str) -> Text<'static> {
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::{Style as SynStyle, ThemeSet};
+    use syntect::parsing::SyntaxSet;
+    use syntect::util::LinesWithEndings;
+
+    let ps = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let syntax = match ps.find_syntax_by_extension("sql") {
+        Some(s) => s,
+        None => return Text::from(sql.to_string()),
+    };
+    let theme = match ts
+        .themes
+        .get("base16-ocean.dark")
+        .or_else(|| ts.themes.values().next())
+    {
+        Some(t) => t,
+        None => return Text::from(sql.to_string()),
+    };
+    let mut highlighter = HighlightLines::new(syntax, theme);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for line in LinesWithEndings::from(sql) {
+        let ranges: Vec<(SynStyle, &str)> =
+            highlighter.highlight_line(line, &ps).unwrap_or_default();
+        let spans: Vec<Span<'static>> = ranges
+            .into_iter()
+            .map(|(style, s)| {
+                let color = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+                let text = s.trim_end_matches('\n').to_string();
+                Span::styled(text, Style::default().fg(color))
+            })
+            .collect();
+        lines.push(Line::from(spans));
+    }
+    Text::from(lines)
+}
+
+/// Render a small ASCII minimap of the full graph in the top-right corner of
+/// the graph area. One cell per node (best-effort: layout positions are
+/// rescaled to a 16×6 grid). Toggle with key `m`.
+fn draw_minimap(f: &mut Frame, app: &App, graph_area: Rect) {
+    const W: u16 = 18;
+    const H: u16 = 7;
+    if graph_area.width < W + 2 || graph_area.height < H + 2 {
+        return;
+    }
+    let area = Rect::new(
+        graph_area.x + graph_area.width - W - 1,
+        graph_area.y + 1,
+        W,
+        H,
+    );
+
+    // Compute world bounds from the existing layout. Each node's (layer, pos)
+    // in `app.layout.positions` maps to a world cell via `node_world_center`.
+    use super::graph_widget::node_world_center;
+    let positions: Vec<(f32, f32)> = app
+        .graph
+        .node_indices()
+        .filter_map(|i| {
+            let (layer, pos) = app.layout.positions.get(&i).copied()?;
+            let (x, y) = node_world_center(layer, pos, app.zoom);
+            Some((x as f32, y as f32))
+        })
+        .collect();
+    if positions.is_empty() {
+        return;
+    }
+    let xs = positions.iter().map(|p| p.0);
+    let ys = positions.iter().map(|p| p.1);
+    let min_x = xs.clone().fold(f32::INFINITY, f32::min);
+    let max_x = xs.fold(f32::NEG_INFINITY, f32::max);
+    let min_y = ys.clone().fold(f32::INFINITY, f32::min);
+    let max_y = ys.fold(f32::NEG_INFINITY, f32::max);
+    let span_x = (max_x - min_x).max(1.0);
+    let span_y = (max_y - min_y).max(1.0);
+
+    // Initialize an H × W grid of blanks.
+    let cols = W as usize - 2;
+    let rows = H as usize - 2;
+    let mut grid: Vec<Vec<char>> = vec![vec![' '; cols]; rows];
+
+    for (x, y) in &positions {
+        let nx = (((x - min_x) / span_x) * (cols.saturating_sub(1) as f32)).round() as usize;
+        let ny = (((y - min_y) / span_y) * (rows.saturating_sub(1) as f32)).round() as usize;
+        if let Some(row) = grid.get_mut(ny.min(rows - 1)) {
+            if let Some(cell) = row.get_mut(nx.min(cols - 1)) {
+                *cell = '·';
+            }
+        }
+    }
+
+    // Mark the selected node with `●`.
+    if let Some(sel) = app.selected_node {
+        if let Some(&(layer, pos)) = app.layout.positions.get(&sel) {
+            let (sx, sy) = node_world_center(layer, pos, app.zoom);
+            let nx =
+                (((sx as f32 - min_x) / span_x) * (cols.saturating_sub(1) as f32)).round() as usize;
+            let ny =
+                (((sy as f32 - min_y) / span_y) * (rows.saturating_sub(1) as f32)).round() as usize;
+            if let Some(row) = grid.get_mut(ny.min(rows - 1)) {
+                if let Some(cell) = row.get_mut(nx.min(cols - 1)) {
+                    *cell = '●';
+                }
+            }
+        }
+    }
+
+    let lines: Vec<Line<'static>> = grid
+        .into_iter()
+        .map(|row| Line::from(row.into_iter().collect::<String>()))
+        .collect();
+    let para = Paragraph::new(Text::from(lines)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Line::from(vec![
+                Span::raw("map "),
+                Span::styled("[m]", Style::default().fg(Color::DarkGray)),
+            ]))
+            .style(Style::default().bg(Color::Reset)),
+    );
+    f.render_widget(Clear, area);
+    f.render_widget(para, area);
 }
 
 fn draw_help_bar(f: &mut Frame, app: &App, area: Rect) {
