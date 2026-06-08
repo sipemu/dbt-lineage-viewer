@@ -47,8 +47,8 @@ tempfile = "3"
 regex = "1"
 serde_yaml = "0.9"
 criterion = "0.5"
+jugar-probar = { version = "1.0.2", default-features = false, features = ["tui"] }
 
 [[bench]]
 name = "builder_bench"
 harness = false
-jugar-probar = { version = "1.0.2", default-features = false, features = ["tui"] }
