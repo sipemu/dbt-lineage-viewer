@@ -5,7 +5,8 @@ use super::diff::{DiffStatus, LineageDiff};
 /// Style of dbt selector expression to emit.
 #[derive(Debug, Clone, Copy)]
 pub enum PlanStyle {
-    /// `+model` form: include the changed model AND its downstream. Default.
+    /// `model+` form: include the changed model AND its downstream. Default.
+    /// (dbt's `+model` would select its upstream ancestors instead.)
     Downstream,
     /// `model` form: only the changed models themselves, no downstream rebuild.
     LeafOnly,
@@ -27,9 +28,11 @@ impl PlanReport {
     }
 }
 
-/// Build a rebuild plan from a precomputed `LineageDiff`. Only Added/Modified models
-/// trigger rebuild work; removed models can't be rebuilt and tests are excluded by
-/// default since dbt rebuilds them automatically with their parents.
+/// Build a rebuild plan from a precomputed `LineageDiff`. Only Added/Modified
+/// buildable nodes (models, seeds, snapshots; tests on request) trigger rebuild
+/// work: removed nodes can't be rebuilt, sources/exposures/metrics aren't built
+/// by dbt, and tests are excluded by default since `dbt build` runs them with
+/// their parents.
 pub fn build_plan(diff: &LineageDiff, style: PlanStyle, exclude_tests: bool) -> PlanReport {
     let mut selectors: Vec<String> = Vec::new();
     let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -41,15 +44,21 @@ pub fn build_plan(diff: &LineageDiff, style: PlanStyle, exclude_tests: bool) -> 
         if exclude_tests && node.node_type == "test" {
             continue;
         }
+        if !matches!(
+            node.node_type.as_str(),
+            "model" | "seed" | "snapshot" | "test"
+        ) {
+            continue;
+        }
         // dbt selector syntax uses bare model names, not unique_ids.
         if !seen_labels.insert(node.label.clone()) {
             continue;
         }
-        let prefix = match style {
+        let suffix = match style {
             PlanStyle::Downstream => "+",
             PlanStyle::LeafOnly => "",
         };
-        selectors.push(format!("{}{}", prefix, node.label));
+        selectors.push(format!("{}{}", node.label, suffix));
     }
 
     selectors.sort();
@@ -96,12 +105,25 @@ mod tests {
             node("d", "model", DiffStatus::Removed),
         ]);
         let plan = build_plan(&diff, PlanStyle::Downstream, true);
-        assert_eq!(plan.selectors, vec!["+a", "+b"]);
+        assert_eq!(plan.selectors, vec!["a+", "b+"]);
         assert_eq!(plan.affected_count, 2);
     }
 
     #[test]
-    fn test_leaf_only_omits_plus_prefix() {
+    fn test_non_buildable_types_skipped() {
+        let diff = diff_with(vec![
+            node("a", "model", DiffStatus::Modified),
+            node("s", "seed", DiffStatus::Modified),
+            node("raw.orders", "source", DiffStatus::Added),
+            node("dash", "exposure", DiffStatus::Added),
+            node("m", "metric", DiffStatus::Added),
+        ]);
+        let plan = build_plan(&diff, PlanStyle::Downstream, true);
+        assert_eq!(plan.selectors, vec!["a+", "s+"]);
+    }
+
+    #[test]
+    fn test_leaf_only_omits_plus_suffix() {
         let diff = diff_with(vec![node("a", "model", DiffStatus::Modified)]);
         let plan = build_plan(&diff, PlanStyle::LeafOnly, true);
         assert_eq!(plan.selectors, vec!["a"]);
@@ -114,7 +136,7 @@ mod tests {
             node("t", "test", DiffStatus::Added),
         ]);
         let plan = build_plan(&diff, PlanStyle::Downstream, true);
-        assert_eq!(plan.selectors, vec!["+a"]);
+        assert_eq!(plan.selectors, vec!["a+"]);
     }
 
     #[test]
@@ -124,7 +146,7 @@ mod tests {
             node("t", "test", DiffStatus::Added),
         ]);
         let plan = build_plan(&diff, PlanStyle::Downstream, false);
-        assert_eq!(plan.selectors, vec!["+a", "+t"]);
+        assert_eq!(plan.selectors, vec!["a+", "t+"]);
     }
 
     #[test]
@@ -134,7 +156,7 @@ mod tests {
             node("a", "model", DiffStatus::Modified),
         ]);
         let plan = build_plan(&diff, PlanStyle::Downstream, true);
-        assert_eq!(plan.selectors, vec!["+a"]);
+        assert_eq!(plan.selectors, vec!["a+"]);
     }
 
     #[test]
@@ -153,6 +175,6 @@ mod tests {
             node("b", "model", DiffStatus::Modified),
         ]);
         let plan = build_plan(&diff, PlanStyle::Downstream, true);
-        assert_eq!(plan.selector_string(), "+a +b");
+        assert_eq!(plan.selector_string(), "a+ b+");
     }
 }

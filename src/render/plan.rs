@@ -33,7 +33,7 @@ mod tests {
         PlanReport {
             base_ref: "main".into(),
             head_ref: "HEAD".into(),
-            selectors: vec!["+a".into(), "+b".into()],
+            selectors: vec!["a+".into(), "b+".into()],
             affected_count: 2,
         }
     }
@@ -43,7 +43,7 @@ mod tests {
         let mut buf = Vec::new();
         render_plan_selector_to_writer(&report(), &mut buf);
         let s = String::from_utf8(buf).unwrap();
-        assert_eq!(s, "+a +b\n");
+        assert_eq!(s, "a+ b+\n");
     }
 
     #[test]
@@ -64,7 +64,7 @@ mod tests {
         let mut buf = Vec::new();
         render_plan_json_to_writer(&report(), &mut buf);
         let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
-        assert_eq!(v["selectors"][0], "+a");
+        assert_eq!(v["selectors"][0], "a+");
         assert_eq!(v["affected_count"], 2);
     }
 }

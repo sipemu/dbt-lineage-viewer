@@ -289,7 +289,7 @@ pub enum Command {
         #[arg(short = 'o', long, default_value = "selector")]
         output: PlanOutputFormat,
 
-        /// Drop the `+` prefix and emit only the changed models themselves (no downstream).
+        /// Drop the `+` suffix and emit only the changed models themselves (no downstream).
         #[arg(long)]
         leaf_only: bool,
 
