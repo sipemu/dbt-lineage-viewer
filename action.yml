@@ -137,7 +137,7 @@ runs:
     # under the same category.
     - name: Upload lint SARIF
       if: contains(inputs.sarif, 'lint')
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       continue-on-error: true
       with:
         sarif_file: ${{ runner.temp }}/dbt-lineage-sarif/lint.sarif
@@ -145,7 +145,7 @@ runs:
 
     - name: Upload coverage SARIF
       if: contains(inputs.sarif, 'coverage')
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       continue-on-error: true
       with:
         sarif_file: ${{ runner.temp }}/dbt-lineage-sarif/coverage.sarif
@@ -153,10 +153,13 @@ runs:
 
     - name: Post PR comment
       if: github.event_name == 'pull_request' && inputs.comment == 'true' && steps.run.outputs.summary != ''
-      uses: marocchino/sticky-pull-request-comment@v2
-      with:
-        path: ${{ steps.run.outputs.summary }}
-        header: dbt-lineage
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        SUMMARY: ${{ steps.run.outputs.summary }}
+      run: |
+        dbt-lineage ci comment --file "$SUMMARY" \
+          || echo "::warning::dbt-lineage could not post the PR comment (needs pull-requests: write)"
 
     - name: Fail on conditions
       if: steps.run.outputs.exit-code != '0'
