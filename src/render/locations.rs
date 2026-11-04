@@ -34,10 +34,12 @@ impl Locations {
     /// repository (`git rev-parse --show-prefix`, e.g. `"dbt/"`), or `""`.
     pub fn from_graph(graph: &LineageGraph, project_dir: &Path, repo_prefix: &str) -> Self {
         let to_repo = |p: &Path| -> Option<String> {
-            let rel = if p.is_absolute() {
-                p.strip_prefix(project_dir).ok()?
-            } else {
-                p
+            // Paths under the project dir (absolute, or rooted on Windows)
+            // are made relative; other absolute paths can't be annotated.
+            let rel = match p.strip_prefix(project_dir) {
+                Ok(rel) => rel,
+                Err(_) if p.has_root() => return None,
+                Err(_) => p,
             };
             let rel = rel.to_string_lossy().replace('\\', "/");
             Some(format!("{}{}", repo_prefix, rel.trim_start_matches("./")))
