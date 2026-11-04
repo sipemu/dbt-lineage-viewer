@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+# `dbt-lineage` and `dbt-lineage-viewer` are taken on PyPI; the installed
+# command is still `dbt-lineage`.
+name = "dbt-lineage-cli"
+description = "PR-time dbt lineage, impact analysis and rebuild plans without a warehouse: CLI, TUI, CI report and MCP server"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+keywords = ["dbt", "lineage", "data-lineage", "sql", "ci", "mcp"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/sipemu/dbt-lineage-viewer"
+Demo = "https://github.com/sipemu/dbt-lineage-demo/pull/1"
+Changelog = "https://github.com/sipemu/dbt-lineage-viewer/blob/master/CHANGELOG.md"
+
+[tool.maturin]
+bindings = "bin"
+strip = true
