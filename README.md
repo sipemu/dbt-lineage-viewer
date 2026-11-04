@@ -109,6 +109,20 @@ jobs:
 
 `@v0` tracks the latest `0.x` release; pin an exact tag (e.g. `@v0.9.1`) if you prefer. The action installs the matching `dbt-lineage` binary from this repo's release artifacts, runs `summary`, `diff`, `plan`, and optionally `lint`/`coverage` SARIF, then posts a single sticky comment on the PR with the rendered report. See [`action.yml`](action.yml) for the full input/output reference.
 
+### Container image
+
+```sh
+docker run --rm -v "$PWD:/workspace" ghcr.io/sipemu/dbt-lineage:latest summary
+```
+
+Published to `ghcr.io/sipemu/dbt-lineage` on every release (`latest`, `v0`, `0.x`, `0.x.y`; amd64 + arm64), with `git` included for `diff` / `plan` / `ci report`. In GitLab CI, override the entrypoint:
+
+```yaml
+dbt-lineage:
+  image: { name: ghcr.io/sipemu/dbt-lineage:v0, entrypoint: [""] }
+  script: dbt-lineage ci report --out report.md
+```
+
 ### As a pre-commit hook
 
 ```yaml

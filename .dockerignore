@@ -1,0 +1,6 @@
+target
+.git
+.dbt-lineage
+assets
+tests
+docs

@@ -20,6 +20,8 @@ Notable changes per release. Full per-release notes live on the
 - `cargo binstall dbt-lineage` installs the pre-built release binary (#56).
 - `.pre-commit-hooks.yaml` with `dbt-lineage-lint` and
   `dbt-lineage-check-manifest` hooks (#57).
+- Container image `ghcr.io/sipemu/dbt-lineage` (Alpine + git, static musl
+  binary, amd64/arm64), published by the release workflow (#58).
 
 ### Changed
 
