@@ -148,6 +148,21 @@ fn run(cli: Cli) -> Result<()> {
                     write.as_ref(),
                     output,
                 ),
+                cli::ExposureSource::Anofox {
+                    dashboards,
+                    url,
+                    project_dir,
+                    manifest,
+                    write,
+                    output,
+                } => run_exposures_anofox_command(
+                    dashboards,
+                    url.as_deref(),
+                    project_dir,
+                    manifest.as_ref(),
+                    write.as_ref(),
+                    output,
+                ),
             },
             Command::Lsp => run_lsp_command(),
             Command::Ci { action } => match action {
@@ -900,7 +915,36 @@ fn run_exposures_metabase_command(
     let http = dbt_lineage::ci::comment::UreqHttp;
     let mut client = dbt_lineage::bi::metabase::Client::new(&http, url, api_key);
     let dashboards = client.dashboards()?;
-    let mapped = dbt_lineage::bi::map_dashboards(&dag, &dashboards);
+    emit_exposures(&dag, &dashboards, write, output)
+}
+
+/// Run `exposures anofox`: read dashboard `.sql` files.
+#[cfg(not(tarpaulin_include))]
+fn run_exposures_anofox_command(
+    dashboards: &[PathBuf],
+    url: Option<&str>,
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    write: Option<&PathBuf>,
+    output: &cli::ExposuresOutputFormat,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, manifest, false)?;
+    let dashboards = dbt_lineage::bi::anofox::dashboards_from_paths(dashboards, url)?;
+    emit_exposures(&dag, &dashboards, write, output)
+}
+
+/// Map dashboards onto the graph, report unmatched tables, emit YAML/JSON.
+#[cfg(not(tarpaulin_include))]
+fn emit_exposures(
+    dag: &graph::types::LineageGraph,
+    dashboards: &[dbt_lineage::bi::Dashboard],
+    write: Option<&PathBuf>,
+    output: &cli::ExposuresOutputFormat,
+) -> Result<()> {
+    let mapped = dbt_lineage::bi::map_dashboards(dag, dashboards);
 
     for (dashboard, table) in &mapped.unmatched {
         eprintln!(

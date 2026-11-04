@@ -3,6 +3,18 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage exposures anofox --dashboards <files|dirs>` — imports
+  [anofox-visualization](https://github.com/DataZooDE/anofox-visualization)
+  dashboards (DuckDB `.sql` files with `::ROLE` panels) as dbt exposures:
+  title, description and owner from `-- @` headers, dependencies from the
+  tables read outside CTEs, table functions and tables the scripts create
+  themselves; `--url` template with `{name}`. Validated with `dbt parse` on
+  the anofox-visualization examples (#54).
+
 ## [0.12.1] – 2026-11-04
 
 ### Fixed

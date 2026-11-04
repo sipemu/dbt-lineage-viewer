@@ -2,8 +2,10 @@
 //!
 //! A BI connector lists dashboards with the warehouse tables they read; this
 //! module maps those tables onto the project's models and sources and renders
-//! dbt `exposures:` YAML. Metabase is the first connector.
+//! dbt `exposures:` YAML. Connectors: Metabase (REST API) and
+//! anofox-visualization (dashboard `.sql` files).
 
+pub mod anofox;
 pub mod metabase;
 
 use std::collections::{BTreeSet, HashMap};

@@ -47,6 +47,22 @@ Verified against Metabase v0.65 (Postgres data source) and `dbt parse` with dbt-
 - Matching is by table name only: model `alias` configs and schema names are not considered, so two relations with the same name in different schemas are ambiguous (a model wins over a source).
 - The API key needs read access to the dashboards' collections; creator names on Metabase versions that don't embed `creator` need an admin key.
 
+## anofox-visualization
+
+[anofox-visualization](https://github.com/DataZooDE/anofox-visualization) dashboards are DuckDB `.sql` files: header comments describe the dashboard and every `SELECT` with `::ROLE` casts is a panel. With dbt-duckdb building the tables those dashboards read, point the importer at the dashboard files:
+
+```sh
+dbt-lineage exposures anofox --dashboards dashboards/ \
+  --url 'https://viz.example.com/d/{name}' \
+  --write models/exposures_anofox.yml
+```
+
+- **Which files:** `--dashboards` takes files and directories (searched recursively for `.sql`). A file is a dashboard if it has a `-- @title` header, a `'…'::DASHBOARD_TITLE` cast, or panel role casts (`::BARCHART`, `::METRIC`, `::TABLE`, …); helper scripts such as `init.sql` or `compute.sql` are skipped.
+- **Exposure fields:** name from `-- @title` (else `::DASHBOARD_TITLE`, else the file name), description from `-- @description`, owner from `-- @owner` (an email or a name; default `anofox-visualization`). `--url` sets the link; `{name}` is replaced by the file name without extension. Without `--url` the file path is used.
+- **Dependencies:** every table read in `FROM` / `JOIN`, minus CTEs, table functions (`read_csv(…)`, `range(…)`) and tables or views created by any scanned file (sample data, CSV loads, materialized results), which belong to the dashboards rather than to dbt. Statements the SQL parser can't read (DuckDB-specific syntax) fall back to scanning `FROM` / `JOIN` outside strings, comments and quoted labels.
+
+On the anofox-visualization repository itself (72 dashboards) every remaining unmatched table is a real table the dashboards expect to exist.
+
 ## Other tools
 
 Looker, Tableau, Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).

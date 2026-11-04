@@ -263,14 +263,21 @@ Reports counts per node type, tag distribution, top downstream-reach models, and
 
 ### BI dashboards as exposures
 
-Generate dbt exposures from Metabase dashboards, so impact analysis knows which dashboards a change reaches:
+Generate dbt exposures from Metabase or anofox-visualization dashboards, so impact analysis knows which dashboards a change reaches:
 
 ```sh
 METABASE_API_KEY=mb_… dbt-lineage exposures metabase --url https://metabase.example.com \
   --write models/exposures_metabase.yml
 ```
 
-Tables read by native SQL and GUI questions are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md). Looker, Tableau and Power BI are planned.
+From [anofox-visualization](https://github.com/DataZooDE/anofox-visualization) dashboards (DuckDB `.sql` files with `::ROLE` panels):
+
+```sh
+dbt-lineage exposures anofox --dashboards dashboards/ --url 'https://viz.example.com/d/{name}' \
+  --write models/exposures_anofox.yml
+```
+
+Tables the dashboards read are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md). Looker, Tableau and Power BI are planned.
 
 ### CI report
 
