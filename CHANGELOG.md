@@ -3,6 +3,32 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage ci report` — one Markdown report (diff, rebuild selector,
+  manifest freshness, lint, project summary) for PR/MR comments, with
+  `--fail-on lint-errors,plan-empty,manifest-stale|never` exit codes and
+  `--outputs` for `$GITHUB_OUTPUT` / dotenv files. `--base auto` picks the
+  target branch from GitHub, GitLab, Bitbucket or Azure DevOps env vars and
+  resolves/fetches `origin/<branch>` in PR checkouts (#43).
+- Release workflow moves a floating major tag (`v0`) after each release (#46).
+
+### Changed
+
+- GitHub Action is a thin wrapper around `ci report`: `fail-on` now honors
+  `plan-empty` and `manifest-stale`, no longer needs `python3`, keeps error
+  output out of the PR comment, quotes the manifest path, posts the report to
+  the job summary, and defaults `base` to the PR target branch (#44).
+
+### Fixed
+
+- `diff` / `plan` against a git ref now build the base graph with the same
+  pipeline as the working tree. Previously the base used a models-only parser,
+  so every seed, test and exposure showed as "added" and every description as
+  "changed".
+
 ## [0.7.3] – 2026-06-08
 
 ### Fixed

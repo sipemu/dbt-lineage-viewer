@@ -4,6 +4,7 @@
 //! [`docs/MCP.md`](https://github.com/sipemu/dbt-lineage-viewer/blob/master/docs/MCP.md)
 //! for usage. Each `pub mod` below corresponds to a layer:
 //!
+//! - [`ci`] — platform-agnostic CI report (`dbt-lineage ci`).
 //! - [`cli`] — Clap-derived command-line surface.
 //! - [`error`] — error types and the `--error-format json` mapping.
 //! - [`graph`] — the lineage DAG, plus computed reports (impact, summary,
@@ -13,6 +14,7 @@
 //! - [`mcp`] — stdio Model Context Protocol server.
 //! - [`tui`] — interactive terminal UI (feature-gated).
 
+pub mod ci;
 pub mod cli;
 pub mod error;
 pub mod git;

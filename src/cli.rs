@@ -298,6 +298,13 @@ pub enum Command {
         include_tests: bool,
     },
 
+    /// CI integration: one Markdown report for PR/MR comments, plus exit codes
+    /// for gating. Works on GitHub Actions, GitLab CI, Bitbucket Pipelines and
+    /// Azure Pipelines.
+    Ci {
+        #[command(subcommand)]
+        action: CiAction,
+    },
     /// Compare lineage between git refs
     Diff {
         /// Base git ref to compare from (e.g., main, HEAD~1)
@@ -315,6 +322,41 @@ pub enum Command {
         /// Output format: text (default) or json
         #[arg(short = 'o', long, default_value = "text")]
         output: DiffOutputFormat,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CiAction {
+    /// Run summary, diff, plan, lint (and manifest check) and render one
+    /// Markdown report. Exits 1 when a `--fail-on` condition is met.
+    Report {
+        /// Base git ref to diff against. `auto` (default) uses the PR/MR target
+        /// branch from the CI environment; empty disables diff and plan.
+        /// Missing refs are resolved as `origin/<ref>` and fetched if needed.
+        #[arg(long, default_value = "auto")]
+        base: String,
+        /// Head git ref to compare to (defaults to working tree)
+        #[arg(long)]
+        head: Option<String>,
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+        /// Use manifest.json for summary and lint, and check it for staleness
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write the Markdown report to this file instead of stdout
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Append `key=value` outputs (`selector`, `failed`) to this file, e.g.
+        /// `$GITHUB_OUTPUT` or a GitLab dotenv report
+        #[arg(long)]
+        outputs: Option<PathBuf>,
+        /// Fail on these conditions (comma-separated)
+        #[arg(long, value_enum, value_delimiter = ',', default_value = "lint-errors")]
+        fail_on: Vec<crate::ci::FailOn>,
+        /// Skip the lint section
+        #[arg(long)]
+        no_lint: bool,
     },
 }
 

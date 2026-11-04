@@ -28,6 +28,49 @@ pub fn validate_ref(path: &Path, git_ref: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Resolve a base ref for CI use. PR/MR checkouts usually lack a local branch
+/// for the target (and are often shallow), so try, in order: the ref as given,
+/// `origin/<ref>`, and finally fetch `<ref>` from `origin`. Returns the ref name
+/// that resolved.
+pub fn resolve_base_ref(path: &Path, git_ref: &str) -> Result<String> {
+    if validate_ref(path, git_ref).is_ok() {
+        return Ok(git_ref.to_string());
+    }
+    let remote_ref = format!("origin/{}", git_ref);
+    if validate_ref(path, &remote_ref).is_ok() {
+        return Ok(remote_ref);
+    }
+
+    let shallow = Command::new("git")
+        .args(["rev-parse", "--is-shallow-repository"])
+        .current_dir(path)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false);
+    let refspec = format!("+refs/heads/{0}:refs/remotes/origin/{0}", git_ref);
+    let mut args = vec!["fetch", "--no-tags", "origin"];
+    // In a shallow clone only the tip is needed; `git show <ref>:<file>` works
+    // without history. In a full clone, don't make the repository shallow.
+    if shallow {
+        args.push("--depth=1");
+    }
+    args.push(&refspec);
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(path)
+        .output()
+        .context("Failed to run git fetch")?;
+    if output.status.success() && validate_ref(path, &remote_ref).is_ok() {
+        return Ok(remote_ref);
+    }
+    anyhow::bail!(
+        "Invalid git ref: {} (also tried origin/{} and fetching it: {})",
+        git_ref,
+        git_ref,
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
+}
+
 /// Get the current HEAD ref name or commit
 pub fn current_ref(path: &Path) -> Result<String> {
     let output = Command::new("git")
@@ -57,6 +100,27 @@ pub fn git_show(path: &Path, git_ref: &str, file_path: &str) -> Result<String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Unpack the tree at `git_ref` into `dest`. Run from a subdirectory, `git
+/// archive` includes only that subtree with paths relative to it, so `dest`
+/// mirrors `path` as it was at `git_ref`.
+pub fn archive_to(path: &Path, git_ref: &str, dest: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .args(["archive", "--format=tar", git_ref])
+        .current_dir(path)
+        .output()
+        .context("Failed to run git archive")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git archive {} failed: {}",
+            git_ref,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    tar::Archive::new(output.stdout.as_slice())
+        .unpack(dest)
+        .with_context(|| format!("Failed to unpack tree of {}", git_ref))
 }
 
 /// List files at a git ref matching a pattern
@@ -120,6 +184,46 @@ mod tests {
             .unwrap();
 
         (tmp, path)
+    }
+
+    #[test]
+    fn test_resolve_base_ref_local_remote_and_fetch() {
+        let (_up_tmp, upstream) = setup_temp_git_repo();
+        let git = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "git {:?}: {:?}", args, o);
+        };
+        git(&upstream, &["branch", "-M", "main"]);
+        git(&upstream, &["branch", "release"]);
+
+        // Clone only `main`, like a single-branch CI checkout.
+        let clone_tmp = tempfile::tempdir().unwrap();
+        let clone = clone_tmp.path().join("c");
+        let up = format!("file://{}", upstream.display());
+        let o = Command::new("git")
+            .args(["clone", "--single-branch", "--branch", "main", "--depth=1"])
+            .arg(&up)
+            .arg(&clone)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{:?}", o);
+        git(&clone, &["checkout", "-b", "feature"]);
+        git(&clone, &["branch", "-D", "main"]);
+
+        // Local ref resolves as given.
+        assert_eq!(resolve_base_ref(&clone, "HEAD").unwrap(), "HEAD");
+        // No local `main`, but origin/main exists.
+        assert_eq!(resolve_base_ref(&clone, "main").unwrap(), "origin/main");
+        // `release` was never fetched: fetched on demand.
+        assert_eq!(
+            resolve_base_ref(&clone, "release").unwrap(),
+            "origin/release"
+        );
+        assert!(resolve_base_ref(&clone, "does-not-exist").is_err());
     }
 
     #[test]

@@ -15,9 +15,12 @@ inputs:
     required: false
     default: .
   base:
-    description: Base git ref to diff against. Required for `diff`, `plan`, and the impact section.
+    description: >
+      Base git ref to diff against. `auto` uses the PR target branch
+      (`github.base_ref`); empty disables the diff and plan sections. Branches
+      missing from the checkout are resolved as `origin/<base>` and fetched.
     required: false
-    default: ""
+    default: auto
   manifest:
     description: Path to a pre-compiled manifest.json. When set, runs in manifest mode; otherwise SQL-parse mode.
     required: false
@@ -36,7 +39,8 @@ inputs:
   fail-on:
     description: >
       Cause the step to fail when given findings are present. Comma-separated:
-      `lint-errors`, `plan-empty`, `manifest-stale`. Default: lint-errors.
+      `lint-errors`, `plan-empty`, `manifest-stale`, or `never`. The PR comment
+      and SARIF upload still happen before the step fails.
     required: false
     default: lint-errors
 
@@ -85,93 +89,65 @@ runs:
     - name: Run dbt-lineage
       id: run
       shell: bash
+      env:
+        INPUT_PROJECT_DIR: ${{ inputs.project-dir }}
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_MANIFEST: ${{ inputs.manifest }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        set -euo pipefail
-        proj="${{ inputs.project-dir }}"
-        base="${{ inputs.base }}"
-        manifest="${{ inputs.manifest }}"
-        manifest_flag=""
-        [ -n "$manifest" ] && manifest_flag="--manifest $manifest"
+        set -uo pipefail
+        summary_md="$RUNNER_TEMP/dbt-lineage-report.md"
+        manifest_args=()
+        [ -n "$INPUT_MANIFEST" ] && manifest_args=(--manifest "$INPUT_MANIFEST")
 
-        summary_md="$(mktemp)"
-        echo "## dbt-lineage report" > "$summary_md"
-        echo >> "$summary_md"
-
-        # Summary section
-        echo "### Project summary" >> "$summary_md"
-        echo '```' >> "$summary_md"
-        dbt-lineage summary -p "$proj" $manifest_flag >> "$summary_md" 2>&1 || true
-        echo '```' >> "$summary_md"
-        echo >> "$summary_md"
-
-        # Diff + plan (only when base is set)
-        if [ -n "$base" ]; then
-          echo "### Changes vs. \`$base\`" >> "$summary_md"
-          echo '```' >> "$summary_md"
-          dbt-lineage diff --base "$base" -p "$proj" >> "$summary_md" 2>&1 || true
-          echo '```' >> "$summary_md"
-          echo >> "$summary_md"
-
-          selector=$(dbt-lineage plan --base "$base" -p "$proj" 2>/dev/null || true)
-          echo "selector=$selector" >> "$GITHUB_OUTPUT"
-          if [ -n "$selector" ]; then
-            echo "### Rebuild selector" >> "$summary_md"
-            echo '```sh' >> "$summary_md"
-            echo "dbt run -s \"$selector\"" >> "$summary_md"
-            echo '```' >> "$summary_md"
-            echo >> "$summary_md"
-          fi
+        rc=0
+        dbt-lineage ci report -p "$INPUT_PROJECT_DIR" --base "$INPUT_BASE" ${manifest_args[@]+"${manifest_args[@]}"} \
+          --out "$summary_md" --outputs "$GITHUB_OUTPUT" --fail-on "${INPUT_FAIL_ON:-never}" || rc=$?
+        echo "exit-code=$rc" >> "$GITHUB_OUTPUT"
+        if [ -f "$summary_md" ]; then
+          echo "summary=$summary_md" >> "$GITHUB_OUTPUT"
+          cat "$summary_md" >> "$GITHUB_STEP_SUMMARY"
         fi
 
         # SARIF outputs (when requested)
-        sarif="${{ inputs.sarif }}"
-        if [ -n "$sarif" ]; then
-          IFS=, read -ra cmds <<< "$sarif"
+        if [ -n "$INPUT_SARIF" ]; then
+          mkdir -p "$RUNNER_TEMP/dbt-lineage-sarif"
+          IFS=, read -ra cmds <<< "$INPUT_SARIF"
           for cmd in "${cmds[@]}"; do
-            case "$cmd" in
+            case "$(echo "$cmd" | xargs)" in
               lint)
-                dbt-lineage lint -p "$proj" $manifest_flag -o sarif > "lint.sarif" 2>/dev/null || true
+                dbt-lineage lint -p "$INPUT_PROJECT_DIR" ${manifest_args[@]+"${manifest_args[@]}"} -o sarif \
+                  > "$RUNNER_TEMP/dbt-lineage-sarif/lint.sarif" || true
                 ;;
               coverage)
-                dbt-lineage coverage -p "$proj" -o sarif > "coverage.sarif" 2>/dev/null || true
+                dbt-lineage coverage -p "$INPUT_PROJECT_DIR" -o sarif \
+                  > "$RUNNER_TEMP/dbt-lineage-sarif/coverage.sarif" || true
                 ;;
+              *) echo "::warning::dbt-lineage: unknown sarif subcommand '$cmd'" ;;
             esac
           done
         fi
-
-        echo "summary=$summary_md" >> "$GITHUB_OUTPUT"
+        exit 0
 
     - name: Upload SARIF (if produced)
       if: inputs.sarif != ''
       uses: github/codeql-action/upload-sarif@v3
       continue-on-error: true
       with:
-        sarif_file: .
+        sarif_file: ${{ runner.temp }}/dbt-lineage-sarif
         category: dbt-lineage
 
     - name: Post PR comment
-      if: github.event_name == 'pull_request' && inputs.comment == 'true'
+      if: github.event_name == 'pull_request' && inputs.comment == 'true' && steps.run.outputs.summary != ''
       uses: marocchino/sticky-pull-request-comment@v2
       with:
         path: ${{ steps.run.outputs.summary }}
         header: dbt-lineage
 
     - name: Fail on conditions
+      if: steps.run.outputs.exit-code != '0'
       shell: bash
       run: |
-        set -euo pipefail
-        fail_on="${{ inputs.fail-on }}"
-        if [[ "$fail_on" == *"lint-errors"* ]]; then
-          # `lint` exits non-zero when errors exist; rerun in JSON mode to count.
-          proj="${{ inputs.project-dir }}"
-          manifest="${{ inputs.manifest }}"
-          manifest_flag=""
-          [ -n "$manifest" ] && manifest_flag="--manifest $manifest"
-          if ! dbt-lineage lint -p "$proj" $manifest_flag -o json > /tmp/lint.json; then
-            errors=$(python3 -c "import json; print(sum(1 for f in json.load(open('/tmp/lint.json'))['findings'] if f['severity']=='error'))")
-            if [ "$errors" -gt 0 ]; then
-              echo "::error::dbt-lineage lint reported $errors error-severity findings"
-              exit 1
-            fi
-          fi
-        fi
+        echo "::error::dbt-lineage ci report exited with ${{ steps.run.outputs.exit-code }} (see report above)"
+        exit 1

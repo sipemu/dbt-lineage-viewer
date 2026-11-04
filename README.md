@@ -195,6 +195,18 @@ dbt-lineage summary -o json                            # structured for piping i
 
 Reports counts per node type, tag distribution, top downstream-reach models, and orphan models (no downstream consumers).
 
+### CI report
+
+One Markdown report for PR/MR comments — lineage diff, rebuild selector, manifest freshness, lint, and project summary — plus exit codes for gating:
+
+```sh
+dbt-lineage ci report                                  # base = PR/MR target branch from CI env
+dbt-lineage ci report --base main --out report.md      # explicit base, write to file
+dbt-lineage ci report --fail-on lint-errors,plan-empty --outputs "$GITHUB_OUTPUT"
+```
+
+`--base auto` (default) reads the target branch from GitHub Actions, GitLab CI, Bitbucket Pipelines or Azure Pipelines, and resolves it as `origin/<branch>` (fetching it if the checkout is shallow). `--outputs` appends `selector=…` and `failed=…` lines, usable as `$GITHUB_OUTPUT` or a GitLab dotenv report. The GitHub Action is a thin wrapper around this command.
+
 ### Manifest freshness
 
 CI-friendly drift check between a distributed `manifest.json` and current SQL files:
@@ -264,6 +276,7 @@ Commands:
   coverage        Test coverage map: which models have which tests, column coverage gaps
   check-manifest  Verify a manifest.json is still in sync with the project's SQL files. Exits with code 1 on staleness, making it directly usable in CI pipelines
   plan            Emit a dbt selector expression covering models added or modified since `--base`. Designed to pipe into `dbt run -s "$(dbt-lineage plan --base main)"`
+  ci              CI integration: one Markdown report for PR/MR comments, plus exit codes for gating. Works on GitHub Actions, GitLab CI, Bitbucket Pipelines and Azure Pipelines
   diff            Compare lineage between git refs
   help            Print this message or the help of the given subcommand(s)
 

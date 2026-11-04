@@ -35,6 +35,8 @@ rayon = "1"
 blake3 = "1"
 bincode = "1"
 sqlparser = "0.52"
+tar = { version = "0.4", default-features = false }
+tempfile = "3"
 
 # TUI dependencies (feature-gated)
 ratatui = { version = "0.29", optional = true }

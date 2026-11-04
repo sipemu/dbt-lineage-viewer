@@ -241,15 +241,28 @@ pub fn compute_diff(
     }
 }
 
-/// Build a graph from a git ref by reading manifest.json at that ref.
-/// Falls back to reading SQL/YAML files if no manifest is available.
+/// Build a graph from a git ref with the same pipeline as the working tree,
+/// so `diff` compares like with like: the project directory's tree at `git_ref`
+/// is unpacked into a temp dir, then read via `target/manifest.json` if it was
+/// committed, else via the full SQL/YAML builder (seeds, tests, exposures,
+/// descriptions, macro-aware refs). Falls back to a minimal models-only parse
+/// when the ref has no `dbt_project.yml` (e.g. the project is new in this PR).
 pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<LineageGraph> {
-    // Try manifest first
-    if let Ok(manifest_content) = git::git_show(project_dir, git_ref, "target/manifest.json") {
-        let manifest: crate::parser::manifest::Manifest =
-            serde_json::from_str(&manifest_content)
-                .context("Failed to parse manifest.json from git ref")?;
-        return crate::parser::manifest::build_graph_from_parsed_manifest(&manifest);
+    let tmp = tempfile::tempdir().context("Failed to create temp dir for git ref")?;
+    git::archive_to(project_dir, git_ref, tmp.path())?;
+    let root = tmp.path();
+
+    let manifest_path = root.join("target").join("manifest.json");
+    if manifest_path.exists() {
+        return crate::parser::manifest::build_graph_from_manifest(&manifest_path)
+            .context("Failed to parse manifest.json from git ref");
+    }
+
+    if root.join("dbt_project.yml").exists() {
+        let project = crate::parser::project::DbtProject::load(root)?;
+        let paths = project.resolve_paths(root);
+        let files = crate::parser::discovery::discover_files(&paths)?;
+        return crate::graph::builder::build_graph_no_cache(root, &files);
     }
 
     // Fallback: enumerate SQL and YAML files from the git tree
@@ -779,11 +792,8 @@ sources:
             .output()
             .unwrap();
 
-        // Invalid ref returns an empty graph (git_ls_tree returns empty for bad refs)
         let result = build_graph_from_ref(&path, "nonexistent_branch_abc123");
-        assert!(result.is_ok());
-        let graph = result.unwrap();
-        assert_eq!(graph.node_count(), 0);
+        assert!(result.is_err());
     }
 
     #[test]

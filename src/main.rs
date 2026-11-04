@@ -126,6 +126,27 @@ fn run(cli: Cli) -> Result<()> {
                 project_dir,
                 output,
             } => run_diff_command(base, head.as_deref(), project_dir, output),
+            Command::Ci { action } => match action {
+                cli::CiAction::Report {
+                    base,
+                    head,
+                    project_dir,
+                    manifest,
+                    out,
+                    outputs,
+                    fail_on,
+                    no_lint,
+                } => run_ci_report_command(&CiReportArgs {
+                    base,
+                    head: head.as_deref(),
+                    project_dir,
+                    manifest: manifest.as_ref(),
+                    out: out.as_ref(),
+                    outputs: outputs.as_ref(),
+                    fail_on,
+                    no_lint: *no_lint,
+                }),
+            },
         };
     }
 
@@ -693,6 +714,152 @@ fn run_diff_command(
     }
 
     Ok(())
+}
+
+struct CiReportArgs<'a> {
+    base: &'a str,
+    head: Option<&'a str>,
+    project_dir: &'a Path,
+    manifest: Option<&'a PathBuf>,
+    out: Option<&'a PathBuf>,
+    outputs: Option<&'a PathBuf>,
+    fail_on: &'a [dbt_lineage::ci::FailOn],
+    no_lint: bool,
+}
+
+/// Run `ci report`: every analysis a PR/MR comment needs, rendered as one
+/// Markdown document. A failing section is reported in the document instead
+/// of aborting, so the comment still appears.
+#[cfg(not(tarpaulin_include))]
+fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
+    use dbt_lineage::ci::{self, CiReport, Platform};
+    use std::io::Write;
+
+    let project_dir = args
+        .project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| args.project_dir.to_path_buf());
+    let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let platform = Platform::detect(&env);
+
+    let mut report = CiReport::default();
+    let mut record = |section: &'static str, err: anyhow::Error| {
+        report_section_error(&mut report.errors, section, err)
+    };
+
+    // Summary + lint share one graph (manifest when given).
+    let project_name = parser::project::DbtProject::load(&project_dir)
+        .ok()
+        .map(|p| p.name);
+    match build_dag(&project_dir, args.manifest, false) {
+        Ok(dag) => {
+            report.summary = Some(graph::summary::compute_summary(&dag, project_name));
+            if !args.no_lint {
+                report.lint = Some(graph::lint::lint(&dag, &graph::lint::LintConfig::default()));
+            }
+        }
+        Err(e) => record("summary", e),
+    }
+
+    // Diff + plan against the PR/MR base.
+    let base = match args.base {
+        "auto" => platform.target_branch(&env),
+        "" => None,
+        b => Some(b.to_string()),
+    };
+    if let Some(base) = base {
+        match ci_diff(&project_dir, &base, args.head) {
+            Ok(diff) => {
+                report.plan = Some(graph::plan::build_plan(
+                    &diff,
+                    graph::plan::PlanStyle::Downstream,
+                    true,
+                ));
+                report.diff = Some(diff);
+            }
+            Err(e) => record("diff", e),
+        }
+    }
+
+    // Manifest freshness, only when a manifest is in play.
+    let manifest_path = match args.manifest {
+        Some(m) => resolve_manifest_path(m).ok(),
+        None => Some(project_dir.join("target").join("manifest.json")).filter(|p| p.exists()),
+    };
+    if let Some(path) = manifest_path {
+        match parser::manifest_check::check_manifest(&project_dir, &path) {
+            Ok(check) => report.manifest_check = Some(check),
+            Err(e) => record("manifest", e),
+        }
+    }
+
+    let failures = report.failures(args.fail_on);
+    let markdown = ci::render_markdown(&report);
+    match args.out {
+        Some(path) => std::fs::write(path, &markdown)?,
+        None => print!("{}", markdown),
+    }
+    if let Some(path) = args.outputs {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        writeln!(f, "selector={}", report.selector())?;
+        writeln!(f, "failed={}", !failures.is_empty())?;
+    }
+
+    if !failures.is_empty() {
+        for reason in &failures {
+            match platform {
+                Platform::GitHub => eprintln!("::error::dbt-lineage: {}", reason),
+                Platform::AzureDevOps => {
+                    eprintln!("##vso[task.logissue type=error]dbt-lineage: {}", reason)
+                }
+                _ => eprintln!("dbt-lineage: {}", reason),
+            }
+        }
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+#[cfg(not(tarpaulin_include))]
+fn report_section_error(
+    errors: &mut Vec<dbt_lineage::ci::SectionError>,
+    section: &'static str,
+    err: anyhow::Error,
+) {
+    eprintln!("dbt-lineage: {} skipped: {:#}", section, err);
+    errors.push(dbt_lineage::ci::SectionError {
+        section,
+        message: format!("{:#}", err),
+    });
+}
+
+/// Diff for `ci report`, resolving the base the way CI checkouts need.
+#[cfg(not(tarpaulin_include))]
+fn ci_diff(project_dir: &Path, base: &str, head: Option<&str>) -> Result<graph::diff::LineageDiff> {
+    if !dbt_lineage::git::is_git_repo(project_dir) {
+        anyhow::bail!("Not a git repository: {}", project_dir.display());
+    }
+    let base = dbt_lineage::git::resolve_base_ref(project_dir, base)?;
+    let base_graph = graph::diff::build_graph_from_ref(project_dir, &base)?;
+    let (head_graph, head_label) = if let Some(head_ref) = head {
+        dbt_lineage::git::validate_ref(project_dir, head_ref)?;
+        (
+            graph::diff::build_graph_from_ref(project_dir, head_ref)?,
+            head_ref.to_string(),
+        )
+    } else {
+        let label = dbt_lineage::git::current_ref(project_dir).unwrap_or_else(|_| "HEAD".into());
+        (build_working_tree_graph(project_dir)?, label)
+    };
+    Ok(graph::diff::compute_diff(
+        &base_graph,
+        &head_graph,
+        &base,
+        &head_label,
+    ))
 }
 
 /// Build a graph from the current working tree
