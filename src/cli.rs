@@ -325,6 +325,12 @@ pub enum Command {
         #[command(subcommand)]
         action: CiAction,
     },
+    /// Import BI dashboards as dbt exposures (YAML), mapping the tables they
+    /// read onto the project's models and sources.
+    Exposures {
+        #[command(subcommand)]
+        source: ExposureSource,
+    },
     /// Compare lineage between git refs
     Diff {
         /// Base git ref to compare from (e.g., main, HEAD~1)
@@ -343,6 +349,38 @@ pub enum Command {
         #[arg(short = 'o', long, default_value = "text")]
         output: DiffOutputFormat,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ExposureSource {
+    /// Read dashboards from Metabase (REST API with an API key).
+    Metabase {
+        /// Metabase base URL, e.g. `https://metabase.example.com`
+        #[arg(long)]
+        url: String,
+        /// Metabase API key (Admin > Settings > Authentication > API keys)
+        #[arg(long, env = "METABASE_API_KEY", hide_env_values = true)]
+        api_key: String,
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write the YAML to this file (e.g. models/exposures_metabase.yml)
+        /// instead of stdout
+        #[arg(long)]
+        write: Option<PathBuf>,
+        /// Output format for stdout: yaml (default) or json
+        #[arg(short = 'o', long, default_value = "yaml")]
+        output: ExposuresOutputFormat,
+    },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum ExposuresOutputFormat {
+    Yaml,
+    Json,
 }
 
 #[derive(Subcommand, Debug)]

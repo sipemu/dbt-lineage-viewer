@@ -14,6 +14,11 @@ Notable changes per release. Full per-release notes live on the
 - AutomateDV / dbtvault-style models: dependencies passed as `source_model`
   (a `set` variable, a literal argument, or a YAML metadata block) become
   lineage edges. Previously every Data Vault model looked like an orphan.
+- `dbt-lineage exposures metabase --url … [--write models/exposures_metabase.yml]`
+  — imports Metabase dashboards as dbt exposures: tables read by native SQL
+  and GUI questions (legacy MBQL and staged pMBQL, joins, nested questions)
+  are mapped onto models and sources; unmatched tables are reported. See
+  `docs/BI.md` (#54).
 
 ### Changed
 

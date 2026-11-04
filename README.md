@@ -247,6 +247,17 @@ dbt-lineage summary -o json                            # structured for piping i
 
 Reports counts per node type, tag distribution, top downstream-reach models, and orphan models (no downstream consumers).
 
+### BI dashboards as exposures
+
+Generate dbt exposures from Metabase dashboards, so impact analysis knows which dashboards a change reaches:
+
+```sh
+METABASE_API_KEY=mb_… dbt-lineage exposures metabase --url https://metabase.example.com \
+  --write models/exposures_metabase.yml
+```
+
+Tables read by native SQL and GUI questions are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md). Looker, Tableau and Power BI are planned.
+
 ### CI report
 
 One Markdown report for PR/MR comments — lineage diff, rebuild selector, manifest freshness, lint, and project summary — plus exit codes for gating:
@@ -330,6 +341,7 @@ Commands:
   check-manifest  Verify a manifest.json is still in sync with the project's SQL files. Exits with code 1 on staleness, making it directly usable in CI pipelines
   plan            Emit a dbt selector expression covering models added or modified since `--base`. Designed to pipe into `dbt run -s "$(dbt-lineage plan --base main)"`
   ci              CI integration: one Markdown report for PR/MR comments, plus exit codes for gating. Works on GitHub Actions, GitLab CI, Bitbucket Pipelines and Azure Pipelines
+  exposures       Import BI dashboards as dbt exposures (YAML), mapping the tables they read onto the project's models and sources
   diff            Compare lineage between git refs
   help            Print this message or the help of the given subcommand(s)
 
