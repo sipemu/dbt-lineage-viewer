@@ -82,6 +82,9 @@ pub enum FailOn {
     PlanEmpty,
     /// `target/manifest.json` (or `--manifest`) is out of sync with the SQL files.
     ManifestStale,
+    /// A governed model (contract, public/protected access, versions) changed
+    /// in a way that breaks its consumers.
+    BreakingChanges,
     /// Never fail (report only).
     Never,
 }
@@ -130,6 +133,14 @@ impl CiReport {
                     }
                 }
                 FailOn::Never => {}
+                FailOn::BreakingChanges => {
+                    if let Some(diff) = &self.diff {
+                        let n = diff.breaking_changes.len();
+                        if n > 0 {
+                            out.push(format!("{n} breaking change(s) to governed models"));
+                        }
+                    }
+                }
                 FailOn::ManifestStale => {
                     if let Some(check) = &self.manifest_check {
                         if check.is_stale {
@@ -157,6 +168,23 @@ pub fn render_markdown(report: &CiReport) -> String {
     let _ = writeln!(md, "{COMMENT_MARKER}");
     let _ = writeln!(md, "## dbt-lineage report\n");
 
+    if let Some(diff) = report
+        .diff
+        .as_ref()
+        .filter(|d| !d.breaking_changes.is_empty())
+    {
+        let _ = writeln!(md, "### Breaking changes\n");
+        let _ = writeln!(
+            md,
+            "Changes to governed models (contracts, access, versions) that can break their consumers.\n"
+        );
+        let _ = writeln!(md, "| Model | Change | Detail |");
+        let _ = writeln!(md, "| --- | --- | --- |");
+        for c in &diff.breaking_changes {
+            let _ = writeln!(md, "| `{}` | {} | {} |", c.model, c.kind, escape(&c.detail));
+        }
+        md.push('\n');
+    }
     if let Some(diff) = &report.diff {
         render_diff_section(&mut md, diff);
         render_column_impact_section(&mut md, diff);
@@ -560,6 +588,7 @@ mod tests {
                 }],
                 edges: vec![],
                 column_impacts: vec![],
+                breaking_changes: vec![],
             }),
             plan: Some(plan(&["+new"])),
             lint: Some(lint_with(LintSeverity::Warning)),
@@ -618,6 +647,7 @@ mod tests {
             }],
             edges: vec![],
             column_impacts: vec![],
+            breaking_changes: vec![],
         };
         let md = impact_mermaid(&diff, &g).unwrap();
         assert!(md.starts_with("```mermaid\nflowchart LR\n"));
@@ -645,6 +675,7 @@ mod tests {
                 nodes: vec![],
                 edges: vec![],
                 column_impacts: vec![],
+                breaking_changes: vec![],
             }),
             plan: Some(plan(&[])),
             lint: Some(LintReport { findings: vec![] }),

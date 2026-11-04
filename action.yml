@@ -39,7 +39,7 @@ inputs:
   fail-on:
     description: >
       Cause the step to fail when given findings are present. Comma-separated:
-      `lint-errors`, `plan-empty`, `manifest-stale`, or `never`. The PR comment
+      `lint-errors`, `plan-empty`, `manifest-stale`, `breaking-changes`, or `never`. The PR comment
       and SARIF upload still happen before the step fails.
     required: false
     default: lint-errors

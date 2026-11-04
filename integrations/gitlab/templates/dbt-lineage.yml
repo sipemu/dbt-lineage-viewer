@@ -17,7 +17,7 @@ spec:
       description: Optional path to a compiled manifest.json.
     fail-on:
       default: lint-errors
-      description: Comma-separated lint-errors, plan-empty, manifest-stale, or never.
+      description: Comma-separated lint-errors, plan-empty, manifest-stale, breaking-changes, or never.
     comment:
       type: boolean
       default: true

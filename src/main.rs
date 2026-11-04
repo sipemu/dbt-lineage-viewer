@@ -572,10 +572,19 @@ fn run_lint_command(
             "missing-description" => config.missing_description = false,
             "model-without-source" => config.model_without_source = false,
             "circular-ref" => config.circular_ref = false,
+            "private-ref" => {} // governance rule, filtered below
             other => anyhow::bail!("unknown lint rule: {}", other),
         }
     }
-    let report = graph::lint::lint(&dag, &config);
+    let mut report = graph::lint::lint(&dag, &config);
+    if !disabled.iter().any(|d| d == "private-ref") {
+        report
+            .findings
+            .extend(graph::governance::private_ref_findings(
+                &dag,
+                &graph::governance::load_governance(&project_dir),
+            ));
+    }
 
     match output {
         cli::LintOutputFormat::Text => render::lint::render_lint_text(&report),
@@ -797,7 +806,13 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
         Ok(dag) => {
             report.summary = Some(graph::summary::compute_summary(&dag, project_name));
             if !args.no_lint {
-                report.lint = Some(graph::lint::lint(&dag, &graph::lint::LintConfig::default()));
+                let mut lint = graph::lint::lint(&dag, &graph::lint::LintConfig::default());
+                lint.findings
+                    .extend(graph::governance::private_ref_findings(
+                        &dag,
+                        &graph::governance::load_governance(&project_dir),
+                    ));
+                report.lint = Some(lint);
             }
         }
         Err(e) => record("summary", e),

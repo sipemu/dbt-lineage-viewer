@@ -7,6 +7,12 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- **Breaking-change detection for governed models** (#51): `diff`, `ci report`
+  and the PR comment flag removed or retyped contract columns, dropped
+  contracts, narrowed `access`, and removed versions or governed models;
+  `ci report --fail-on breaking-changes`. New lint rule `private-ref` for refs
+  to `access: private` models from outside their group.
+
 - `dbt-lineage site` — static lineage site for GitHub/GitLab Pages: searchable
   index, one page per node with a linked lineage diagram, upstream/downstream,
   tests, columns with column-level lineage, and highlighted SQL; light/dark and

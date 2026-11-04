@@ -36,6 +36,9 @@ pub struct ColumnDefinition {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// Declared type; enforced when the model has `contract: {enforced: true}`.
+    #[serde(default)]
+    pub data_type: Option<String>,
     #[serde(default)]
     pub tests: Vec<TestDefinition>,
 }
@@ -59,6 +62,26 @@ pub struct ModelDefinition {
     pub config: Option<ModelConfig>,
     #[serde(default, deserialize_with = "string_or_seq")]
     pub tags: Vec<String>,
+    /// Model governance (dbt 1.5+): `private`, `protected` or `public`.
+    #[serde(default)]
+    pub access: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Model versions (`versions: [{v: 1}, {v: 2}]`).
+    #[serde(default)]
+    pub versions: Vec<ModelVersion>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ModelVersion {
+    /// Version identifier; numbers and strings are both allowed by dbt.
+    pub v: serde_yaml::Value,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ContractConfig {
+    #[serde(default)]
+    pub enforced: bool,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -67,6 +90,12 @@ pub struct ModelConfig {
     pub materialized: Option<String>,
     #[serde(default, deserialize_with = "string_or_seq")]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub contract: Option<ContractConfig>,
+    #[serde(default)]
+    pub access: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

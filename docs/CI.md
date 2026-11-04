@@ -72,4 +72,4 @@ The build service account needs "Contribute to pull requests" on the repository.
 ## Outputs and exit codes
 
 - `--outputs <file>` appends `selector=…` and `failed=…` (`$GITHUB_OUTPUT`, GitLab dotenv).
-- `--fail-on lint-errors,plan-empty,manifest-stale` (default `lint-errors`; `never` to only report) makes `ci report` exit 1 after writing the report, so the comment is still posted.
+- `--fail-on lint-errors,plan-empty,manifest-stale,breaking-changes` (default `lint-errors`; `never` to only report) makes `ci report` exit 1 after writing the report, so the comment is still posted.

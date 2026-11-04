@@ -24,7 +24,7 @@ What you get on each MR pipeline:
 | `project-dir` | `.` | dbt project directory |
 | `base` | `auto` | Base ref; `auto` = MR target branch |
 | `manifest` | `""` | Optional compiled `manifest.json` |
-| `fail-on` | `lint-errors` | `lint-errors`, `plan-empty`, `manifest-stale`, or `never` |
+| `fail-on` | `lint-errors` | `lint-errors`, `plan-empty`, `manifest-stale`, `breaking-changes`, or `never` |
 | `comment` | `true` | Post the sticky MR note |
 
 Source and issues: [github.com/sipemu/dbt-lineage-viewer](https://github.com/sipemu/dbt-lineage-viewer).

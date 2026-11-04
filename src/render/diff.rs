@@ -106,6 +106,22 @@ pub fn render_diff_text_to_writer<W: Write>(diff: &LineageDiff, w: &mut W) {
         writeln!(w).unwrap();
     }
 
+    if !diff.breaking_changes.is_empty() {
+        writeln!(w, "{}", "Breaking Changes (governed models):".bold()).unwrap();
+        for c in &diff.breaking_changes {
+            writeln!(
+                w,
+                "  {} {} [{}] {}",
+                "!".red(),
+                c.model.red(),
+                c.kind,
+                c.detail
+            )
+            .unwrap();
+        }
+        writeln!(w).unwrap();
+    }
+
     if !diff.column_impacts.is_empty() {
         writeln!(
             w,
@@ -146,6 +162,7 @@ mod tests {
     fn make_diff() -> LineageDiff {
         LineageDiff {
             column_impacts: vec![],
+            breaking_changes: vec![],
             base_ref: "main".to_string(),
             head_ref: "feature".to_string(),
             summary: DiffSummary {
@@ -226,6 +243,7 @@ mod tests {
             nodes: vec![],
             edges: vec![],
             column_impacts: vec![],
+            breaking_changes: vec![],
         };
         let mut buf = Vec::new();
         render_diff_text_to_writer(&diff, &mut buf);
@@ -238,6 +256,7 @@ mod tests {
     fn test_render_diff_text_with_removed_edges() {
         let diff = LineageDiff {
             column_impacts: vec![],
+            breaking_changes: vec![],
             base_ref: "main".to_string(),
             head_ref: "feature".to_string(),
             summary: DiffSummary {
@@ -298,6 +317,7 @@ mod tests {
             }],
             edges: vec![],
             column_impacts: vec![],
+            breaking_changes: vec![],
         };
         let mut buf = Vec::new();
         render_diff_text_to_writer(&diff, &mut buf);

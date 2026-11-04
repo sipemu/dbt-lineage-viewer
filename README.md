@@ -201,6 +201,16 @@ dbt-lineage -i -p path/to/dbt/project
 dbt-lineage -i stg_orders -u 3 -d 3
 ```
 
+### Breaking changes to governed models
+
+`diff`, `ci report` and the PR comment flag changes that break consumers of governed models (dbt 1.5+ model governance in schema YAML):
+
+- contracted models (`config: {contract: {enforced: true}}`): a contract column removed or its `data_type` changed, or the contract dropped;
+- `access` narrowed (`public` → `protected` → `private`);
+- a model version (`versions:`) or a governed model removed.
+
+`ci report --fail-on breaking-changes` fails the check. `lint` adds a `private-ref` error for refs to `access: private` models from outside their `group`, which dbt rejects at parse time.
+
 ### Impact analysis
 
 Compute downstream impact for a model with severity scoring:
@@ -327,7 +337,7 @@ claude mcp add dbt-lineage -- dbt-lineage mcp --project-dir /abs/path/to/project
 claude mcp add dbt-lineage -- dbt-lineage mcp --manifest /abs/path/to/manifest.json # manifest mode
 ```
 
-Works in both SQL-parse and manifest mode (`target/manifest.json` is picked up automatically when present). Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`; plus model resources and predefined prompts. See [`docs/MCP.md`](docs/MCP.md) for client setup, prompt walkthroughs, and composition recipes.
+Works in both SQL-parse and manifest mode (`target/manifest.json` is picked up automatically when present). Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`; plus model resources and predefined prompts. MCP Registry name: `mcp-name: io.github.sipemu/dbt-lineage`. See [`docs/MCP.md`](docs/MCP.md) for client setup, prompt walkthroughs, and composition recipes.
 
 ## CLI Reference
 

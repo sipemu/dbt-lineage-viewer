@@ -27,7 +27,7 @@ pipelines:
 | `PROJECT_DIR` | `.` | dbt project directory |
 | `BASE` | `auto` | Base ref; `auto` = PR destination branch |
 | `MANIFEST` | — | Optional compiled `manifest.json` |
-| `FAIL_ON` | `lint-errors` | `lint-errors`, `plan-empty`, `manifest-stale`, or `never` |
+| `FAIL_ON` | `lint-errors` | `lint-errors`, `plan-empty`, `manifest-stale`, `breaking-changes`, or `never` |
 | `COMMENT` | `true` | Post the sticky PR comment |
 
 Bitbucket renders Markdown tables but not Mermaid, so the impact diagram shows as a code block.

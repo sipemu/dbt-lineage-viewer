@@ -80,6 +80,9 @@ pub struct LineageDiff {
     /// Removed columns that downstream columns depend on (git diffs only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub column_impacts: Vec<ColumnImpact>,
+    /// Changes that break consumers of governed models (git diffs only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub breaking_changes: Vec<crate::graph::governance::BreakingChange>,
 }
 
 /// An edge tuple for set comparison
@@ -269,6 +272,7 @@ pub fn compute_diff(
         nodes: diff_nodes,
         edges: diff_edges,
         column_impacts: Vec::new(),
+        breaking_changes: Vec::new(),
     }
 }
 
@@ -376,6 +380,11 @@ pub fn diff_git_with_head(
     let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
     mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
     diff.column_impacts = removed_column_impacts(&base_graph, &head_graph, base_tree.path());
+    diff.breaking_changes = crate::graph::governance::breaking_changes(
+        &crate::graph::governance::load_governance(base_tree.path()),
+        &crate::graph::governance::load_governance(head_root),
+        &head_graph,
+    );
     Ok((diff, head_graph))
 }
 

@@ -94,6 +94,7 @@ mod tests {
             nodes,
             edges: Vec::<DiffEdge>::new(),
             column_impacts: vec![],
+            breaking_changes: vec![],
         }
     }
 
