@@ -90,6 +90,8 @@ Every tagged release ships pre-built binaries for Linux (x86_64 + aarch64), macO
 
 ### As a GitHub Action
 
+**Live demo:** [sipemu/dbt-lineage-demo#1](https://github.com/sipemu/dbt-lineage-demo/pull/1) shows the PR comment (lineage diff with SQL body changes, Mermaid impact diagram, rebuild selector, lint).
+
 ```yaml
 on: pull_request
 
