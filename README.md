@@ -104,7 +104,7 @@ jobs:
   lineage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # `diff` / `plan` need the base branch history
       - uses: sipemu/dbt-lineage-viewer@v0

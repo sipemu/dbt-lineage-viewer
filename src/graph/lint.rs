@@ -44,7 +44,6 @@ pub struct LintConfig {
     pub dead_end_model: bool,
     pub missing_description: bool,
     pub model_without_source: bool,
-    pub generic_only: bool,
     pub circular_ref: bool,
 }
 
@@ -56,7 +55,6 @@ impl Default for LintConfig {
             dead_end_model: true,
             missing_description: true,
             model_without_source: true,
-            generic_only: true,
             circular_ref: true,
         }
     }

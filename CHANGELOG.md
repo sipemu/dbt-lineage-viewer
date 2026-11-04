@@ -3,6 +3,18 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Changed
+
+- CI workflows moved to Node 24 action versions (checkout v5, artifact
+  v6/v7, docker v4/v7, action-gh-release v3, codecov v6).
+
+### Fixed
+
+- `lint --disable` help listed only four of the six rules; removed the unused
+  `LintConfig::generic_only` flag (`generic-only` is a coverage finding).
+
 ## [0.11.0] – 2026-11-04
 
 ### Added
@@ -107,6 +119,40 @@ Notable changes per release. Full per-release notes live on the
   repository root; undefined refs point at the model that references them.
 - `diff` / `plan` only use `target/manifest.json` when both sides have one; a
   locally compiled manifest no longer makes every node look removed + re-added.
+
+## [0.9.1] – 2026-06-08
+
+### Changed
+
+- `action.yml` description trimmed to fit the GitHub Marketplace's
+  125-character limit. No functional changes.
+
+## [0.9.0] – 2026-06-08
+
+### Added
+
+- TUI fuzzy search: `/` ranks matches with nucleo-matcher, so a few characters
+  in any order find the model (#29).
+- TUI minimap: `m` toggles an overview in the top-right corner of the graph
+  area; auto-hides on small terminals (#30).
+- TUI SQL viewer: `v` shows the selected node's SQL, syntax-highlighted with
+  syntect (#31).
+
+New TUI dependencies (`nucleo-matcher`, `syntect`) sit behind the existing
+`tui` feature.
+
+## [0.8.0] – 2026-06-08
+
+### Added
+
+- Python models: `dbt.ref(...)` / `dbt.source(...)` in `.py` files become
+  edges in SQL-parse mode (#27).
+- Semantic Layer: `semantic_models` and `metrics` from the manifest (dbt 1.6+)
+  as their own node types in every output (#26).
+- `dbt-lineage macros`: macro→macro call graph (text, JSON, Mermaid) with
+  orphan macros (#28).
+- GitHub Action (`action.yml`): summary, diff, plan, optional lint/coverage
+  SARIF and a sticky PR comment (#32).
 
 ## [0.7.3] – 2026-06-08
 

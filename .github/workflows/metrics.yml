@@ -15,7 +15,7 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check out metrics branch
         run: |
           if git ls-remote --exit-code origin metrics >/dev/null; then

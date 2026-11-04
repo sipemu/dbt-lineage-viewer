@@ -239,7 +239,7 @@ pub enum Command {
         output: LintOutputFormat,
 
         /// Disable a rule (repeatable). Available: unused-source, undefined-source,
-        /// dead-end-model, missing-description.
+        /// dead-end-model, missing-description, model-without-source, circular-ref.
         #[arg(long = "disable")]
         disable: Vec<String>,
     },
