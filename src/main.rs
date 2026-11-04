@@ -363,19 +363,10 @@ fn run_plan_command(
         anyhow::bail!("Not a git repository: {}", project_dir.display());
     }
     dbt_lineage::git::validate_ref(&project_dir, base)?;
-
-    let base_graph = graph::diff::build_graph_from_ref(&project_dir, base)?;
-    let (head_graph, head_label) = if let Some(head_ref) = head {
+    if let Some(head_ref) = head {
         dbt_lineage::git::validate_ref(&project_dir, head_ref)?;
-        let g = graph::diff::build_graph_from_ref(&project_dir, head_ref)?;
-        (g, head_ref.to_string())
-    } else {
-        let g = build_working_tree_graph(&project_dir)?;
-        let label = dbt_lineage::git::current_ref(&project_dir).unwrap_or_else(|_| "HEAD".into());
-        (g, label)
-    };
-
-    let diff = graph::diff::compute_diff(&base_graph, &head_graph, base, &head_label);
+    }
+    let diff = graph::diff::diff_git(&project_dir, base, head)?;
     let style = if leaf_only {
         graph::plan::PlanStyle::LeafOnly
     } else {
@@ -688,25 +679,11 @@ fn run_diff_command(
         anyhow::bail!("Not a git repository: {}", project_dir.display());
     }
 
-    // Validate base ref
     dbt_lineage::git::validate_ref(&project_dir, base)?;
-
-    // Build base graph from git ref
-    let base_graph = graph::diff::build_graph_from_ref(&project_dir, base)?;
-
-    // Build head graph (from git ref or working tree)
-    let (head_graph, head_label) = if let Some(head_ref) = head {
+    if let Some(head_ref) = head {
         dbt_lineage::git::validate_ref(&project_dir, head_ref)?;
-        let g = graph::diff::build_graph_from_ref(&project_dir, head_ref)?;
-        (g, head_ref.to_string())
-    } else {
-        // Use current working tree
-        let g = build_working_tree_graph(&project_dir)?;
-        let label = dbt_lineage::git::current_ref(&project_dir).unwrap_or_else(|_| "HEAD".into());
-        (g, label)
-    };
-
-    let diff = graph::diff::compute_diff(&base_graph, &head_graph, base, &head_label);
+    }
+    let diff = graph::diff::diff_git(&project_dir, base, head)?;
 
     match output {
         cli::DiffOutputFormat::Text => render::diff::render_diff_text(&diff),
@@ -843,39 +820,10 @@ fn ci_diff(project_dir: &Path, base: &str, head: Option<&str>) -> Result<graph::
         anyhow::bail!("Not a git repository: {}", project_dir.display());
     }
     let base = dbt_lineage::git::resolve_base_ref(project_dir, base)?;
-    let base_graph = graph::diff::build_graph_from_ref(project_dir, &base)?;
-    let (head_graph, head_label) = if let Some(head_ref) = head {
+    if let Some(head_ref) = head {
         dbt_lineage::git::validate_ref(project_dir, head_ref)?;
-        (
-            graph::diff::build_graph_from_ref(project_dir, head_ref)?,
-            head_ref.to_string(),
-        )
-    } else {
-        let label = dbt_lineage::git::current_ref(project_dir).unwrap_or_else(|_| "HEAD".into());
-        (build_working_tree_graph(project_dir)?, label)
-    };
-    Ok(graph::diff::compute_diff(
-        &base_graph,
-        &head_graph,
-        &base,
-        &head_label,
-    ))
-}
-
-/// Build a graph from the current working tree
-#[cfg(not(tarpaulin_include))]
-fn build_working_tree_graph(project_dir: &Path) -> Result<graph::types::LineageGraph> {
-    // Try manifest first
-    let manifest_path = project_dir.join("target").join("manifest.json");
-    if manifest_path.exists() {
-        return parser::manifest::build_graph_from_manifest(&manifest_path);
     }
-
-    // Fall back to SQL parsing
-    let project = parser::project::DbtProject::load(project_dir)?;
-    let paths = project.resolve_paths(project_dir);
-    let files = parser::discovery::discover_files(&paths)?;
-    graph::builder::build_graph(project_dir, &files)
+    graph::diff::diff_git(project_dir, &base, head)
 }
 
 /// Resolve the manifest path from the --manifest argument.

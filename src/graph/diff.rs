@@ -241,31 +241,167 @@ pub fn compute_diff(
     }
 }
 
-/// Build a graph from a git ref with the same pipeline as the working tree,
-/// so `diff` compares like with like: the project directory's tree at `git_ref`
-/// is unpacked into a temp dir, then read via `target/manifest.json` if it was
-/// committed, else via the full SQL/YAML builder (seeds, tests, exposures,
-/// descriptions, macro-aware refs). Falls back to a minimal models-only parse
-/// when the ref has no `dbt_project.yml` (e.g. the project is new in this PR).
-pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<LineageGraph> {
+/// Which reader builds both sides of a diff. Mixing them would compare
+/// manifest unique_ids (`model.<project>.x`) with SQL-parse ids (`model.x`)
+/// and report every node as removed and re-added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GraphSource {
+    Manifest,
+    Sql,
+}
+
+fn manifest_in(root: &Path) -> std::path::PathBuf {
+    root.join("target").join("manifest.json")
+}
+
+/// Unpack the project directory's tree at `git_ref` into a fresh temp dir.
+fn checkout_tree(project_dir: &Path, git_ref: &str) -> Result<tempfile::TempDir> {
     let tmp = tempfile::tempdir().context("Failed to create temp dir for git ref")?;
     git::archive_to(project_dir, git_ref, tmp.path())?;
-    let root = tmp.path();
+    Ok(tmp)
+}
 
-    let manifest_path = root.join("target").join("manifest.json");
-    if manifest_path.exists() {
-        return crate::parser::manifest::build_graph_from_manifest(&manifest_path)
-            .context("Failed to parse manifest.json from git ref");
+/// Build the graph for a project rooted at `root`. In SQL mode without a
+/// `dbt_project.yml`, `git_fallback` (repo dir + ref) selects a minimal
+/// models-only parse, e.g. when the project is new in this PR.
+fn graph_from_dir(
+    root: &Path,
+    source: GraphSource,
+    use_cache: bool,
+    git_fallback: Option<(&Path, &str)>,
+) -> Result<LineageGraph> {
+    if source == GraphSource::Manifest {
+        return crate::parser::manifest::build_graph_from_manifest(&manifest_in(root));
     }
-
-    if root.join("dbt_project.yml").exists() {
-        let project = crate::parser::project::DbtProject::load(root)?;
-        let paths = project.resolve_paths(root);
-        let files = crate::parser::discovery::discover_files(&paths)?;
-        return crate::graph::builder::build_graph_no_cache(root, &files);
+    if let (false, Some((project_dir, git_ref))) =
+        (root.join("dbt_project.yml").exists(), git_fallback)
+    {
+        return Ok(build_minimal_graph_from_git(project_dir, git_ref));
     }
+    let project = crate::parser::project::DbtProject::load(root)?;
+    let paths = project.resolve_paths(root);
+    let files = crate::parser::discovery::discover_files(&paths)?;
+    if use_cache {
+        crate::graph::builder::build_graph(root, &files)
+    } else {
+        crate::graph::builder::build_graph_no_cache(root, &files)
+    }
+}
 
-    // Fallback: enumerate SQL and YAML files from the git tree
+/// Build a graph from a git ref with the same pipeline as the working tree:
+/// the project directory's tree at `git_ref` is unpacked into a temp dir, then
+/// read via `target/manifest.json` if it was committed, else via the full
+/// SQL/YAML builder (seeds, tests, exposures, descriptions, macro-aware refs).
+pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<LineageGraph> {
+    let tree = checkout_tree(project_dir, git_ref)?;
+    let source = if manifest_in(tree.path()).exists() {
+        GraphSource::Manifest
+    } else {
+        GraphSource::Sql
+    };
+    graph_from_dir(tree.path(), source, false, Some((project_dir, git_ref)))
+        .with_context(|| format!("Failed to build lineage graph at {}", git_ref))
+}
+
+/// Diff the project at `base` against `head` (or the working tree when `head`
+/// is `None`). Both sides are read the same way: from `target/manifest.json`
+/// only when both have one, otherwise by parsing SQL/YAML. On top of the
+/// structural diff, nodes whose SQL/Python/seed file content changed are
+/// marked modified, so `plan` rebuilds them.
+pub fn diff_git(project_dir: &Path, base: &str, head: Option<&str>) -> Result<LineageDiff> {
+    let base_tree = checkout_tree(project_dir, base)?;
+    let head_tree = head.map(|h| checkout_tree(project_dir, h)).transpose()?;
+    let head_root = head_tree.as_ref().map_or(project_dir, |t| t.path());
+
+    let source = if manifest_in(base_tree.path()).exists() && manifest_in(head_root).exists() {
+        GraphSource::Manifest
+    } else {
+        GraphSource::Sql
+    };
+    let base_graph = graph_from_dir(base_tree.path(), source, false, Some((project_dir, base)))
+        .with_context(|| format!("Failed to build lineage graph at {}", base))?;
+    let (head_graph, head_label) = match head {
+        Some(h) => (
+            graph_from_dir(head_root, source, false, Some((project_dir, h)))
+                .with_context(|| format!("Failed to build lineage graph at {}", h))?,
+            h.to_string(),
+        ),
+        None => (
+            graph_from_dir(project_dir, source, true, None)?,
+            git::current_ref(project_dir).unwrap_or_else(|_| "HEAD".into()),
+        ),
+    };
+
+    let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
+    mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
+    Ok(diff)
+}
+
+/// Mark nodes whose source file differs between the two project roots as
+/// modified (dbt's `state:modified` equivalent for body changes). Trailing
+/// whitespace and line endings are ignored.
+fn mark_file_changes(
+    diff: &mut LineageDiff,
+    head_graph: &LineageGraph,
+    base_root: &Path,
+    head_root: &Path,
+) {
+    let files: HashMap<&str, &Path> = head_graph
+        .node_indices()
+        .filter_map(|idx| {
+            let node = &head_graph[idx];
+            let path = node.file_path.as_deref().filter(|p| p.is_relative())?;
+            Some((node.unique_id.as_str(), path))
+        })
+        .collect();
+
+    for node in diff
+        .nodes
+        .iter_mut()
+        .filter(|n| matches!(n.status, DiffStatus::Unchanged | DiffStatus::Modified))
+    {
+        let Some(rel) = files.get(node.unique_id.as_str()) else {
+            continue;
+        };
+        let what = match rel.extension().and_then(|e| e.to_str()) {
+            Some("sql") => "SQL changed",
+            Some("py") => "Python changed",
+            Some("csv") => "seed data changed",
+            _ => continue,
+        };
+        let (Ok(old), Ok(new)) = (
+            std::fs::read_to_string(base_root.join(rel)),
+            std::fs::read_to_string(head_root.join(rel)),
+        ) else {
+            continue;
+        };
+        if normalize_source(&old) != normalize_source(&new) {
+            if node.status == DiffStatus::Unchanged {
+                node.status = DiffStatus::Modified;
+                diff.summary.nodes_modified += 1;
+            }
+            node.changes.insert(0, what.to_string());
+        }
+    }
+    diff.nodes.sort_by_key(|n| match n.status {
+        DiffStatus::Added => 0,
+        DiffStatus::Modified => 1,
+        DiffStatus::Removed => 2,
+        DiffStatus::Unchanged => 3,
+    });
+}
+
+fn normalize_source(s: &str) -> String {
+    s.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+/// Minimal models-only graph read straight from the git tree.
+fn build_minimal_graph_from_git(project_dir: &Path, git_ref: &str) -> LineageGraph {
     let sql_files = git::git_ls_tree(project_dir, git_ref, "models")
         .unwrap_or_default()
         .into_iter()
@@ -281,7 +417,7 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
     let mut graph = LineageGraph::new();
     parse_sources_from_git(&mut graph, project_dir, git_ref, &yaml_files);
     parse_models_from_git(&mut graph, project_dir, git_ref, &sql_files);
-    Ok(graph)
+    graph
 }
 
 /// Parse YAML files from a git ref and add source nodes to the graph
@@ -871,6 +1007,112 @@ sources:
         assert!(result.is_ok());
         let graph = result.unwrap();
         assert!(graph.node_count() >= 2);
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?}: {:?}", args, out);
+    }
+
+    /// Repo with a dbt project on `main`: one source, two models.
+    fn dbt_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path();
+        std::fs::create_dir_all(p.join("models")).unwrap();
+        std::fs::write(p.join("dbt_project.yml"), "name: proj\nversion: '1.0'\n").unwrap();
+        std::fs::write(
+            p.join("models/schema.yml"),
+            "version: 2\nsources:\n  - name: raw\n    tables:\n      - name: orders\nmodels:\n  - name: stg\n    description: staging\n",
+        )
+        .unwrap();
+        std::fs::write(
+            p.join("models/stg.sql"),
+            "select * from {{ source('raw', 'orders') }}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            p.join("models/mart.sql"),
+            "select * from {{ ref('stg') }}\n",
+        )
+        .unwrap();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "init"]);
+        tmp
+    }
+
+    #[test]
+    fn test_diff_git_unchanged_working_tree_is_empty() {
+        let repo = dbt_repo();
+        let diff = diff_git(repo.path(), "main", None).unwrap();
+        assert_eq!(diff.summary.nodes_added, 0, "{:?}", diff.nodes);
+        assert_eq!(diff.summary.nodes_removed, 0);
+        assert_eq!(diff.summary.nodes_modified, 0, "{:?}", diff.nodes);
+        assert_eq!(diff.summary.edges_added + diff.summary.edges_removed, 0);
+    }
+
+    #[test]
+    fn test_diff_git_detects_sql_body_change() {
+        let repo = dbt_repo();
+        std::fs::write(
+            repo.path().join("models/mart.sql"),
+            "select * from {{ ref('stg') }} where 1 = 1\n",
+        )
+        .unwrap();
+        let diff = diff_git(repo.path(), "main", None).unwrap();
+        assert_eq!(diff.summary.nodes_modified, 1);
+        let mart = diff.nodes.iter().find(|n| n.label == "mart").unwrap();
+        assert_eq!(mart.status, DiffStatus::Modified);
+        assert_eq!(mart.changes, vec!["SQL changed".to_string()]);
+
+        // Whitespace-only edits are not a change.
+        std::fs::write(
+            repo.path().join("models/mart.sql"),
+            "select * from {{ ref('stg') }}   \r\n\n",
+        )
+        .unwrap();
+        let diff = diff_git(repo.path(), "main", None).unwrap();
+        assert_eq!(diff.summary.nodes_modified, 0, "{:?}", diff.nodes);
+    }
+
+    #[test]
+    fn test_diff_git_ignores_head_only_manifest() {
+        let repo = dbt_repo();
+        // A compiled manifest in the working tree but not at the base ref must
+        // not switch only one side to manifest mode.
+        std::fs::create_dir_all(repo.path().join("target")).unwrap();
+        std::fs::write(
+            repo.path().join("target/manifest.json"),
+            r#"{"metadata":{},"nodes":{},"sources":{},"exposures":{}}"#,
+        )
+        .unwrap();
+        let diff = diff_git(repo.path(), "main", None).unwrap();
+        assert_eq!(diff.summary.nodes_added + diff.summary.nodes_removed, 0);
+    }
+
+    #[test]
+    fn test_diff_git_between_refs() {
+        let repo = dbt_repo();
+        git(repo.path(), &["checkout", "-qb", "feature"]);
+        std::fs::write(
+            repo.path().join("models/new.sql"),
+            "select * from {{ ref('mart') }}\n",
+        )
+        .unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-qm", "new model"]);
+        git(repo.path(), &["checkout", "-q", "main"]);
+
+        let diff = diff_git(repo.path(), "main", Some("feature")).unwrap();
+        assert_eq!(diff.head_ref, "feature");
+        assert_eq!(diff.summary.nodes_added, 1);
+        assert_eq!(diff.summary.nodes_modified, 0, "{:?}", diff.nodes);
+        assert_eq!(diff.nodes[0].label, "new");
     }
 
     #[test]

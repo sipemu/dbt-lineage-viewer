@@ -28,6 +28,11 @@ Notable changes per release. Full per-release notes live on the
   pipeline as the working tree. Previously the base used a models-only parser,
   so every seed, test and exposure showed as "added" and every description as
   "changed".
+- `diff` / `plan` detect SQL, Python and seed-file body changes. Previously a
+  changed `SELECT` or `WHERE` was not "modified" unless materialization, tags,
+  columns or description changed, so `plan` left it out of the rebuild set.
+- `diff` / `plan` only use `target/manifest.json` when both sides have one; a
+  locally compiled manifest no longer makes every node look removed + re-added.
 
 ## [0.7.3] – 2026-06-08
 
