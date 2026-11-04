@@ -579,8 +579,11 @@ fn render_diagram(ctx: &SiteContext, center: NodeIndex, nodes: &[NodeIndex]) -> 
     let height = PAD * 2.0 + layout.max_layer_width as f64 * (NODE_H + ROW_GAP) - ROW_GAP;
 
     let mut svg = format!(
-        r#"<svg class="lineage" viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" aria-label="Lineage of {}">"#,
-        html_escape(&graph[center].label)
+        // Shrink to fit the frame, but never below 60% of natural size (labels
+        // stay readable); wider diagrams scroll horizontally instead.
+        r#"<svg class="lineage" viewBox="0 0 {width} {height}" width="{width}" height="{height}" style="min-width: {min_width:.0}px" role="img" aria-label="Lineage of {}">"#,
+        html_escape(&graph[center].label),
+        min_width = width * 0.6
     );
     for e in sub.edge_indices() {
         let (a, b) = sub.edge_endpoints(e).unwrap();

@@ -3,6 +3,15 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- `site`: lineage diagrams wider than the page were clipped at the frame's
+  edge (scrollable, but with no visible hint). They now shrink to fit, down to
+  60% of natural size, and only scroll beyond that.
+- `lsp`: hover shows file paths with forward slashes on Windows.
+
 ## [0.12.0] – 2026-11-04
 
 ### Added
