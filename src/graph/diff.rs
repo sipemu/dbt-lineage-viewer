@@ -404,12 +404,38 @@ pub fn removed_column_impacts(
         return Vec::new();
     }
 
+    // Only edges *into* descendants of the changed models can be reached from
+    // a removed column, so analyze just that part of the graph.
+    let mut scope: HashSet<petgraph::stable_graph::NodeIndex> = HashSet::new();
+    let mut stack: Vec<_> = base_graph
+        .node_indices()
+        .filter(|&i| {
+            removed
+                .iter()
+                .any(|(n, _)| n.unique_id == base_graph[i].unique_id)
+        })
+        .collect();
+    while let Some(i) = stack.pop() {
+        for child in base_graph.neighbors_directed(i, petgraph::Direction::Outgoing) {
+            if scope.insert(child) {
+                stack.push(child);
+            }
+        }
+    }
     let lineage = {
-        let mut edges =
-            crate::parser::ast_column_lineage::resolve_column_lineage_ast_in(base_graph, base_root)
-                .edges;
+        let mut edges = crate::parser::ast_column_lineage::resolve_column_lineage_ast_for(
+            base_graph,
+            base_root,
+            Some(&scope),
+        )
+        .edges;
         edges.extend(
-            crate::parser::column_lineage::resolve_column_lineage_in(base_graph, base_root).edges,
+            crate::parser::column_lineage::resolve_column_lineage_for(
+                base_graph,
+                base_root,
+                Some(&scope),
+            )
+            .edges,
         );
         edges
     };

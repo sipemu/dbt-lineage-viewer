@@ -63,7 +63,8 @@ pub struct CacheEntry {
     pub parsed: ParsedSqlFile,
 }
 
-const CACHE_VERSION: u32 = 1;
+/// Bump whenever parse output for the same file content changes.
+const CACHE_VERSION: u32 = 2;
 const CACHE_REL_PATH: &str = ".dbt-lineage/cache.bin";
 
 /// Thread-safe parse cache. Constructed once per build, reused across all

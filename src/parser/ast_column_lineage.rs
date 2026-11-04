@@ -38,6 +38,16 @@ pub fn resolve_column_lineage_ast_in(
     graph: &LineageGraph,
     root: &std::path::Path,
 ) -> ColumnLineage {
+    resolve_column_lineage_ast_for(graph, root, None)
+}
+
+/// Like [`resolve_column_lineage_ast_in`], analyzing only the nodes in `only`
+/// (edges *into* those nodes); `None` analyzes every node.
+pub fn resolve_column_lineage_ast_for(
+    graph: &LineageGraph,
+    root: &std::path::Path,
+    only: Option<&std::collections::HashSet<petgraph::stable_graph::NodeIndex>>,
+) -> ColumnLineage {
     let mut edges: Vec<ColumnEdge> = Vec::new();
     let label_to_id: HashMap<String, String> = graph
         .node_indices()
@@ -48,6 +58,9 @@ pub fn resolve_column_lineage_ast_in(
         .collect();
 
     for idx in graph.node_indices() {
+        if only.is_some_and(|set| !set.contains(&idx)) {
+            continue;
+        }
         let node = &graph[idx];
         let Some(path) = &node.file_path else {
             continue;

@@ -126,6 +126,16 @@ pub fn resolve_column_lineage(graph: &LineageGraph) -> ColumnLineage {
 /// Resolve column lineage, reading relative node file paths under `root`
 /// (the dbt project directory).
 pub fn resolve_column_lineage_in(graph: &LineageGraph, root: &std::path::Path) -> ColumnLineage {
+    resolve_column_lineage_for(graph, root, None)
+}
+
+/// Like [`resolve_column_lineage_in`], analyzing only the nodes in `only`
+/// (edges *into* those nodes); `None` analyzes every node.
+pub fn resolve_column_lineage_for(
+    graph: &LineageGraph,
+    root: &std::path::Path,
+    only: Option<&std::collections::HashSet<petgraph::stable_graph::NodeIndex>>,
+) -> ColumnLineage {
     let mut edges = Vec::new();
 
     // Build a map of unique_id -> columns for source resolution
@@ -139,6 +149,9 @@ pub fn resolve_column_lineage_in(graph: &LineageGraph, root: &std::path::Path) -
 
     // For each model node with a file_path, try to resolve column lineage
     for idx in graph.node_indices() {
+        if only.is_some_and(|set| !set.contains(&idx)) {
+            continue;
+        }
         let node = &graph[idx];
         edges.extend(resolve_node_column_edges(node, &column_map, root));
     }

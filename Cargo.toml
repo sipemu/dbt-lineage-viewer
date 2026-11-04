@@ -54,6 +54,7 @@ crossterm = { version = "0.28", optional = true }
 nucleo-matcher = { version = "0.3", optional = true }
 syntect = { version = "5", optional = true, default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy"] }
 ureq = { version = "2", features = ["json"] }
+yaml-rust2 = "0.10"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

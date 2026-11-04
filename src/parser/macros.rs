@@ -279,3 +279,146 @@ mod tests {
         assert_eq!(wrappers.len(), 1);
     }
 }
+
+static SET_SOURCE_MODEL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\{%-?\s*set\s+source_model\s*=\s*(.*?)\s*-?%\}").unwrap());
+static KWARG_SOURCE_MODEL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)\bsource_model\s*=\s*("[^"]*"|'[^']*'|\[[^\]]*\]|\{[^}]*\})"#).unwrap()
+});
+static SET_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)\{%-?\s*set\s+\w+\s*-?%\}(.*?)\{%-?\s*endset\s*-?%\}").unwrap()
+});
+
+/// Dependencies declared through a `source_model` argument, the convention of
+/// AutomateDV (dbtvault) and similar packages whose macros call `ref()` /
+/// `source()` internally:
+///
+/// - `{% set source_model = "stg_orders" %}` then `pkg.hub(..., source_model=source_model)`
+/// - a literal keyword argument: `source_model="stg_orders"` or `source_model=["a", "b"]`
+/// - a YAML metadata block (`{% set yaml_metadata %} source_model: raw_orders {% endset %}`)
+///
+/// A string or list of strings is a model `ref`; a mapping
+/// `{source_name: table}` (or a list of tables) is a `source`.
+pub fn extract_source_model_refs(sql: &str) -> (Vec<RefCall>, Vec<SourceCall>) {
+    let mut refs = Vec::new();
+    let mut sources = Vec::new();
+    if !sql.contains("source_model") {
+        return (refs, sources);
+    }
+    let mut add = |value: &serde_yaml::Value| collect_source_model(value, &mut refs, &mut sources);
+
+    for re in [&*SET_SOURCE_MODEL, &*KWARG_SOURCE_MODEL] {
+        for cap in re.captures_iter(sql) {
+            if let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&cap[1]) {
+                add(&v);
+            }
+        }
+    }
+    for cap in SET_BLOCK.captures_iter(sql) {
+        if let Ok(serde_yaml::Value::Mapping(m)) = serde_yaml::from_str(&cap[1]) {
+            if let Some(v) = m.get("source_model") {
+                add(v);
+            }
+        }
+    }
+    refs.sort_by(|a, b| a.name.cmp(&b.name));
+    refs.dedup();
+    sources.sort_by(|a, b| (&a.source_name, &a.table_name).cmp(&(&b.source_name, &b.table_name)));
+    sources.dedup();
+    (refs, sources)
+}
+
+fn collect_source_model(
+    value: &serde_yaml::Value,
+    refs: &mut Vec<RefCall>,
+    sources: &mut Vec<SourceCall>,
+) {
+    use serde_yaml::Value;
+    let model = |name: &str| RefCall {
+        package: None,
+        name: name.to_string(),
+    };
+    match value {
+        Value::String(name) if is_identifier(name) => refs.push(model(name)),
+        Value::Sequence(items) => {
+            for item in items {
+                if let Value::String(name) = item {
+                    if is_identifier(name) {
+                        refs.push(model(name));
+                    }
+                }
+            }
+        }
+        Value::Mapping(map) => {
+            for (k, v) in map {
+                let Value::String(source_name) = k else {
+                    continue;
+                };
+                let tables: Vec<&str> = match v {
+                    Value::String(t) => vec![t.as_str()],
+                    Value::Sequence(ts) => ts.iter().filter_map(Value::as_str).collect(),
+                    _ => vec![],
+                };
+                for t in tables.into_iter().filter(|t| is_identifier(t)) {
+                    sources.push(SourceCall {
+                        source_name: source_name.clone(),
+                        table_name: t.to_string(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Plain dbt node names only; skips Jinja expressions and variables.
+fn is_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+#[cfg(test)]
+mod source_model_tests {
+    use super::*;
+
+    fn names(sql: &str) -> (Vec<String>, Vec<String>) {
+        let (r, s) = extract_source_model_refs(sql);
+        (
+            r.into_iter().map(|r| r.name).collect(),
+            s.into_iter()
+                .map(|s| format!("{}.{}", s.source_name, s.table_name))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn set_variable_form() {
+        let sql = r#"{%- set source_model = "v_stg_orders" -%}
+{%- set src_pk = "ORDER_PK" -%}
+{{ automate_dv.hub(src_pk=src_pk, source_model=source_model) }}"#;
+        assert_eq!(names(sql), (vec!["v_stg_orders".into()], vec![]));
+    }
+
+    #[test]
+    fn list_and_literal_kwarg_forms() {
+        let sql = r#"{%- set source_model = ["stg_a", "stg_b"] -%}
+{{ automate_dv.hub(src_pk="PK", source_model=source_model) }}"#;
+        assert_eq!(names(sql).0, vec!["stg_a", "stg_b"]);
+        let sql = r#"{{ automate_dv.sat(src_pk="PK", source_model='stg_c') }}"#;
+        assert_eq!(names(sql).0, vec!["stg_c"]);
+    }
+
+    #[test]
+    fn yaml_metadata_block_with_model_or_source() {
+        let sql = "{%- set yaml_metadata -%}\nsource_model: 'raw_orders'\nderived_columns:\n  A: 'B'\n{%- endset -%}\n{{ automate_dv.stage(source_model=metadata_dict['source_model']) }}";
+        assert_eq!(names(sql), (vec!["raw_orders".into()], vec![]));
+        let sql = "{%- set yaml_metadata -%}\nsource_model:\n  tpch: 'ORDERS'\n{%- endset -%}";
+        assert_eq!(names(sql), (vec![], vec!["tpch.ORDERS".into()]));
+    }
+
+    #[test]
+    fn ignores_variables_and_files_without_source_model() {
+        assert_eq!(names("select * from {{ ref('x') }}"), (vec![], vec![]));
+        let sql = "{{ pkg.hub(source_model=var('stg')) }}";
+        assert_eq!(names(sql), (vec![], vec![]));
+    }
+}

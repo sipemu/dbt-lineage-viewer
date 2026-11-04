@@ -10,8 +10,24 @@ Notable changes per release. Full per-release notes live on the
 - CI workflows moved to Node 24 action versions (checkout v5, artifact
   v6/v7, docker v4/v7, action-gh-release v3, codecov v6).
 
+### Added
+
+- AutomateDV / dbtvault-style models: dependencies passed as `source_model`
+  (a `set` variable, a literal argument, or a YAML metadata block) become
+  lineage edges. Previously every Data Vault model looked like an orphan.
+
 ### Fixed
 
+- Schema YAML robustness, found on real projects (tuva): `<<: *anchor` merge
+  keys are applied, `tags: foo` is accepted as well as a list, and files with
+  duplicate keys load PyYAML-style (last value wins) instead of being dropped.
+  Each of these silently lost descriptions, materializations and tags for
+  every model in the file, which showed up as phantom changes in `diff`.
+- Column impact analyzed every model in the base tree; it now analyzes only
+  models downstream of the changed ones (1,000-model project: 5.6 s → 66 ms
+  for a renamed column).
+- Parse cache version bumped so cached results from older versions are
+  re-parsed.
 - `lint --disable` help listed only four of the six rules; removed the unused
   `LintConfig::generic_only` flag (`generic-only` is a coverage finding).
 

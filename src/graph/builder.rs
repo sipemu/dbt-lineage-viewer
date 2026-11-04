@@ -18,7 +18,11 @@ use super::types::*;
 /// Parse one SQL file completely. Used by both the parallel pipeline and the
 /// cache-miss path. Pure function of file contents + wrapper macro list.
 fn parse_sql_content(content: &str, wrappers: &[WrapperMacro]) -> ParsedSqlFile {
-    let (wrapped_refs, wrapped_sources) = extract_wrapper_calls(content, wrappers);
+    let (mut wrapped_refs, mut wrapped_sources) = extract_wrapper_calls(content, wrappers);
+    let (source_model_refs, source_model_sources) =
+        crate::parser::macros::extract_source_model_refs(content);
+    wrapped_refs.extend(source_model_refs);
+    wrapped_sources.extend(source_model_sources);
     let config = extract_config(content);
     ParsedSqlFile {
         refs: extract_refs(content),
