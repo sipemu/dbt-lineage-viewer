@@ -101,6 +101,12 @@ fn run(cli: Cli) -> Result<()> {
                 project_dir,
                 output,
             } => run_macros_command(project_dir, output),
+            Command::Site {
+                project_dir,
+                manifest,
+                out,
+                title,
+            } => run_site_command(project_dir, manifest.as_ref(), out, title.as_deref()),
             Command::Docs {
                 project_dir,
                 manifest,
@@ -431,6 +437,38 @@ fn run_macros_command(project_dir: &Path, output: &cli::MacrosOutputFormat) -> R
         cli::MacrosOutputFormat::Json => render::macros::render_macros_json(&graph),
         cli::MacrosOutputFormat::Mermaid => render::macros::render_macros_mermaid(&graph),
     }
+    Ok(())
+}
+
+/// Run the `site` subcommand: write the static lineage site.
+#[cfg(not(tarpaulin_include))]
+fn run_site_command(
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    out: &Path,
+    title: Option<&str>,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, manifest, false)?;
+    let column_lineage = merge_column_lineage(
+        parser::ast_column_lineage::resolve_column_lineage_ast_in(&dag, &project_dir),
+        parser::column_lineage::resolve_column_lineage_in(&dag, &project_dir),
+    );
+    let title = title.map(String::from).unwrap_or_else(|| {
+        parser::project::DbtProject::load(&project_dir)
+            .map(|p| p.name)
+            .unwrap_or_else(|_| "dbt lineage".into())
+    });
+    let stats = render::site::write_site(&dag, &column_lineage, &project_dir, out, &title)?;
+    eprintln!(
+        "site: wrote index + {} node pages to {} in {:.2}s",
+        stats.node_pages,
+        out.display(),
+        started.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 

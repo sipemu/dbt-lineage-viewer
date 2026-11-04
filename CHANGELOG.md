@@ -3,6 +3,21 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage site` — static lineage site for GitHub/GitLab Pages: searchable
+  index, one page per node with a linked lineage diagram, upstream/downstream,
+  tests, columns with column-level lineage, and highlighted SQL; light/dark and
+  phone-friendly, no server or CDN (#52). See `docs/SITE.md`.
+
+### Changed
+
+- Column lineage is ~30× faster on large projects: the regex analyzer reuses
+  compiled per-column patterns and both analyzers run in parallel (8.7 s →
+  0.3 s for 1,500 models). Results are unchanged.
+
 ## [0.11.0] – 2026-11-04
 
 ### Added

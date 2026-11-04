@@ -292,4 +292,68 @@ mod cli {
         assert!(output.status.success());
         assert!(stdout.contains("assert_orders_positive_amount"));
     }
+
+    #[test]
+    fn test_site_on_fixture_project() {
+        let out = tempfile::tempdir().unwrap();
+        let output = Command::new(binary_path())
+            .args(["site", "-p"])
+            .arg(super::fixture_dir())
+            .arg("--out")
+            .arg(out.path())
+            .output()
+            .expect("Failed to run binary");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let index = std::fs::read_to_string(out.path().join("index.html")).unwrap();
+        assert!(index.contains("<title>simple_project</title>"));
+        for page in [
+            "model.orders",
+            "model.stg_orders",
+            "source.raw.orders",
+            "seed.countries",
+        ] {
+            assert!(
+                out.path().join(format!("nodes/{page}.html")).exists(),
+                "{page}"
+            );
+        }
+
+        // Every relative link and asset reference resolves to a written file.
+        let href = regex::Regex::new(r##"(?:href|src)="([^"#]+)"##).unwrap();
+        let mut checked = 0;
+        for dir in [out.path().to_path_buf(), out.path().join("nodes")] {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_none_or(|e| e != "html") {
+                    continue;
+                }
+                let html = std::fs::read_to_string(&path).unwrap();
+                for cap in href.captures_iter(&html) {
+                    let target = &cap[1];
+                    if target.starts_with("http") {
+                        continue;
+                    }
+                    assert!(
+                        dir.join(target).exists(),
+                        "{} -> {}",
+                        path.display(),
+                        target
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 50, "only {checked} links checked");
+
+        let orders = std::fs::read_to_string(out.path().join("nodes/model.orders.html")).unwrap();
+        assert!(orders.contains(r#"<a href="model.customers.html">customers</a>"#));
+        assert!(orders
+            .contains(r#"<a href="model.stg_payments.html#col-amount">stg_payments.amount</a>"#));
+        assert!(orders.contains("<svg class=\"lineage\""));
+    }
 }
