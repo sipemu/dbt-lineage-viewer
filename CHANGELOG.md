@@ -3,7 +3,7 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
-## [Unreleased]
+## [0.13.0] – 2026-11-05
 
 ### Added
 
