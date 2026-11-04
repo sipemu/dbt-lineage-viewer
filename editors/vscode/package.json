@@ -1,0 +1,77 @@
+{
+  "name": "dbt-lineage",
+  "displayName": "dbt-lineage",
+  "description": "dbt lineage in the editor: hover and go-to-definition on ref()/source(), upstream/downstream impact per model, lint diagnostics. No warehouse, no Python.",
+  "version": "0.1.0",
+  "publisher": "sipemu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sipemu/dbt-lineage-viewer",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/sipemu/dbt-lineage-viewer/issues"
+  },
+  "homepage": "https://github.com/sipemu/dbt-lineage-viewer/blob/master/docs/EDITORS.md",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Visualization"
+  ],
+  "keywords": [
+    "dbt",
+    "lineage",
+    "sql",
+    "data engineering",
+    "analytics engineering"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/dbt_project.yml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dbt-lineage.showLineage",
+        "title": "dbt-lineage: Show lineage"
+      },
+      {
+        "command": "dbt-lineage.restartServer",
+        "title": "dbt-lineage: Restart language server"
+      }
+    ],
+    "configuration": {
+      "title": "dbt-lineage",
+      "properties": {
+        "dbtLineage.path": {
+          "type": "string",
+          "default": "dbt-lineage",
+          "description": "Path to the dbt-lineage binary (a version that provides `dbt-lineage lsp`)."
+        },
+        "dbtLineage.lineageDepth": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "description": "Upstream and downstream levels shown by \"dbt-lineage: Show lineage\"."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

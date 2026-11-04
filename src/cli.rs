@@ -170,6 +170,9 @@ pub enum Command {
         manifest: Option<PathBuf>,
     },
 
+    /// Run a Language Server (stdio) for editors: hover and go-to-definition on
+    /// ref()/source(), a lineage code lens per model, and lint diagnostics.
+    Lsp,
     /// Critical-path and slowest-model performance report from target/run_results.json.
     Perf {
         /// Path to dbt project directory

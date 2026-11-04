@@ -12,6 +12,7 @@
 //! - [`parser`] — file discovery, SQL parsing, manifest parsing, on-disk cache.
 //! - [`render`] — output formatters per format (ASCII, DOT, JSON, Mermaid, SVG, HTML, …).
 //! - [`mcp`] — stdio Model Context Protocol server.
+//! - `lsp` — stdio Language Server for editors (feature `lsp`).
 //! - [`tui`] — interactive terminal UI (feature-gated).
 
 pub mod ci;
@@ -19,6 +20,8 @@ pub mod cli;
 pub mod error;
 pub mod git;
 pub mod graph;
+#[cfg(feature = "lsp")]
+pub mod lsp;
 pub mod mcp;
 pub mod parser;
 pub mod render;

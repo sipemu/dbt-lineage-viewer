@@ -126,6 +126,7 @@ fn run(cli: Cli) -> Result<()> {
                 project_dir,
                 output,
             } => run_diff_command(base, head.as_deref(), project_dir, output),
+            Command::Lsp => run_lsp_command(),
             Command::Ci { action } => match action {
                 cli::CiAction::Report {
                     base,
@@ -808,6 +809,15 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Run the `lsp` subcommand: serve LSP over stdio.
+#[cfg(not(tarpaulin_include))]
+fn run_lsp_command() -> Result<()> {
+    #[cfg(feature = "lsp")]
+    return dbt_lineage::lsp::run_stdio();
+    #[cfg(not(feature = "lsp"))]
+    anyhow::bail!("LSP feature not enabled. Rebuild with --features lsp")
 }
 
 /// Run `ci comment`: upsert the sticky PR/MR comment from a Markdown file.

@@ -3,6 +3,18 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage lsp` — stdio Language Server: hover and go-to-definition on
+  `ref()` / `source()`, a code lens per model (upstream/downstream counts,
+  impact severity), and `lint` findings as diagnostics refreshed on save.
+  Projects are found per file via the nearest `dbt_project.yml` (feature
+  `lsp`, on by default) (#53).
+- VS Code extension in `editors/vscode` (language client plus a
+  *Show lineage* webview), and Neovim / Helix setup in `docs/EDITORS.md`.
+
 ## [0.11.0] – 2026-11-04
 
 ### Added
