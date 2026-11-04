@@ -136,7 +136,7 @@ pub fn resolve_column_lineage_for(
     root: &std::path::Path,
     only: Option<&std::collections::HashSet<petgraph::stable_graph::NodeIndex>>,
 ) -> ColumnLineage {
-    let mut edges = Vec::new();
+    use rayon::prelude::*;
 
     // Build a map of unique_id -> columns for source resolution
     let column_map: HashMap<String, Vec<String>> = graph
@@ -147,14 +147,16 @@ pub fn resolve_column_lineage_for(
         })
         .collect();
 
-    // For each model node with a file_path, try to resolve column lineage
-    for idx in graph.node_indices() {
-        if only.is_some_and(|set| !set.contains(&idx)) {
-            continue;
-        }
-        let node = &graph[idx];
-        edges.extend(resolve_node_column_edges(node, &column_map, root));
-    }
+    // For each model node with a file_path, try to resolve column lineage.
+    // Nodes are independent; order of the result follows node order.
+    let nodes: Vec<_> = graph
+        .node_indices()
+        .filter(|idx| only.is_none_or(|set| set.contains(idx)))
+        .collect();
+    let edges = nodes
+        .par_iter()
+        .flat_map_iter(|&idx| resolve_node_column_edges(&graph[idx], &column_map, root))
+        .collect();
 
     ColumnLineage { edges }
 }
@@ -327,12 +329,31 @@ pub fn extract_select_items(sql: &str) -> Vec<SelectItem> {
     items
 }
 
+static JINJA_COMMENT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{#[\s\S]*?#\}").unwrap());
+static JINJA_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?[\s\S]*?-?\}\}|\{%-?[\s\S]*?-?%\}").unwrap());
+
 /// Strip Jinja tags and comments from SQL
 fn strip_jinja(sql: &str) -> String {
-    let re_comment = Regex::new(r"\{#[\s\S]*?#\}").unwrap();
-    let re_tag = Regex::new(r"\{\{-?[\s\S]*?-?\}\}|\{%-?[\s\S]*?-?%\}").unwrap();
-    let cleaned = re_comment.replace_all(sql, "");
-    re_tag.replace_all(&cleaned, "__jinja__").to_string()
+    let cleaned = JINJA_COMMENT_RE.replace_all(sql, "");
+    JINJA_TAG_RE.replace_all(&cleaned, "__jinja__").to_string()
+}
+
+/// Compile `pattern`, reusing earlier compilations on this thread. Column
+/// names repeat across models, and compiling these case-insensitive Unicode
+/// patterns dominates the analyzer's run time on large projects.
+fn cached_regex(pattern: String) -> Option<Regex> {
+    thread_local! {
+        static CACHE: std::cell::RefCell<HashMap<String, Option<Regex>>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(pattern)
+            .or_insert_with_key(|p| Regex::new(p).ok())
+            .clone()
+    })
 }
 
 /// Try to find the source alias and column for an output column name
@@ -362,7 +383,7 @@ fn try_alias_as_pattern(
         r"(?i)(\w+)\.(\w+)\s+(?:AS\s+)?{}(?:\s|,|$)",
         regex::escape(output_col)
     );
-    let re = Regex::new(&pattern).ok()?;
+    let re = cached_regex(pattern)?;
     let cap = re.captures(sql)?;
     Some((Some(cap[1].to_string()), Some(cap[2].to_string()), false))
 }
@@ -373,7 +394,7 @@ fn try_direct_pattern(
     output_col: &str,
 ) -> Option<(Option<String>, Option<String>, bool)> {
     let pattern = format!(r"(?i)(\w+)\.{}\b", regex::escape(output_col));
-    let re = Regex::new(&pattern).ok()?;
+    let re = cached_regex(pattern)?;
     let cap = re.captures(sql)?;
     Some((
         Some(cap[1].to_string()),
@@ -388,7 +409,7 @@ fn try_function_pattern(sql: &str, output_col: &str) -> bool {
         r"(?i)\w+\s*\([^)]*\)\s+(?:AS\s+)?{}",
         regex::escape(output_col)
     );
-    Regex::new(&pattern).ok().is_some_and(|re| re.is_match(sql))
+    cached_regex(pattern).is_some_and(|re| re.is_match(sql))
 }
 
 #[cfg(test)]

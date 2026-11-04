@@ -28,6 +28,7 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **`plan --base <ref>`** — emits a dbt selector for the minimal rebuild set; pipes into `dbt run -s "$(…)"`
 - **`coverage`** — tests-per-model + per-column map; text, JSON, or SARIF (PR annotations)
 - **`lint`** — flags unused sources, undefined refs, dead-end models, missing descriptions, models with only unresolved upstream, circular refs
+- **`site`** — static lineage site (search, per-node pages with lineage diagram, column-level lineage, SQL) for GitHub/GitLab Pages
 - **`docs`** — generates per-model Markdown with description, upstream / downstream, columns, embedded Mermaid lineage
 - **`perf`** — joins `run_results.json` with the DAG: slowest models, critical paths
 - **`check-manifest`** — flags drift between `manifest.json` and current SQL files using dbt's recorded SHA-256 (mtime fallback); exits non-zero for CI gating
@@ -224,6 +225,16 @@ dbt-lineage diff --base HEAD~1 -o json                 # JSON for CI integration
 
 Shows added, removed, and modified nodes and edges with a summary of changes.
 
+### Static lineage site
+
+A self-contained static site — search, one page per model/source/seed/exposure with its lineage diagram, columns with column-level lineage, and highlighted SQL — ready for GitHub or GitLab Pages:
+
+```sh
+dbt-lineage site -p path/to/project --out site
+```
+
+Light/dark, phone-friendly, no server or CDN. See [`docs/SITE.md`](docs/SITE.md) for Pages workflows.
+
 ### Project summary
 
 One-shot project overview, designed as the first thing an agent (or human) runs against an unfamiliar dbt project:
@@ -312,6 +323,7 @@ Commands:
   mcp             Run an MCP (Model Context Protocol) stdio server exposing lineage tools to AI agents. Reads JSON-RPC requests on stdin, writes responses to stdout
   perf            Critical-path and slowest-model performance report from target/run_results.json
   macros          Show the macro call graph (macros calling other macros)
+  site            Generate a static lineage site (search, one page per node with columns, column lineage, SQL and a lineage diagram) for GitHub/GitLab Pages
   docs            Generate Markdown documentation per model (or one consolidated file)
   lint            Structural lint: dead-end models, unused sources, undefined refs, missing docs. Exit code 1 if any error-severity finding is reported
   coverage        Test coverage map: which models have which tests, column coverage gaps

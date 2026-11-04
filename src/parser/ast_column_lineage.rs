@@ -57,19 +57,19 @@ pub fn resolve_column_lineage_ast_for(
         })
         .collect();
 
-    for idx in graph.node_indices() {
-        if only.is_some_and(|set| !set.contains(&idx)) {
-            continue;
-        }
+    use rayon::prelude::*;
+    let nodes: Vec<_> = graph
+        .node_indices()
+        .filter(|idx| only.is_none_or(|set| set.contains(idx)))
+        .collect();
+    edges.par_extend(nodes.par_iter().flat_map_iter(|&idx| {
         let node = &graph[idx];
-        let Some(path) = &node.file_path else {
-            continue;
-        };
-        let Ok(sql) = std::fs::read_to_string(root.join(path)) else {
-            continue;
-        };
-        edges.extend(analyze_sql(&sql, &node.unique_id, &label_to_id));
-    }
+        node.file_path
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
+            .map(|sql| analyze_sql(&sql, &node.unique_id, &label_to_id))
+            .unwrap_or_default()
+    }));
 
     ColumnLineage { edges }
 }

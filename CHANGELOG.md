@@ -5,16 +5,23 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
-### Changed
-
-- CI workflows moved to Node 24 action versions (checkout v5, artifact
-  v6/v7, docker v4/v7, action-gh-release v3, codecov v6).
-
 ### Added
 
+- `dbt-lineage site` — static lineage site for GitHub/GitLab Pages: searchable
+  index, one page per node with a linked lineage diagram, upstream/downstream,
+  tests, columns with column-level lineage, and highlighted SQL; light/dark and
+  phone-friendly, no server or CDN (#52). See `docs/SITE.md`.
 - AutomateDV / dbtvault-style models: dependencies passed as `source_model`
   (a `set` variable, a literal argument, or a YAML metadata block) become
   lineage edges. Previously every Data Vault model looked like an orphan.
+
+### Changed
+
+- Column lineage is ~30× faster on large projects: the regex analyzer reuses
+  compiled per-column patterns and both analyzers run in parallel (8.7 s →
+  0.3 s for 1,500 models). Results are unchanged.
+- CI workflows moved to Node 24 action versions (checkout v5, artifact
+  v6/v7, docker v4/v7, action-gh-release v3, codecov v6).
 
 ### Fixed
 

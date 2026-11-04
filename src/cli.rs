@@ -200,6 +200,25 @@ pub enum Command {
         output: MacrosOutputFormat,
     },
 
+    /// Generate a static lineage site (search, one page per node with
+    /// columns, column lineage, SQL and a lineage diagram) for GitHub/GitLab Pages.
+    Site {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// Output directory
+        #[arg(long, default_value = "site")]
+        out: PathBuf,
+
+        /// Site title (defaults to the dbt project name)
+        #[arg(long)]
+        title: Option<String>,
+    },
     /// Generate Markdown documentation per model (or one consolidated file).
     Docs {
         /// Path to dbt project directory

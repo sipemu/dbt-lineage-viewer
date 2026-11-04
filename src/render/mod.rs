@@ -14,5 +14,6 @@ pub mod manifest_check;
 pub mod mermaid;
 pub mod perf;
 pub mod plan;
+pub mod site;
 pub mod summary;
 pub mod svg;
