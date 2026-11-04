@@ -3,6 +3,16 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [0.10.2] – 2026-11-04
+
+### Fixed
+
+- GitHub Action: SARIF upload was rejected ("multiple SARIF runs with the same
+  category"); lint and coverage now upload under separate categories, so
+  findings show inline on PRs.
+- CI report suggests `dbt build -s` (the selection can include seeds and
+  snapshots, which `dbt run` skips).
+
 ## [0.10.1] – 2026-11-04
 
 ### Fixed

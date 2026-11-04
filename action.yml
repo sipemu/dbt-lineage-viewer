@@ -133,13 +133,23 @@ runs:
         fi
         exit 0
 
-    - name: Upload SARIF (if produced)
-      if: inputs.sarif != ''
+    # One upload per category: code scanning rejects several SARIF runs
+    # under the same category.
+    - name: Upload lint SARIF
+      if: contains(inputs.sarif, 'lint')
       uses: github/codeql-action/upload-sarif@v3
       continue-on-error: true
       with:
-        sarif_file: ${{ runner.temp }}/dbt-lineage-sarif
-        category: dbt-lineage
+        sarif_file: ${{ runner.temp }}/dbt-lineage-sarif/lint.sarif
+        category: dbt-lineage-lint
+
+    - name: Upload coverage SARIF
+      if: contains(inputs.sarif, 'coverage')
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: ${{ runner.temp }}/dbt-lineage-sarif/coverage.sarif
+        category: dbt-lineage-coverage
 
     - name: Post PR comment
       if: github.event_name == 'pull_request' && inputs.comment == 'true' && steps.run.outputs.summary != ''

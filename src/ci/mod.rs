@@ -236,7 +236,7 @@ fn render_plan_section(md: &mut String, plan: &PlanReport) {
     }
     let _ = writeln!(
         md,
-        "```sh\ndbt run -s \"{}\"\n```\n",
+        "```sh\ndbt build -s \"{}\"\n```\n",
         plan.selector_string()
     );
 }
@@ -544,7 +544,7 @@ mod tests {
         assert!(md.starts_with(COMMENT_MARKER));
         assert!(md.contains("### Changes vs. `origin/main`"));
         assert!(md.contains("| added | `new` | model |"));
-        assert!(md.contains("dbt run -s \"+new\""));
+        assert!(md.contains("dbt build -s \"+new\""));
         assert!(md.contains("no \\| consumers"));
         assert!(md.contains("- **summary**: boom"));
         assert_eq!(report.selector(), "+new");
