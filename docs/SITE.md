@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install dbt-lineage
         env:
-          VERSION: 0.12.0  # first release with `site`
+          VERSION: 0.12.1
         run: |
           curl -fsSL "https://github.com/sipemu/dbt-lineage-viewer/releases/download/v$VERSION/dbt-lineage-v$VERSION-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz --strip-components=1
