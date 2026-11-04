@@ -79,15 +79,29 @@ Every tagged release ships pre-built binaries for Linux (x86_64 + aarch64), macO
 ### As a GitHub Action
 
 ```yaml
-- uses: sipemu/dbt-lineage-viewer@v0.7.4
-  with:
-    base: main           # diff against this ref
-    project-dir: dbt/
-    comment: true        # post a Markdown summary as a PR comment
-    sarif: lint,coverage # also surface findings as PR annotations
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write    # sticky PR comment
+  security-events: write  # only needed with `sarif:`
+
+jobs:
+  lineage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # `diff` / `plan` need the base branch history
+      - uses: sipemu/dbt-lineage-viewer@v0
+        with:
+          base: ${{ github.base_ref }}  # e.g. main; resolved to origin/main if needed
+          project-dir: dbt/
+          comment: true                 # post a Markdown summary as a PR comment
+          sarif: lint,coverage          # also surface findings as PR annotations
 ```
 
-The action installs the pinned `dbt-lineage` binary (from this repo's release artifacts), runs `summary`, `diff`, `plan`, and optionally `lint`/`coverage` SARIF, then posts a single sticky comment on the PR with the rendered report. See [`action.yml`](action.yml) for the full input/output reference.
+`@v0` tracks the latest `0.x` release; pin an exact tag (e.g. `@v0.9.1`) if you prefer. The action installs the matching `dbt-lineage` binary from this repo's release artifacts, runs `summary`, `diff`, `plan`, and optionally `lint`/`coverage` SARIF, then posts a single sticky comment on the PR with the rendered report. See [`action.yml`](action.yml) for the full input/output reference.
 
 ### From source
 
@@ -221,51 +235,59 @@ dbt-lineage --error-format json some_unknown_model
 
 `--error-format json` writes one JSON object per line to stderr. `stdout` is unaffected, so piping into `jq` still works.
 
-### MCP server (experimental)
+### MCP server
 
-Expose lineage as stdio MCP tools that Claude Code, Claude Desktop, and other MCP-aware clients can call directly:
+Expose lineage as stdio MCP tools, resources, and prompts that Claude Code, Claude Desktop, and other MCP-aware clients can call directly:
 
 ```sh
-dbt-lineage mcp -p path/to/project
-dbt-lineage mcp --manifest path/to/manifest.json
+claude mcp add dbt-lineage -- dbt-lineage mcp --project-dir /abs/path/to/project   # SQL-parse mode
+claude mcp add dbt-lineage -- dbt-lineage mcp --manifest /abs/path/to/manifest.json # manifest mode
 ```
 
-Available tools: `summary`, `search_models`, `lineage`, `impact`. The server reads JSON-RPC 2.0 requests on stdin and writes responses on stdout (one line per message). Manifest mode only — run `dbt compile` first.
+Works in both SQL-parse and manifest mode (`target/manifest.json` is picked up automatically when present). Tools: `summary`, `search_models`, `lineage`, `impact`, `get_model_details`, `read_model_sql`, `column_upstream`, `column_downstream`, `lineage_bundle`, `propose_test`; plus model resources and predefined prompts. See [`docs/MCP.md`](docs/MCP.md) for client setup, prompt walkthroughs, and composition recipes.
 
 ## CLI Reference
+
+Run `dbt-lineage <command> --help` for per-subcommand options.
 
 ```
 Usage: dbt-lineage [OPTIONS] [MODEL] [COMMAND]
 
 Commands:
-  summary         Project overview: counts, tags, top fan-out, orphans
   impact          Compute downstream impact analysis for a model
+  summary         Print a one-shot project overview: counts, tags, top fan-out, orphans
+  mcp             Run an MCP (Model Context Protocol) stdio server exposing lineage tools to AI agents. Reads JSON-RPC requests on stdin, writes responses to stdout
+  perf            Critical-path and slowest-model performance report from target/run_results.json
+  macros          Show the macro call graph (macros calling other macros)
+  docs            Generate Markdown documentation per model (or one consolidated file)
+  lint            Structural lint: dead-end models, unused sources, undefined refs, missing docs. Exit code 1 if any error-severity finding is reported
+  coverage        Test coverage map: which models have which tests, column coverage gaps
+  check-manifest  Verify a manifest.json is still in sync with the project's SQL files. Exits with code 1 on staleness, making it directly usable in CI pipelines
+  plan            Emit a dbt selector expression covering models added or modified since `--base`. Designed to pipe into `dbt run -s "$(dbt-lineage plan --base main)"`
   diff            Compare lineage between git refs
-  check-manifest  Verify manifest.json is in sync with current SQL files (exit 1 if stale)
-  mcp             Run an MCP stdio server exposing lineage tools to AI agents
+  help            Print this message or the help of the given subcommand(s)
 
 Arguments:
   [MODEL]  Model name to focus on (shows full lineage if omitted)
 
 Options:
-  -p, --project-dir <PATH>    Path to dbt project directory [default: .]
-  -u, --upstream <N>          Upstream levels to show (default: all)
-  -d, --downstream <N>        Downstream levels to show (default: all)
-  -i, --interactive           Launch interactive TUI mode
-  -o, --output <FORMAT>       Output format [default: ascii]
-                              [values: ascii, dot, json, mermaid, svg, html]
-  -s, --select <SELECTOR>     Selector expression: tag:X, path:Y, or model name (comma-separated)
-      --manifest <PATH>       Use manifest.json instead of parsing SQL
-      --include-tests         Include test nodes
-      --include-seeds         Include seed nodes
-      --include-snapshots     Include snapshot nodes
-      --include-exposures     Include exposure nodes
-      --show-columns          Mermaid only: inline column names inside node labels
-      --group-by <MODE>       Mermaid only: group nodes by directory [values: none, directory]
-      --collapse [<MODE>]     Drop intermediate nodes, label transitive edges with (via N)
-                              [values: none, auto, focal]  [default: none]  [bare: auto]
-      --error-format <FORMAT> Error output: plain (default) or json [global]
-  -h, --help                  Print help
+  -p, --project-dir <PROJECT_DIR>    Path to dbt project directory [default: .]
+  -u, --upstream <UPSTREAM>          Upstream levels to show (default: all)
+  -d, --downstream <DOWNSTREAM>      Downstream levels to show (default: all)
+  -i, --interactive                  Launch interactive TUI mode
+  -o, --output <OUTPUT>              Output format: ascii (default), dot, json, mermaid, svg, html [default: ascii] [possible values: ascii, dot, json, mermaid, svg, html]
+      --include-tests                Include test nodes
+      --include-seeds                Include seed nodes
+      --include-snapshots            Include snapshot nodes
+      --include-exposures            Include exposure nodes
+  -s, --select <SELECT>              Selector expression: tag:X, path:Y, or model name (comma-separated)
+      --manifest <MANIFEST>          Use manifest.json instead of parsing SQL (path to manifest file or directory containing target/manifest.json)
+      --show-columns                 Mermaid only: inline column names inside each node's label
+      --group-by <GROUP_BY>          Mermaid only: group nodes by directory using Mermaid subgraphs [default: none] [possible values: none, directory]
+      --error-format <ERROR_FORMAT>  How errors are written to stderr: human-readable text (default) or one JSON object per line (`{level, what, why, hint}`) for agent/CI consumers [default: plain] [possible values: plain, json]
+      --collapse [<COLLAPSE>]        Drop intermediate nodes and replace transitive paths with `(via N)` edges. Bare `--collapse` is equivalent to `--collapse auto` (keep endpoints + focus); `--collapse focal` keeps only sources, exposures, and the focus model [default: none] [possible values: none, auto, focal]
+      --no-cache                     Bypass the on-disk parse cache (.dbt-lineage/cache.bin). Useful when debugging parser changes or you want a clean baseline benchmark
+  -h, --help                         Print help (see more with '--help')
 ```
 
 ## TUI Keybindings
