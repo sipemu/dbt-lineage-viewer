@@ -4,6 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 
 use crate::graph::coverage::CoverageReport;
+use crate::render::locations::{sarif_location, Locations};
 
 pub fn render_coverage_text(report: &CoverageReport) {
     render_coverage_text_to_writer(report, &mut std::io::stdout().lock());
@@ -71,11 +72,15 @@ pub fn render_coverage_json_to_writer<W: Write>(report: &CoverageReport, w: &mut
 
 /// Emit minimal SARIF for models with no tests, so CI can surface them as PR
 /// annotations via GitHub's code-scanning integration.
-pub fn render_coverage_sarif(report: &CoverageReport) {
-    render_coverage_sarif_to_writer(report, &mut std::io::stdout().lock());
+pub fn render_coverage_sarif(report: &CoverageReport, locations: &Locations) {
+    render_coverage_sarif_to_writer(report, locations, &mut std::io::stdout().lock());
 }
 
-pub fn render_coverage_sarif_to_writer<W: Write>(report: &CoverageReport, w: &mut W) {
+pub fn render_coverage_sarif_to_writer<W: Write>(
+    report: &CoverageReport,
+    locations: &Locations,
+    w: &mut W,
+) {
     let mut results: Vec<serde_json::Value> = Vec::new();
     for m in &report.models {
         if !m.has_any_test() {
@@ -83,7 +88,7 @@ pub fn render_coverage_sarif_to_writer<W: Write>(report: &CoverageReport, w: &mu
                 "ruleId": "untested-model",
                 "level": "warning",
                 "message": {"text": format!("Model '{}' has no tests in its schema YAML.", m.model)},
-                "locations": [{"physicalLocation": {"artifactLocation": {"uri": format!("models/{}.sql", m.model)}}}]
+                "locations": sarif_location(locations.for_model(&m.model))
             }));
         }
         // Per-column finding: column declared in YAML with zero tests.
@@ -96,7 +101,7 @@ pub fn render_coverage_sarif_to_writer<W: Write>(report: &CoverageReport, w: &mu
                     "Model '{}' has {} of {} columns without any test.",
                     m.model, untested_count, m.columns_total
                 )},
-                "locations": [{"physicalLocation": {"artifactLocation": {"uri": format!("models/{}.sql", m.model)}}}]
+                "locations": sarif_location(locations.for_model(&m.model))
             }));
         }
         // Generic-only: model has tests but only generic ones (no custom semantic tests).
@@ -108,7 +113,7 @@ pub fn render_coverage_sarif_to_writer<W: Write>(report: &CoverageReport, w: &mu
                     "Model '{}' uses only generic tests (not_null/unique/accepted_values/relationships). Consider adding a custom or singular test for business rules.",
                     m.model
                 )},
-                "locations": [{"physicalLocation": {"artifactLocation": {"uri": format!("models/{}.sql", m.model)}}}]
+                "locations": sarif_location(locations.for_model(&m.model))
             }));
         }
     }
@@ -210,7 +215,7 @@ mod tests {
     #[test]
     fn test_sarif_flags_untested_models() {
         let mut buf = Vec::new();
-        render_coverage_sarif_to_writer(&fixture(), &mut buf);
+        render_coverage_sarif_to_writer(&fixture(), &Locations::default(), &mut buf);
         let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
         let results = v["runs"][0]["results"].as_array().unwrap();
         let rule_ids: Vec<&str> = results

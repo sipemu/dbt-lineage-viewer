@@ -4,6 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 
 use crate::graph::lint::{LintReport, LintSeverity};
+use crate::render::locations::{sarif_location, Locations};
 
 pub fn render_lint_text(report: &LintReport) {
     render_lint_text_to_writer(report, &mut std::io::stdout().lock());
@@ -45,11 +46,17 @@ pub fn render_lint_json_to_writer<W: Write>(report: &LintReport, w: &mut W) {
     writeln!(w).unwrap();
 }
 
-pub fn render_lint_sarif(report: &LintReport) {
-    render_lint_sarif_to_writer(report, &mut std::io::stdout().lock());
+pub fn render_lint_sarif(report: &LintReport, locations: &Locations) {
+    render_lint_sarif_to_writer(report, locations, &mut std::io::stdout().lock());
 }
 
-pub fn render_lint_sarif_to_writer<W: Write>(report: &LintReport, w: &mut W) {
+/// SARIF 2.1.0 for GitHub code scanning. Every result carries a file location
+/// (GitHub drops results without one).
+pub fn render_lint_sarif_to_writer<W: Write>(
+    report: &LintReport,
+    locations: &Locations,
+    w: &mut W,
+) {
     let results: Vec<serde_json::Value> = report
         .findings
         .iter()
@@ -63,6 +70,7 @@ pub fn render_lint_sarif_to_writer<W: Write>(report: &LintReport, w: &mut W) {
                 "ruleId": f.rule,
                 "level": level,
                 "message": {"text": f.message},
+                "locations": sarif_location(locations.for_id(&f.unique_id)),
             })
         })
         .collect();
@@ -70,11 +78,51 @@ pub fn render_lint_sarif_to_writer<W: Write>(report: &LintReport, w: &mut W) {
         "version": "2.1.0",
         "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/cs01/schemas/sarif-schema-2.1.0.json",
         "runs": [{
-            "tool": {"driver": {"name": "dbt-lineage"}},
+            "tool": {"driver": {
+                "name": "dbt-lineage",
+                "informationUri": "https://github.com/sipemu/dbt-lineage-viewer"
+            }},
             "results": results
         }]
     });
     serde_json::to_writer_pretty(&mut *w, &sarif).unwrap();
+    writeln!(w).unwrap();
+}
+
+pub fn render_lint_codeclimate(report: &LintReport, locations: &Locations) {
+    render_lint_codeclimate_to_writer(report, locations, &mut std::io::stdout().lock());
+}
+
+/// GitLab Code Quality report (CodeClimate subset), for
+/// `artifacts:reports:codequality`.
+pub fn render_lint_codeclimate_to_writer<W: Write>(
+    report: &LintReport,
+    locations: &Locations,
+    w: &mut W,
+) {
+    let issues: Vec<serde_json::Value> = report
+        .findings
+        .iter()
+        .map(|f| {
+            let severity = match f.severity {
+                LintSeverity::Error => "major",
+                LintSeverity::Warning => "minor",
+                LintSeverity::Info => "info",
+            };
+            let fingerprint = blake3::hash(format!("{}:{}", f.rule, f.unique_id).as_bytes());
+            json!({
+                "description": f.message,
+                "check_name": f.rule,
+                "fingerprint": fingerprint.to_hex().to_string(),
+                "severity": severity,
+                "location": {
+                    "path": locations.for_id(&f.unique_id),
+                    "lines": {"begin": 1}
+                }
+            })
+        })
+        .collect();
+    serde_json::to_writer_pretty(&mut *w, &issues).unwrap();
     writeln!(w).unwrap();
 }
 
@@ -132,10 +180,33 @@ mod tests {
     #[test]
     fn test_sarif_maps_severity() {
         let mut buf = Vec::new();
-        render_lint_sarif_to_writer(&report(), &mut buf);
+        render_lint_sarif_to_writer(&report(), &Locations::default(), &mut buf);
         let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
         let results = v["runs"][0]["results"].as_array().unwrap();
         assert_eq!(results[0]["level"], "warning");
         assert_eq!(results[1]["level"], "error");
+        // Every result needs a location for GitHub to show it.
+        for r in results {
+            assert_eq!(
+                r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+                "dbt_project.yml"
+            );
+        }
+    }
+
+    #[test]
+    fn test_codeclimate_shape() {
+        let mut buf = Vec::new();
+        render_lint_codeclimate_to_writer(&report(), &Locations::default(), &mut buf);
+        let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        let issues = v.as_array().unwrap();
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0]["check_name"], "unused-source");
+        assert_eq!(issues[0]["severity"], "minor");
+        assert_eq!(issues[1]["severity"], "major");
+        assert_eq!(issues[0]["location"]["path"], "dbt_project.yml");
+        assert_eq!(issues[0]["location"]["lines"]["begin"], 1);
+        assert_eq!(issues[0]["fingerprint"].as_str().unwrap().len(), 64);
+        assert_ne!(issues[0]["fingerprint"], issues[1]["fingerprint"]);
     }
 }

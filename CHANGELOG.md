@@ -22,6 +22,8 @@ Notable changes per release. Full per-release notes live on the
   `dbt-lineage-check-manifest` hooks (#57).
 - Container image `ghcr.io/sipemu/dbt-lineage` (Alpine + git, static musl
   binary, amd64/arm64), published by the release workflow (#58).
+- `lint -o codeclimate` — GitLab Code Quality report for inline MR findings
+  (part of #62).
 
 ### Changed
 
@@ -43,6 +45,11 @@ Notable changes per release. Full per-release notes live on the
   which in dbt selects the model's ancestors; it now emits `model+` (the model
   and its descendants), as documented. Sources, exposures, metrics and
   semantic models are no longer emitted, since dbt cannot build them.
+- **SARIF findings never showed inline on PRs.** `lint -o sarif` emitted
+  results without locations (GitHub drops those) and `coverage -o sarif`
+  guessed `models/<name>.sql`, wrong for nested folders and projects in a
+  subdirectory. Both now point at the node's real file, relative to the
+  repository root; undefined refs point at the model that references them.
 - `diff` / `plan` only use `target/manifest.json` when both sides have one; a
   locally compiled manifest no longer makes every node look removed + re-added.
 

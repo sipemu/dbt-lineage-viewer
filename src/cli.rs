@@ -233,7 +233,8 @@ pub enum Command {
         #[arg(long)]
         manifest: Option<PathBuf>,
 
-        /// Output: text (default), json, or sarif (for GitHub PR annotations)
+        /// Output: text (default), json, sarif (GitHub code scanning), or
+        /// codeclimate (GitLab Code Quality)
         #[arg(short = 'o', long, default_value = "text")]
         output: LintOutputFormat,
 
@@ -402,6 +403,7 @@ pub enum LintOutputFormat {
     Text,
     Json,
     Sarif,
+    Codeclimate,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

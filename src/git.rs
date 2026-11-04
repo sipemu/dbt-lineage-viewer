@@ -71,6 +71,20 @@ pub fn resolve_base_ref(path: &Path, git_ref: &str) -> Result<String> {
     )
 }
 
+/// Path of `path` inside its repository (`git rev-parse --show-prefix`),
+/// e.g. `"dbt/"`, or `""` at the root. `None` outside a git repository.
+pub fn show_prefix(path: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-prefix"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Get the current HEAD ref name or commit
 pub fn current_ref(path: &Path) -> Result<String> {
     let output = Command::new("git")
@@ -224,6 +238,16 @@ mod tests {
             "origin/release"
         );
         assert!(resolve_base_ref(&clone, "does-not-exist").is_err());
+    }
+
+    #[test]
+    fn test_show_prefix() {
+        let (_tmp, path) = setup_temp_git_repo();
+        assert_eq!(show_prefix(&path).as_deref(), Some(""));
+        std::fs::create_dir_all(path.join("dbt")).unwrap();
+        assert_eq!(show_prefix(&path.join("dbt")).as_deref(), Some("dbt/"));
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(show_prefix(outside.path()), None);
     }
 
     #[test]

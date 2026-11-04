@@ -523,7 +523,12 @@ fn run_lint_command(
     match output {
         cli::LintOutputFormat::Text => render::lint::render_lint_text(&report),
         cli::LintOutputFormat::Json => render::lint::render_lint_json(&report),
-        cli::LintOutputFormat::Sarif => render::lint::render_lint_sarif(&report),
+        cli::LintOutputFormat::Sarif => {
+            render::lint::render_lint_sarif(&report, &repo_locations(&dag, &project_dir))
+        }
+        cli::LintOutputFormat::Codeclimate => {
+            render::lint::render_lint_codeclimate(&report, &repo_locations(&dag, &project_dir))
+        }
     }
 
     if report.count_by_severity(graph::lint::LintSeverity::Error) > 0 {
@@ -547,7 +552,10 @@ fn run_coverage_command(project_dir: &Path, output: &cli::CoverageOutputFormat) 
     match output {
         cli::CoverageOutputFormat::Text => render::coverage::render_coverage_text(&report),
         cli::CoverageOutputFormat::Json => render::coverage::render_coverage_json(&report),
-        cli::CoverageOutputFormat::Sarif => render::coverage::render_coverage_sarif(&report),
+        cli::CoverageOutputFormat::Sarif => {
+            let dag = graph::builder::build_graph(&project_dir, &files)?;
+            render::coverage::render_coverage_sarif(&report, &repo_locations(&dag, &project_dir))
+        }
     }
     Ok(())
 }
@@ -830,6 +838,16 @@ fn ci_diff(
         dbt_lineage::git::validate_ref(project_dir, head_ref)?;
     }
     graph::diff::diff_git_with_head(project_dir, &base, head)
+}
+
+/// File locations relative to the repository root, for inline CI annotations.
+#[cfg(not(tarpaulin_include))]
+fn repo_locations(
+    dag: &graph::types::LineageGraph,
+    project_dir: &Path,
+) -> render::locations::Locations {
+    let prefix = dbt_lineage::git::show_prefix(project_dir).unwrap_or_default();
+    render::locations::Locations::from_graph(dag, project_dir, &prefix)
 }
 
 /// Resolve the manifest path from the --manifest argument.
