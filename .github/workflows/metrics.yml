@@ -1,0 +1,41 @@
+name: Adoption metrics
+
+# Weekly snapshot of release downloads, crates.io downloads, stars and (with
+# a TRAFFIC_TOKEN secret: a token with push access) repo traffic, appended to
+# metrics.jsonl on the `metrics` branch. GitHub keeps traffic for 14 days only.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out metrics branch
+        run: |
+          if git ls-remote --exit-code origin metrics >/dev/null; then
+            git fetch --depth=1 origin metrics
+            git worktree add metrics-branch FETCH_HEAD
+          else
+            git worktree add --detach metrics-branch
+            git -C metrics-branch checkout --orphan metrics
+            git -C metrics-branch rm -rfq .
+          fi
+      - name: Collect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+        run: python3 scripts/collect_metrics.py metrics-branch/metrics.jsonl
+      - name: Commit
+        working-directory: metrics-branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add metrics.jsonl
+          git commit -qm "metrics $(date -u +%F)"
+          git push origin HEAD:refs/heads/metrics
