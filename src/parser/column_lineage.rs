@@ -117,8 +117,15 @@ pub fn extract_table_refs(sql: &str) -> Vec<TableRef> {
     refs
 }
 
-/// Resolve column lineage for an entire graph
+/// Resolve column lineage for an entire graph. Relative node file paths are
+/// read relative to the current directory; see [`resolve_column_lineage_in`].
 pub fn resolve_column_lineage(graph: &LineageGraph) -> ColumnLineage {
+    resolve_column_lineage_in(graph, std::path::Path::new(""))
+}
+
+/// Resolve column lineage, reading relative node file paths under `root`
+/// (the dbt project directory).
+pub fn resolve_column_lineage_in(graph: &LineageGraph, root: &std::path::Path) -> ColumnLineage {
     let mut edges = Vec::new();
 
     // Build a map of unique_id -> columns for source resolution
@@ -133,7 +140,7 @@ pub fn resolve_column_lineage(graph: &LineageGraph) -> ColumnLineage {
     // For each model node with a file_path, try to resolve column lineage
     for idx in graph.node_indices() {
         let node = &graph[idx];
-        edges.extend(resolve_node_column_edges(node, &column_map));
+        edges.extend(resolve_node_column_edges(node, &column_map, root));
     }
 
     ColumnLineage { edges }
@@ -143,10 +150,12 @@ pub fn resolve_column_lineage(graph: &LineageGraph) -> ColumnLineage {
 fn resolve_node_column_edges(
     node: &crate::graph::types::NodeData,
     column_map: &HashMap<String, Vec<String>>,
+    root: &std::path::Path,
 ) -> Vec<ColumnEdge> {
     let Some(file_path) = &node.file_path else {
         return vec![];
     };
+    let file_path = root.join(file_path);
 
     let sql = match std::fs::read_to_string(file_path) {
         Ok(s) => s,

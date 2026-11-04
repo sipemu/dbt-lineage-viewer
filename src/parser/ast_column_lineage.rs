@@ -26,7 +26,18 @@ use super::column_lineage::{ColumnConfidence, ColumnEdge, ColumnLineage};
 
 /// Resolve column lineage for the entire graph using the SQL AST. Models without
 /// readable SQL are silently skipped (caller can fall back to the regex analyzer).
+/// Relative node file paths are read relative to the current directory; see
+/// [`resolve_column_lineage_ast_in`].
 pub fn resolve_column_lineage_ast(graph: &LineageGraph) -> ColumnLineage {
+    resolve_column_lineage_ast_in(graph, std::path::Path::new(""))
+}
+
+/// Like [`resolve_column_lineage_ast`], reading relative node file paths under
+/// `root` (the dbt project directory).
+pub fn resolve_column_lineage_ast_in(
+    graph: &LineageGraph,
+    root: &std::path::Path,
+) -> ColumnLineage {
     let mut edges: Vec<ColumnEdge> = Vec::new();
     let label_to_id: HashMap<String, String> = graph
         .node_indices()
@@ -41,7 +52,7 @@ pub fn resolve_column_lineage_ast(graph: &LineageGraph) -> ColumnLineage {
         let Some(path) = &node.file_path else {
             continue;
         };
-        let Ok(sql) = std::fs::read_to_string(path) else {
+        let Ok(sql) = std::fs::read_to_string(root.join(path)) else {
             continue;
         };
         edges.extend(analyze_sql(&sql, &node.unique_id, &label_to_id));

@@ -762,8 +762,10 @@ impl App {
 
         // Resolve column lineage lazily on first enable
         if self.show_column_lineage && self.column_lineage.edges.is_empty() {
-            self.column_lineage =
-                crate::parser::column_lineage::resolve_column_lineage(&self.graph);
+            self.column_lineage = crate::parser::column_lineage::resolve_column_lineage_in(
+                &self.graph,
+                &self.project_dir,
+            );
         }
     }
 

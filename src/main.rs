@@ -623,8 +623,8 @@ fn run_mcp_command(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<()>
     // path is accurate when it parses, the regex path provides coverage for SQL
     // dialects/shapes sqlparser can't yet handle. Duplicate edges are deduped.
     let column_lineage = merge_column_lineage(
-        parser::ast_column_lineage::resolve_column_lineage_ast(&graph),
-        parser::column_lineage::resolve_column_lineage(&graph),
+        parser::ast_column_lineage::resolve_column_lineage_ast_in(&graph, &project_dir),
+        parser::column_lineage::resolve_column_lineage_in(&graph, &project_dir),
     );
 
     let stdin = std::io::stdin();

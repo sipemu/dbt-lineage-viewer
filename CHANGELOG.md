@@ -3,6 +3,23 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Changed
+
+- GitHub Action posts its comment with `dbt-lineage ci comment` (no third-party
+  comment action) and uses `upload-sarif@v4`.
+- PyPI packaging as `dbt-lineage-cli` (publishing pending, #55).
+
+### Fixed
+
+- MCP server and TUI column lineage silently fell back to name matching when
+  started outside the project directory (e.g. `claude mcp add … -p /abs/path`):
+  model SQL was read relative to the current directory.
+- Manifest mode used dbt's `path` (relative to the model folder) instead of
+  `original_file_path`, so file reads (column lineage, SQL viewer, SARIF
+  locations) pointed at non-existent files.
+
 ## [0.10.2] – 2026-11-04
 
 ### Fixed

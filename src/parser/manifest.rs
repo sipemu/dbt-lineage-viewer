@@ -36,6 +36,10 @@ pub struct ManifestSemanticModel {
     pub depends_on: DependsOn,
     pub description: Option<String>,
     pub path: Option<String>,
+    /// Path relative to the project root (`path` is relative to the
+    /// resource folder, e.g. `staging/x.sql` instead of `models/staging/x.sql`).
+    #[serde(default)]
+    pub original_file_path: Option<String>,
 }
 
 /// A metric node from `manifest.metrics.*`.
@@ -47,6 +51,10 @@ pub struct ManifestMetric {
     pub depends_on: DependsOn,
     pub description: Option<String>,
     pub path: Option<String>,
+    /// Path relative to the project root (`path` is relative to the
+    /// resource folder, e.g. `staging/x.sql` instead of `models/staging/x.sql`).
+    #[serde(default)]
+    pub original_file_path: Option<String>,
 }
 
 /// A node entry in the manifest (model, seed, snapshot, test, analysis)
@@ -61,6 +69,10 @@ pub struct ManifestNode {
     pub config: ManifestConfig,
     pub description: Option<String>,
     pub path: Option<String>,
+    /// Path relative to the project root (`path` is relative to the
+    /// resource folder, e.g. `staging/x.sql` instead of `models/staging/x.sql`).
+    #[serde(default)]
+    pub original_file_path: Option<String>,
     /// Raw Jinja SQL as authored. Present on `dbt compile` output for models,
     /// snapshots, and singular tests. Absent on seeds and sources.
     #[serde(default)]
@@ -90,6 +102,10 @@ pub struct ManifestSource {
     pub resource_type: String,
     pub description: Option<String>,
     pub path: Option<String>,
+    /// Path relative to the project root (`path` is relative to the
+    /// resource folder, e.g. `staging/x.sql` instead of `models/staging/x.sql`).
+    #[serde(default)]
+    pub original_file_path: Option<String>,
 }
 
 /// An exposure entry in the manifest
@@ -252,7 +268,11 @@ fn add_semantic_nodes(
             unique_id: simple_id.clone(),
             label: sm.name.clone(),
             node_type: NodeType::SemanticModel,
-            file_path: sm.path.as_ref().map(|p| p.into()),
+            file_path: sm
+                .original_file_path
+                .as_ref()
+                .or(sm.path.as_ref())
+                .map(|p| p.into()),
             description: non_empty_string(&sm.description),
             materialization: None,
             tags: vec![],
@@ -274,7 +294,11 @@ fn add_metric_nodes(
             unique_id: simple_id.clone(),
             label: m.name.clone(),
             node_type: NodeType::Metric,
-            file_path: m.path.as_ref().map(|p| p.into()),
+            file_path: m
+                .original_file_path
+                .as_ref()
+                .or(m.path.as_ref())
+                .map(|p| p.into()),
             description: non_empty_string(&m.description),
             materialization: None,
             tags: vec![],
@@ -344,7 +368,11 @@ fn add_source_nodes(
             unique_id: simple_id.clone(),
             label,
             node_type: NodeType::Source,
-            file_path: source.path.as_ref().map(|p| p.into()),
+            file_path: source
+                .original_file_path
+                .as_ref()
+                .or(source.path.as_ref())
+                .map(|p| p.into()),
             description: non_empty_string(&source.description),
             materialization: None,
             tags: vec![],
@@ -369,7 +397,11 @@ fn add_regular_nodes(
             unique_id: simple_id.clone(),
             label: node.name.clone(),
             node_type,
-            file_path: node.path.as_ref().map(|p| p.into()),
+            file_path: node
+                .original_file_path
+                .as_ref()
+                .or(node.path.as_ref())
+                .map(|p| p.into()),
             description: non_empty_string(&node.description),
             materialization: node.config.materialized.clone(),
             tags: node.config.tags.clone(),
@@ -467,6 +499,42 @@ fn non_empty_string(s: &Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_path_prefers_original_file_path() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "nodes": {
+                    "model.p.stg": {
+                        "unique_id": "model.p.stg", "resource_type": "model", "name": "stg",
+                        "path": "staging/stg.sql",
+                        "original_file_path": "models/staging/stg.sql",
+                        "depends_on": {"nodes": []}
+                    },
+                    "model.p.old": {
+                        "unique_id": "model.p.old", "resource_type": "model", "name": "old",
+                        "path": "old.sql",
+                        "depends_on": {"nodes": []}
+                    }
+                },
+                "sources": {}
+            }"#,
+        )
+        .unwrap();
+        let g = build_graph_from_parsed_manifest(&manifest).unwrap();
+        let path_of = |label: &str| {
+            g.node_indices()
+                .find(|&i| g[i].label == label)
+                .and_then(|i| g[i].file_path.clone())
+                .unwrap()
+        };
+        assert_eq!(
+            path_of("stg"),
+            std::path::PathBuf::from("models/staging/stg.sql")
+        );
+        // Older manifests without original_file_path keep using `path`.
+        assert_eq!(path_of("old"), std::path::PathBuf::from("old.sql"));
+    }
     use std::fs;
 
     #[test]
@@ -556,6 +624,7 @@ mod tests {
                     },
                     description: Some("Staged orders".to_string()),
                     path: Some("models/staging/stg_orders.sql".to_string()),
+                    original_file_path: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -570,6 +639,7 @@ mod tests {
                     resource_type: "source".to_string(),
                     description: Some("Raw orders table".to_string()),
                     path: Some("models/staging/schema.yml".to_string()),
+                    original_file_path: None,
                 },
             )]),
             exposures: HashMap::new(),
@@ -615,6 +685,7 @@ mod tests {
                     config: ManifestConfig::default(),
                     description: None,
                     path: None,
+                    original_file_path: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -665,6 +736,7 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: Some("seeds/countries.csv".to_string()),
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -683,6 +755,7 @@ mod tests {
                         },
                         description: None,
                         path: Some("snapshots/snap_orders.sql".to_string()),
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -725,6 +798,7 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: None,
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -742,6 +816,7 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: Some("tests/assert_positive.sql".to_string()),
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -796,6 +871,7 @@ mod tests {
                     config: ManifestConfig::default(),
                     description: None,
                     path: None,
+                    original_file_path: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -828,6 +904,7 @@ mod tests {
                     },
                     description: None,
                     path: None,
+                    original_file_path: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -913,6 +990,7 @@ mod tests {
                     config: ManifestConfig::default(),
                     description: None,
                     path: None,
+                    original_file_path: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -949,6 +1027,7 @@ mod tests {
                         },
                         description: None,
                         path: None,
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -966,6 +1045,7 @@ mod tests {
                         config: ManifestConfig::default(),
                         description: None,
                         path: None,
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -989,6 +1069,7 @@ mod tests {
                         },
                         description: Some("Order fact table".to_string()),
                         path: None,
+                        original_file_path: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -1005,6 +1086,7 @@ mod tests {
                         resource_type: "source".to_string(),
                         description: None,
                         path: None,
+                        original_file_path: None,
                     },
                 ),
                 (
@@ -1016,6 +1098,7 @@ mod tests {
                         resource_type: "source".to_string(),
                         description: None,
                         path: None,
+                        original_file_path: None,
                     },
                 ),
             ]),
