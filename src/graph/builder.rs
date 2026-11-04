@@ -29,7 +29,11 @@ fn parse_sql_content(content: &str, wrappers: &[WrapperMacro]) -> ParsedSqlFile 
         sources: extract_sources(content),
         wrapped_refs,
         wrapped_sources,
-        columns: extract_select_columns(content),
+        // `__jinja__` stands in for a `{{ … }}` select item; it is not a real column.
+        columns: extract_select_columns(content)
+            .into_iter()
+            .filter(|c| c != "__jinja__")
+            .collect(),
         config: SqlConfigSerde::from(config),
     }
 }
