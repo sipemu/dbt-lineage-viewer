@@ -236,7 +236,8 @@ impl Analysis {
         }
         if let Some(path) = &node.file_path {
             let shown = path.strip_prefix(&self.project_dir).unwrap_or(path);
-            md.push_str(&format!("\n\n`{}`", shown.display()));
+            let shown = shown.to_string_lossy().replace('\\', "/");
+            md.push_str(&format!("\n\n`{}`", shown));
         }
         md
     }
