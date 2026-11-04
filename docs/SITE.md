@@ -8,6 +8,8 @@ dbt-lineage site --manifest target/manifest.json --out site
 dbt-lineage site --title "Analytics DAG"                   # default: dbt project name
 ```
 
+Live example: [sipemu.github.io/dbt-lineage-demo](https://sipemu.github.io/dbt-lineage-demo/) (built by [this workflow](https://github.com/sipemu/dbt-lineage-demo/blob/main/.github/workflows/lineage-site.yml)).
+
 ## What's in it
 
 - **Index** (`index.html`) — search across models, sources, seeds, snapshots, exposures, metrics and semantic models by name, description, tag and path; filter by type. Press `/` to focus the search. The search runs in the browser over a JSON index embedded in the page; without JavaScript the full list is still shown.
@@ -50,7 +52,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install dbt-lineage
         env:
           VERSION: 0.12.0  # first release with `site`
@@ -59,7 +61,7 @@ jobs:
             | tar -xz --strip-components=1
           sudo mv dbt-lineage /usr/local/bin/
       - run: dbt-lineage site -p . --out site
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -71,7 +73,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 ```
 
 Release archives carry the version in their file name, so pin one (or use `cargo binstall dbt-lineage`). Alternatively run the container image: `docker run --rm -v "$PWD:/workspace" ghcr.io/sipemu/dbt-lineage:v0 site --out site`.
