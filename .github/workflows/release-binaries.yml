@@ -3,7 +3,7 @@ name: Release binaries
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+*"
 
 env:
   CARGO_TERM_COLOR: always
@@ -121,3 +121,18 @@ jobs:
             dist/*.zip
             dist/*.sha256
           fail_on_unmatched_files: true
+
+  major-tag:
+    name: Move floating major tag (e.g. v0)
+    needs: attach
+    runs-on: ubuntu-latest
+    # Pre-releases (v1.2.3-rc.1) don't move the floating tag.
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Force-update major tag
+        run: |
+          set -euo pipefail
+          major="${GITHUB_REF_NAME%%.*}"   # v0.9.1 -> v0
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"
