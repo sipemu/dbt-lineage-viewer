@@ -52,6 +52,10 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **Graph collapse** — `--collapse` / `--collapse=focal` drops intermediate nodes and labels transitive paths with `(via N)` edges
 - **Structured errors** — `--error-format json` writes `{level, what, why, hint}` to stderr for deterministic agent / CI consumers
 
+### Editor integration
+
+- **`dbt-lineage lsp`** — language server: hover and go-to-definition on `ref()` / `source()`, lineage code lens per model, lint diagnostics. VS Code extension in [`editors/vscode`](editors/vscode); Neovim and Helix setup in [`docs/EDITORS.md`](docs/EDITORS.md)
+
 ### Interactive TUI
 
 - Navigate, search, and explore lineage in a terminal UI ([`ratatui`](https://crates.io/crates/ratatui)) with Unicode box-drawing nodes, orthogonal edge routing, and full mouse support
@@ -310,6 +314,10 @@ dbt-lineage --error-format json some_unknown_model
 
 `--error-format json` writes one JSON object per line to stderr. `stdout` is unaffected, so piping into `jq` still works.
 
+### Editor integration (language server)
+
+`dbt-lineage lsp` serves the Language Server Protocol over stdio: hover and go-to-definition on `ref()` / `source()`, a code lens with upstream/downstream counts and impact on every model, and `lint` findings as diagnostics. Use the VS Code extension in [`editors/vscode`](editors/vscode), or point Neovim, Helix or any LSP client at `dbt-lineage lsp`. See [`docs/EDITORS.md`](docs/EDITORS.md).
+
 ### MCP server
 
 Expose lineage as stdio MCP tools, resources, and prompts that Claude Code, Claude Desktop, and other MCP-aware clients can call directly:
@@ -332,6 +340,7 @@ Commands:
   impact          Compute downstream impact analysis for a model
   summary         Print a one-shot project overview: counts, tags, top fan-out, orphans
   mcp             Run an MCP (Model Context Protocol) stdio server exposing lineage tools to AI agents. Reads JSON-RPC requests on stdin, writes responses to stdout
+  lsp             Run a Language Server (stdio) for editors: hover and go-to-definition on ref()/source(), a lineage code lens per model, and lint diagnostics
   perf            Critical-path and slowest-model performance report from target/run_results.json
   macros          Show the macro call graph (macros calling other macros)
   site            Generate a static lineage site (search, one page per node with columns, column lineage, SQL and a lineage diagram) for GitHub/GitLab Pages

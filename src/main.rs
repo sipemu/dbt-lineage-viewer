@@ -149,6 +149,7 @@ fn run(cli: Cli) -> Result<()> {
                     output,
                 ),
             },
+            Command::Lsp => run_lsp_command(),
             Command::Ci { action } => match action {
                 cli::CiAction::Report {
                     base,
@@ -921,6 +922,15 @@ fn run_exposures_metabase_command(
         },
     }
     Ok(())
+}
+
+/// Run the `lsp` subcommand: serve LSP over stdio.
+#[cfg(not(tarpaulin_include))]
+fn run_lsp_command() -> Result<()> {
+    #[cfg(feature = "lsp")]
+    return dbt_lineage::lsp::run_stdio();
+    #[cfg(not(feature = "lsp"))]
+    anyhow::bail!("LSP feature not enabled. Rebuild with --features lsp")
 }
 
 /// Run `ci comment`: upsert the sticky PR/MR comment from a Markdown file.
