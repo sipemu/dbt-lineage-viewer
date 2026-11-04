@@ -3,6 +3,16 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage exposures metabase --url … [--write models/exposures_metabase.yml]`
+  — imports Metabase dashboards as dbt exposures: tables read by native SQL
+  and GUI questions (legacy MBQL and staged pMBQL, joins, nested questions)
+  are mapped onto models and sources; unmatched tables are reported. See
+  `docs/BI.md` (#54).
+
 ## [0.11.0] – 2026-11-04
 
 ### Added

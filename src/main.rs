@@ -126,6 +126,23 @@ fn run(cli: Cli) -> Result<()> {
                 project_dir,
                 output,
             } => run_diff_command(base, head.as_deref(), project_dir, output),
+            Command::Exposures { source } => match source {
+                cli::ExposureSource::Metabase {
+                    url,
+                    api_key,
+                    project_dir,
+                    manifest,
+                    write,
+                    output,
+                } => run_exposures_metabase_command(
+                    url,
+                    api_key,
+                    project_dir,
+                    manifest.as_ref(),
+                    write.as_ref(),
+                    output,
+                ),
+            },
             Command::Ci { action } => match action {
                 cli::CiAction::Report {
                     base,
@@ -806,6 +823,64 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
             }
         }
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Run `exposures metabase`: fetch dashboards, map their tables onto models
+/// and sources, emit dbt exposures YAML.
+#[cfg(not(tarpaulin_include))]
+fn run_exposures_metabase_command(
+    url: &str,
+    api_key: &str,
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    write: Option<&PathBuf>,
+    output: &cli::ExposuresOutputFormat,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, manifest, false)?;
+
+    let http = dbt_lineage::ci::comment::UreqHttp;
+    let mut client = dbt_lineage::bi::metabase::Client::new(&http, url, api_key);
+    let dashboards = client.dashboards()?;
+    let mapped = dbt_lineage::bi::map_dashboards(&dag, &dashboards);
+
+    for (dashboard, table) in &mapped.unmatched {
+        eprintln!(
+            "dbt-lineage: '{}' reads '{}', which matches no model or source",
+            dashboard, table
+        );
+    }
+    for dashboard in &mapped.skipped {
+        eprintln!(
+            "dbt-lineage: skipped '{}' (no table matches the project)",
+            dashboard
+        );
+    }
+    eprintln!(
+        "dbt-lineage: {} of {} dashboards mapped to exposures",
+        mapped.exposures.len(),
+        dashboards.len()
+    );
+
+    let yaml = dbt_lineage::bi::to_yaml(&mapped.exposures);
+    match write {
+        Some(path) => {
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, yaml)?;
+            eprintln!("dbt-lineage: wrote {}", path.display());
+        }
+        None => match output {
+            cli::ExposuresOutputFormat::Yaml => print!("{}", yaml),
+            cli::ExposuresOutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&mapped.exposures)?)
+            }
+        },
     }
     Ok(())
 }
