@@ -2,7 +2,7 @@
 name = "dbt-lineage"
 version = "0.9.1"
 edition = "2021"
-description = "A Rust CLI tool for visualizing dbt model lineage"
+description = "PR-time dbt lineage, impact analysis and rebuild plans without a warehouse: CLI, TUI, CI report and MCP server"
 license = "MIT"
 repository = "https://github.com/sipemu/dbt-lineage-viewer"
 homepage = "https://github.com/sipemu/dbt-lineage-viewer"

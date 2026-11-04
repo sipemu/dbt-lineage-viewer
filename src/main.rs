@@ -746,7 +746,8 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
     };
     if let Some(base) = base {
         match ci_diff(&project_dir, &base, args.head) {
-            Ok(diff) => {
+            Ok((diff, head_graph)) => {
+                report.impact_diagram = ci::impact_mermaid(&diff, &head_graph);
                 report.plan = Some(graph::plan::build_plan(
                     &diff,
                     graph::plan::PlanStyle::Downstream,
@@ -814,8 +815,13 @@ fn report_section_error(
 }
 
 /// Diff for `ci report`, resolving the base the way CI checkouts need.
+/// Also returns the head graph for the impact diagram.
 #[cfg(not(tarpaulin_include))]
-fn ci_diff(project_dir: &Path, base: &str, head: Option<&str>) -> Result<graph::diff::LineageDiff> {
+fn ci_diff(
+    project_dir: &Path,
+    base: &str,
+    head: Option<&str>,
+) -> Result<(graph::diff::LineageDiff, graph::types::LineageGraph)> {
     if !dbt_lineage::git::is_git_repo(project_dir) {
         anyhow::bail!("Not a git repository: {}", project_dir.display());
     }
@@ -823,7 +829,7 @@ fn ci_diff(project_dir: &Path, base: &str, head: Option<&str>) -> Result<graph::
     if let Some(head_ref) = head {
         dbt_lineage::git::validate_ref(project_dir, head_ref)?;
     }
-    graph::diff::diff_git(project_dir, &base, head)
+    graph::diff::diff_git_with_head(project_dir, &base, head)
 }
 
 /// Resolve the manifest path from the --manifest argument.

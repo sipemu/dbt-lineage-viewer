@@ -14,6 +14,9 @@ Notable changes per release. Full per-release notes live on the
   target branch from GitHub, GitLab, Bitbucket or Azure DevOps env vars and
   resolves/fetches `origin/<branch>` in PR checkouts (#43).
 - Release workflow moves a floating major tag (`v0`) after each release (#46).
+- `ci report` includes a Mermaid diagram of the changed nodes and everything
+  downstream of them, styled by status; GitHub, GitLab and Azure DevOps render
+  it inline in the PR/MR comment (#50).
 
 ### Changed
 
@@ -31,6 +34,10 @@ Notable changes per release. Full per-release notes live on the
 - `diff` / `plan` detect SQL, Python and seed-file body changes. Previously a
   changed `SELECT` or `WHERE` was not "modified" unless materialization, tags,
   columns or description changed, so `plan` left it out of the rebuild set.
+- **`plan` selected upstream instead of downstream.** It emitted `+model`,
+  which in dbt selects the model's ancestors; it now emits `model+` (the model
+  and its descendants), as documented. Sources, exposures, metrics and
+  semantic models are no longer emitted, since dbt cannot build them.
 - `diff` / `plan` only use `target/manifest.json` when both sides have one; a
   locally compiled manifest no longer makes every node look removed + re-added.
 

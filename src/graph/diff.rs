@@ -309,6 +309,16 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
 /// structural diff, nodes whose SQL/Python/seed file content changed are
 /// marked modified, so `plan` rebuilds them.
 pub fn diff_git(project_dir: &Path, base: &str, head: Option<&str>) -> Result<LineageDiff> {
+    diff_git_with_head(project_dir, base, head).map(|(diff, _)| diff)
+}
+
+/// Like [`diff_git`], also returning the head graph (e.g. to draw the
+/// downstream impact of the changed nodes).
+pub fn diff_git_with_head(
+    project_dir: &Path,
+    base: &str,
+    head: Option<&str>,
+) -> Result<(LineageDiff, LineageGraph)> {
     let base_tree = checkout_tree(project_dir, base)?;
     let head_tree = head.map(|h| checkout_tree(project_dir, h)).transpose()?;
     let head_root = head_tree.as_ref().map_or(project_dir, |t| t.path());
@@ -334,7 +344,7 @@ pub fn diff_git(project_dir: &Path, base: &str, head: Option<&str>) -> Result<Li
 
     let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
     mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
-    Ok(diff)
+    Ok((diff, head_graph))
 }
 
 /// Mark nodes whose source file differs between the two project roots as
