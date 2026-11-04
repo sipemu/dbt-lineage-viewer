@@ -72,6 +72,12 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 cargo install dbt-lineage
 ```
 
+### Homebrew (macOS, Linux)
+
+```sh
+brew install sipemu/tap/dbt-lineage
+```
+
 ### With cargo-binstall (no compile)
 
 ```sh
@@ -238,7 +244,7 @@ dbt-lineage ci report --base main --out report.md      # explicit base, write to
 dbt-lineage ci report --fail-on lint-errors,plan-empty --outputs "$GITHUB_OUTPUT"
 ```
 
-`--base auto` (default) reads the target branch from GitHub Actions, GitLab CI, Bitbucket Pipelines or Azure Pipelines, and resolves it as `origin/<branch>` (fetching it if the checkout is shallow). `--outputs` appends `selector=…` and `failed=…` lines, usable as `$GITHUB_OUTPUT` or a GitLab dotenv report. The GitHub Action is a thin wrapper around this command.
+`--base auto` (default) reads the target branch from GitHub Actions, GitLab CI, Bitbucket Pipelines or Azure Pipelines, and resolves it as `origin/<branch>` (fetching it if the checkout is shallow). `--outputs` appends `selector=…` and `failed=…` lines, usable as `$GITHUB_OUTPUT` or a GitLab dotenv report. `dbt-lineage ci comment --file report.md` posts it as one sticky PR/MR comment. The GitHub Action, the GitLab component and the Bitbucket Pipe are thin wrappers around these two commands; see [`docs/CI.md`](docs/CI.md) for GitLab, Bitbucket and Azure DevOps setup.
 
 ### Manifest freshness
 
@@ -334,6 +340,7 @@ Options:
       --collapse [<COLLAPSE>]        Drop intermediate nodes and replace transitive paths with `(via N)` edges. Bare `--collapse` is equivalent to `--collapse auto` (keep endpoints + focus); `--collapse focal` keeps only sources, exposures, and the focus model [default: none] [possible values: none, auto, focal]
       --no-cache                     Bypass the on-disk parse cache (.dbt-lineage/cache.bin). Useful when debugging parser changes or you want a clean baseline benchmark
   -h, --help                         Print help (see more with '--help')
+  -V, --version                      Print version
 ```
 
 ## TUI Keybindings

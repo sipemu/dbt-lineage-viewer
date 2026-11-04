@@ -1,0 +1,16 @@
+name: dbt-lineage
+image: ghcr.io/sipemu/dbt-lineage-pipe:v0
+category: Code quality
+description: PR-time dbt lineage diff, impact diagram, rebuild selector and lint, without a warehouse.
+repository: https://github.com/sipemu/dbt-lineage-viewer
+maintainer:
+  name: Simon Müller
+  website: https://github.com/sipemu
+vendor:
+  name: dbt-lineage
+  website: https://github.com/sipemu/dbt-lineage-viewer
+tags:
+  - dbt
+  - lineage
+  - data
+  - sql

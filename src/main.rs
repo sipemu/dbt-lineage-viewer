@@ -146,6 +146,7 @@ fn run(cli: Cli) -> Result<()> {
                     fail_on,
                     no_lint: *no_lint,
                 }),
+                cli::CiAction::Comment { file } => run_ci_comment_command(file),
             },
         };
     }
@@ -805,6 +806,30 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
             }
         }
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Run `ci comment`: upsert the sticky PR/MR comment from a Markdown file.
+#[cfg(not(tarpaulin_include))]
+fn run_ci_comment_command(file: &Path) -> Result<()> {
+    use dbt_lineage::ci::comment::{upsert, Outcome, Target, UreqHttp};
+    use std::io::Read;
+
+    let body = if file == Path::new("-") {
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s)?;
+        s
+    } else {
+        std::fs::read_to_string(file)
+            .map_err(|e| anyhow::anyhow!("cannot read {}: {}", file.display(), e))?
+    };
+    let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let platform = dbt_lineage::ci::Platform::detect(&env);
+    let target = Target::from_env(platform, &env)?;
+    match upsert(&UreqHttp, &target, &body)? {
+        Outcome::Created => eprintln!("dbt-lineage: created PR/MR comment"),
+        Outcome::Updated => eprintln!("dbt-lineage: updated PR/MR comment"),
     }
     Ok(())
 }

@@ -3,6 +3,26 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [0.10.1] – 2026-11-04
+
+### Fixed
+
+- **GitHub Action failed at install** with exit code 23 when `version: latest`
+  (the default): `curl | grep -m1` was killed by SIGPIPE under `pipefail`.
+  The release lookup is now authenticated with the job token, avoiding the
+  anonymous API rate limit on shared runners.
+
+### Added
+
+- `dbt-lineage ci comment --file report.md` — create or update one sticky
+  PR/MR comment on GitHub, GitLab, Bitbucket or Azure DevOps (#43).
+- GitLab CI/CD component in `integrations/gitlab` (report, sticky MR note,
+  Code Quality, dotenv outputs) (#62).
+- Bitbucket Pipe in `integrations/bitbucket`; image
+  `ghcr.io/sipemu/dbt-lineage-pipe` published on release (#63).
+- `dbt-lineage --version`.
+- Homebrew: `brew install sipemu/tap/dbt-lineage` (#56).
+
 ## [0.10.0] – 2026-11-04
 
 ### Added

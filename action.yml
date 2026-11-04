@@ -61,7 +61,10 @@ runs:
         set -euo pipefail
         version="${{ inputs.version }}"
         if [ "$version" = "latest" ]; then
-          version=$(curl -fsSL https://api.github.com/repos/sipemu/dbt-lineage-viewer/releases/latest | grep -m1 '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+          # Read the whole response first: `curl | grep -m1` dies with SIGPIPE under pipefail.
+          json="$(curl -fsSL -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/repos/sipemu/dbt-lineage-viewer/releases/latest)"
+          version="$(sed -nE 's/.*"tag_name": *"v([^"]+)".*/\1/p' <<<"$json")"
+          version="${version%%$'\n'*}"
         fi
         echo "Installing dbt-lineage v${version}"
         # Detect platform

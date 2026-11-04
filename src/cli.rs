@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "dbt-lineage", about = "Visualize dbt model lineage")]
+#[command(name = "dbt-lineage", version, about = "Visualize dbt model lineage")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -358,6 +358,14 @@ pub enum CiAction {
         /// Skip the lint section
         #[arg(long)]
         no_lint: bool,
+    },
+    /// Create or update one sticky comment on the current PR/MR. Token:
+    /// `DBT_LINEAGE_TOKEN`, else GITHUB_TOKEN / GITLAB_TOKEN (project access
+    /// token, `api` scope) / BITBUCKET_ACCESS_TOKEN / SYSTEM_ACCESSTOKEN.
+    Comment {
+        /// Markdown file to post (e.g. from `ci report --out`); `-` for stdin
+        #[arg(long)]
+        file: PathBuf,
     },
 }
 
