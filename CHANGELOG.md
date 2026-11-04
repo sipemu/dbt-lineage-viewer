@@ -17,6 +17,9 @@ Notable changes per release. Full per-release notes live on the
 - `ci report` includes a Mermaid diagram of the changed nodes and everything
   downstream of them, styled by status; GitHub, GitLab and Azure DevOps render
   it inline in the PR/MR comment (#50).
+- `cargo binstall dbt-lineage` installs the pre-built release binary (#56).
+- `.pre-commit-hooks.yaml` with `dbt-lineage-lint` and
+  `dbt-lineage-check-manifest` hooks (#57).
 
 ### Changed
 

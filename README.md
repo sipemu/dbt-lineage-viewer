@@ -72,6 +72,12 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 cargo install dbt-lineage
 ```
 
+### With cargo-binstall (no compile)
+
+```sh
+cargo binstall dbt-lineage
+```
+
 ### Pre-built binaries
 
 Every tagged release ships pre-built binaries for Linux (x86_64 + aarch64), macOS (Intel + Apple Silicon), and Windows (x86_64) as downloadable assets on the [Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases). Download the archive for your platform, extract, and put the binary on your `PATH`.
@@ -102,6 +108,19 @@ jobs:
 ```
 
 `@v0` tracks the latest `0.x` release; pin an exact tag (e.g. `@v0.9.1`) if you prefer. The action installs the matching `dbt-lineage` binary from this repo's release artifacts, runs `summary`, `diff`, `plan`, and optionally `lint`/`coverage` SARIF, then posts a single sticky comment on the PR with the rendered report. See [`action.yml`](action.yml) for the full input/output reference.
+
+### As a pre-commit hook
+
+```yaml
+# .pre-commit-config.yaml in your dbt repo
+repos:
+  - repo: https://github.com/sipemu/dbt-lineage-viewer
+    rev: v0.10.0
+    hooks:
+      - id: dbt-lineage-lint
+      - id: dbt-lineage-check-manifest   # needs a compiled target/manifest.json
+        args: [-p, path/to/dbt]          # only if the project isn't at the repo root
+```
 
 ### From source
 

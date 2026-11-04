@@ -1,0 +1,24 @@
+# pre-commit hooks for dbt projects. Usage in a dbt repo's .pre-commit-config.yaml:
+#
+#   - repo: https://github.com/sipemu/dbt-lineage-viewer
+#     rev: v0.10.0
+#     hooks:
+#       - id: dbt-lineage-lint
+#       - id: dbt-lineage-check-manifest
+#
+# Pass `args: [-p, path/to/dbt]` when the dbt project is not at the repo root.
+- id: dbt-lineage-lint
+  name: dbt-lineage lint
+  description: Structural lint of the dbt DAG (dead ends, undefined refs, unused sources, missing docs).
+  entry: dbt-lineage lint
+  language: rust
+  pass_filenames: false
+  files: \.(sql|py|ya?ml|csv)$
+
+- id: dbt-lineage-check-manifest
+  name: dbt-lineage check-manifest
+  description: Fail if target/manifest.json is out of sync with the SQL files (requires a compiled manifest).
+  entry: dbt-lineage check-manifest
+  language: rust
+  pass_filenames: false
+  files: \.(sql|py|ya?ml)$
