@@ -93,6 +93,7 @@ mod tests {
             summary: DiffSummary::default(),
             nodes,
             edges: Vec::<DiffEdge>::new(),
+            column_impacts: vec![],
         }
     }
 

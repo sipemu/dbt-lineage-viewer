@@ -58,6 +58,17 @@ pub struct DiffSummary {
     pub edges_removed: usize,
 }
 
+/// A column that disappeared from a model, with the downstream columns that
+/// were computed from it (and so break or change meaning).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ColumnImpact {
+    /// Model the column was removed from (label).
+    pub model: String,
+    pub column: String,
+    /// Downstream columns derived from it, as `model.column`, sorted.
+    pub downstream: Vec<String>,
+}
+
 /// Full lineage diff between two refs
 #[derive(Debug, Clone, Serialize)]
 pub struct LineageDiff {
@@ -66,6 +77,9 @@ pub struct LineageDiff {
     pub summary: DiffSummary,
     pub nodes: Vec<DiffNode>,
     pub edges: Vec<DiffEdge>,
+    /// Removed columns that downstream columns depend on (git diffs only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub column_impacts: Vec<ColumnImpact>,
 }
 
 /// An edge tuple for set comparison
@@ -122,11 +136,27 @@ fn detect_node_changes(base: &NodeData, head: &NodeData) -> Vec<String> {
     }
 
     if base.columns != head.columns {
-        changes.push(format!(
-            "columns: {} -> {}",
-            base.columns.len(),
-            head.columns.len()
-        ));
+        let added: Vec<&str> = head
+            .columns
+            .iter()
+            .filter(|c| !base.columns.contains(c))
+            .map(String::as_str)
+            .collect();
+        let removed: Vec<&str> = base
+            .columns
+            .iter()
+            .filter(|c| !head.columns.contains(c))
+            .map(String::as_str)
+            .collect();
+        if !added.is_empty() {
+            changes.push(format!("columns added: {}", added.join(", ")));
+        }
+        if !removed.is_empty() {
+            changes.push(format!("columns removed: {}", removed.join(", ")));
+        }
+        if added.is_empty() && removed.is_empty() {
+            changes.push("columns reordered".to_string());
+        }
     }
 
     if base.description != head.description {
@@ -238,6 +268,7 @@ pub fn compute_diff(
         summary,
         nodes: diff_nodes,
         edges: diff_edges,
+        column_impacts: Vec::new(),
     }
 }
 
@@ -344,7 +375,91 @@ pub fn diff_git_with_head(
 
     let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
     mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
+    diff.column_impacts = removed_column_impacts(&base_graph, &head_graph, base_tree.path());
     Ok((diff, head_graph))
+}
+
+/// For every column that exists in a base model but not in the head version
+/// (or whose model was removed), follow the base column lineage downstream.
+/// Only columns with downstream users are reported.
+pub fn removed_column_impacts(
+    base_graph: &LineageGraph,
+    head_graph: &LineageGraph,
+    base_root: &Path,
+) -> Vec<ColumnImpact> {
+    let head_nodes = collect_node_map(head_graph);
+    let removed: Vec<(&NodeData, &String)> = base_graph
+        .node_indices()
+        .map(|i| &base_graph[i])
+        .filter(|n| n.node_type == NodeType::Model)
+        .flat_map(|n| {
+            let head_cols = head_nodes.get(&n.unique_id).map(|h| &h.columns);
+            n.columns
+                .iter()
+                .filter(move |c| head_cols.is_none_or(|hc| !hc.contains(c)))
+                .map(move |c| (n, c))
+        })
+        .collect();
+    if removed.is_empty() {
+        return Vec::new();
+    }
+
+    let lineage = {
+        let mut edges =
+            crate::parser::ast_column_lineage::resolve_column_lineage_ast_in(base_graph, base_root)
+                .edges;
+        edges.extend(
+            crate::parser::column_lineage::resolve_column_lineage_in(base_graph, base_root).edges,
+        );
+        edges
+    };
+    let mut children: HashMap<(&str, &str), Vec<(&str, &str)>> = HashMap::new();
+    for e in &lineage {
+        children
+            .entry((e.source_node.as_str(), e.source_column.as_str()))
+            .or_default()
+            .push((e.target_node.as_str(), e.target_column.as_str()));
+    }
+    let labels: HashMap<&str, &str> = base_graph
+        .node_indices()
+        .map(|i| {
+            (
+                base_graph[i].unique_id.as_str(),
+                base_graph[i].label.as_str(),
+            )
+        })
+        .collect();
+
+    let mut impacts = Vec::new();
+    for (node, column) in removed {
+        let start = (node.unique_id.as_str(), column.as_str());
+        let mut seen: HashSet<(&str, &str)> = HashSet::from([start]);
+        let mut stack = vec![start];
+        while let Some(key) = stack.pop() {
+            for &child in children.get(&key).into_iter().flatten() {
+                if seen.insert(child) {
+                    stack.push(child);
+                }
+            }
+        }
+        seen.remove(&start);
+        let mut downstream: Vec<String> = seen
+            .into_iter()
+            .filter(|(id, _)| head_nodes.contains_key(*id))
+            .map(|(id, col)| format!("{}.{}", labels.get(id).copied().unwrap_or(id), col))
+            .collect();
+        if downstream.is_empty() {
+            continue;
+        }
+        downstream.sort();
+        impacts.push(ColumnImpact {
+            model: node.label.clone(),
+            column: column.clone(),
+            downstream,
+        });
+    }
+    impacts.sort_by(|a, b| (&a.model, &a.column).cmp(&(&b.model, &b.column)));
+    impacts
 }
 
 /// Mark nodes whose source file differs between the two project roots as
@@ -790,9 +905,7 @@ mod tests {
             columns: vec!["col1".into(), "col2".into(), "col3".into()],
         };
         let changes = detect_node_changes(&base, &head);
-        assert_eq!(changes.len(), 1);
-        assert!(changes[0].contains("columns"));
-        assert!(changes[0].contains("2 -> 3"));
+        assert_eq!(changes, vec!["columns added: col3".to_string()]);
     }
 
     #[test]
@@ -1103,6 +1216,46 @@ sources:
         .unwrap();
         let diff = diff_git(repo.path(), "main", None).unwrap();
         assert_eq!(diff.summary.nodes_added + diff.summary.nodes_removed, 0);
+    }
+
+    #[test]
+    fn test_diff_git_reports_removed_column_used_downstream() {
+        let repo = dbt_repo();
+        let p = repo.path();
+        std::fs::write(
+            p.join("models/stg.sql"),
+            "select id, amount from {{ source('raw', 'orders') }}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            p.join("models/mart.sql"),
+            "select s.id, s.amount as total from {{ ref('stg') }} s\n",
+        )
+        .unwrap();
+        git(p, &["commit", "-qam", "explicit columns"]);
+
+        // Rename amount -> value in stg; mart.total still reads s.amount.
+        std::fs::write(
+            p.join("models/stg.sql"),
+            "select id, amount as value from {{ source('raw', 'orders') }}\n",
+        )
+        .unwrap();
+        let diff = diff_git(p, "main", None).unwrap();
+        let stg = diff.nodes.iter().find(|n| n.label == "stg").unwrap();
+        assert!(
+            stg.changes.contains(&"columns added: value".to_string()),
+            "{:?}",
+            stg.changes
+        );
+        assert!(stg.changes.contains(&"columns removed: amount".to_string()));
+        assert_eq!(
+            diff.column_impacts,
+            vec![ColumnImpact {
+                model: "stg".into(),
+                column: "amount".into(),
+                downstream: vec!["mart.total".into()],
+            }]
+        );
     }
 
     #[test]

@@ -3,7 +3,15 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
-## [Unreleased]
+## [0.11.0] – 2026-11-04
+
+### Added
+
+- **Column-level impact.** `diff`, `ci report` and the PR comment list
+  removed or renamed columns that downstream columns are still computed
+  from (e.g. renaming `orders.total_amount` breaks `customers.lifetime_value`),
+  using column lineage of the base tree. Modified models list added and
+  removed column names instead of a count (#49).
 
 ### Changed
 

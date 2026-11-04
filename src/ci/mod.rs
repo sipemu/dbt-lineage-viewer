@@ -159,6 +159,7 @@ pub fn render_markdown(report: &CiReport) -> String {
 
     if let Some(diff) = &report.diff {
         render_diff_section(&mut md, diff);
+        render_column_impact_section(&mut md, diff);
     }
     if let Some(diagram) = &report.impact_diagram {
         let _ = writeln!(md, "### Impact\n");
@@ -224,6 +225,33 @@ fn render_diff_section(md: &mut String, diff: &LineageDiff) {
     }
     if changed.len() > MAX_ROWS {
         let _ = writeln!(md, "\n…and {} more.", changed.len() - MAX_ROWS);
+    }
+    md.push('\n');
+}
+
+fn render_column_impact_section(md: &mut String, diff: &LineageDiff) {
+    if diff.column_impacts.is_empty() {
+        return;
+    }
+    let _ = writeln!(md, "### Column impact\n");
+    let _ = writeln!(
+        md,
+        "These columns were removed (or renamed) but downstream columns are computed from them.\n"
+    );
+    let _ = writeln!(md, "| Removed column | Used by |");
+    let _ = writeln!(md, "| --- | --- |");
+    for i in diff.column_impacts.iter().take(MAX_ROWS) {
+        let used_by: Vec<String> = i.downstream.iter().map(|d| format!("`{d}`")).collect();
+        let _ = writeln!(
+            md,
+            "| `{}.{}` | {} |",
+            i.model,
+            i.column,
+            used_by.join(", ")
+        );
+    }
+    if diff.column_impacts.len() > MAX_ROWS {
+        let _ = writeln!(md, "\n…and {} more.", diff.column_impacts.len() - MAX_ROWS);
     }
     md.push('\n');
 }
@@ -531,6 +559,7 @@ mod tests {
                     changes: vec![],
                 }],
                 edges: vec![],
+                column_impacts: vec![],
             }),
             plan: Some(plan(&["+new"])),
             lint: Some(lint_with(LintSeverity::Warning)),
@@ -588,6 +617,7 @@ mod tests {
                 changes: vec!["SQL changed".into()],
             }],
             edges: vec![],
+            column_impacts: vec![],
         };
         let md = impact_mermaid(&diff, &g).unwrap();
         assert!(md.starts_with("```mermaid\nflowchart LR\n"));
@@ -614,6 +644,7 @@ mod tests {
                 summary: DiffSummary::default(),
                 nodes: vec![],
                 edges: vec![],
+                column_impacts: vec![],
             }),
             plan: Some(plan(&[])),
             lint: Some(LintReport { findings: vec![] }),

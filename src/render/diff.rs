@@ -105,6 +105,27 @@ pub fn render_diff_text_to_writer<W: Write>(diff: &LineageDiff, w: &mut W) {
         }
         writeln!(w).unwrap();
     }
+
+    if !diff.column_impacts.is_empty() {
+        writeln!(
+            w,
+            "{}",
+            "Column Impact (removed columns still used downstream):".bold()
+        )
+        .unwrap();
+        for impact in &diff.column_impacts {
+            writeln!(
+                w,
+                "  {} {}.{} → {}",
+                "-".red(),
+                impact.model.red(),
+                impact.column.red(),
+                impact.downstream.join(", ")
+            )
+            .unwrap();
+        }
+        writeln!(w).unwrap();
+    }
 }
 
 /// Render diff report as JSON to stdout
@@ -124,6 +145,7 @@ mod tests {
 
     fn make_diff() -> LineageDiff {
         LineageDiff {
+            column_impacts: vec![],
             base_ref: "main".to_string(),
             head_ref: "feature".to_string(),
             summary: DiffSummary {
@@ -203,6 +225,7 @@ mod tests {
             summary: DiffSummary::default(),
             nodes: vec![],
             edges: vec![],
+            column_impacts: vec![],
         };
         let mut buf = Vec::new();
         render_diff_text_to_writer(&diff, &mut buf);
@@ -214,6 +237,7 @@ mod tests {
     #[test]
     fn test_render_diff_text_with_removed_edges() {
         let diff = LineageDiff {
+            column_impacts: vec![],
             base_ref: "main".to_string(),
             head_ref: "feature".to_string(),
             summary: DiffSummary {
@@ -273,6 +297,7 @@ mod tests {
                 ],
             }],
             edges: vec![],
+            column_impacts: vec![],
         };
         let mut buf = Vec::new();
         render_diff_text_to_writer(&diff, &mut buf);
