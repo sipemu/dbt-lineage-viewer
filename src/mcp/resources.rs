@@ -79,7 +79,10 @@ pub fn read(ctx: &McpContext, uri: &str) -> Result<ResourceContent> {
         .ok_or_else(|| anyhow!("unsupported URI scheme: {}", uri))?;
 
     if stripped == "summary" {
-        let report = crate::graph::summary::compute_summary(&ctx.graph, None);
+        let report = crate::graph::summary::compute_summary(
+            &ctx.graph,
+            crate::mcp::tools::project_name(&ctx.project_dir),
+        );
         return Ok(ResourceContent {
             text: serde_json::to_string_pretty(&report)?,
             mime_type: "application/json",

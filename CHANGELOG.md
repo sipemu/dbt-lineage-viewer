@@ -13,6 +13,8 @@ Notable changes per release. Full per-release notes live on the
   plain SHA-256 where dbt hashes stripped (seeds, older dbt) or
   whitespace-collapsed (SQL, dbt 1.10+) contents. Verified on tuva with a
   manifest from `dbt parse`: in sync, and a one-line edit is detected.
+- MCP `summary` tool and resource reported `project_name: null`; they now read
+  it from `dbt_project.yml`.
 
 ## [0.13.0] – 2026-11-05
 

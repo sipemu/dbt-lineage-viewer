@@ -130,9 +130,16 @@ pub fn registry() -> Vec<ToolSpec> {
     ]
 }
 
+/// Project name from `dbt_project.yml`, if readable.
+pub(crate) fn project_name(project_dir: &std::path::Path) -> Option<String> {
+    crate::parser::project::DbtProject::load(project_dir)
+        .ok()
+        .map(|p| p.name)
+}
+
 pub fn call_tool(ctx: &McpContext, name: &str, args: &Value) -> Result<Value> {
     match name {
-        "summary" => tool_summary(&ctx.graph, args),
+        "summary" => tool_summary(ctx, args),
         "search_models" => tool_search_models(&ctx.graph, args),
         "lineage" => tool_lineage(&ctx.graph, args),
         "impact" => tool_impact(&ctx.graph, args),
@@ -146,8 +153,8 @@ pub fn call_tool(ctx: &McpContext, name: &str, args: &Value) -> Result<Value> {
     }
 }
 
-fn tool_summary(graph: &LineageGraph, _args: &Value) -> Result<Value> {
-    let report = summary::compute_summary(graph, None);
+fn tool_summary(ctx: &McpContext, _args: &Value) -> Result<Value> {
+    let report = summary::compute_summary(&ctx.graph, project_name(&ctx.project_dir));
     Ok(serde_json::to_value(report)?)
 }
 
