@@ -13,9 +13,20 @@
   <sub>Every dbt PR gets one comment: what changed, which downstream columns and dashboards it breaks, and what to rebuild. <a href="https://github.com/sipemu/dbt-lineage-demo/pull/1">Live demo →</a></sub>
 </p>
 
-A fast Rust CLI tool for visualizing [dbt](https://www.getdbt.com/) model lineage. Parses SQL files directly to extract `ref()` and `source()` dependencies, builds a DAG, and renders it as ASCII art, Graphviz DOT, SVG, interactive HTML, or a terminal UI.
+**See what a dbt change breaks — downstream models, columns, dashboards and contracts — before it ships.** dbt-lineage parses your project directly (no warehouse, no Python, no `dbt compile`) and puts lineage and impact wherever you work.
 
-Supports both direct SQL parsing (no dbt compilation or Python runtime needed) and `manifest.json` for full-fidelity graphs.
+## Use it where you work
+
+| Where | What you get | Get it |
+| --- | --- | --- |
+| **Pull requests** (GitHub) | One sticky comment per PR: lineage diff, column impact, affected dashboards, breaking changes, rebuild selector; inline lint annotations | [`uses: sipemu/dbt-lineage-viewer@v0`](#as-a-github-action) · [live demo](https://github.com/sipemu/dbt-lineage-demo/pull/1) |
+| **GitLab · Bitbucket · Azure DevOps** | The same report as an MR/PR comment, plus Code Quality / Code Insights / build warnings | [`docs/CI.md`](docs/CI.md) |
+| **VS Code, Cursor, VSCodium** | *Show impact of my changes* panel, hover and go-to-definition on `ref()`/`source()`, lint diagnostics; binary bundled | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sipemu.dbt-lineage-viewer) · [Open VSX](https://open-vsx.org/extension/sipemu/dbt-lineage-viewer) |
+| **Terminal** | Lineage, impact, diff, plan, lint, coverage, interactive TUI | `pip install dbt-lineage-cli` · `brew install sipemu/tap/dbt-lineage` · `cargo binstall dbt-lineage` |
+| **Browser** | Static lineage site with column lineage for GitHub/GitLab Pages | [`dbt-lineage site`](#static-lineage-site) · [demo site](https://sipemu.github.io/dbt-lineage-demo/) |
+| **BI tools** | Dashboards from Metabase, Tableau, Looker, Power BI, Superset and anofox-visualization as dbt exposures | [`dbt-lineage exposures <tool>`](docs/BI.md) |
+| **AI agents** | MCP server with lineage, impact and column-lineage tools | [`dbt-lineage mcp`](#mcp-server) |
+| **Neovim, Helix** | Language server (`dbt-lineage lsp`) | [`docs/EDITORS.md`](docs/EDITORS.md) |
 
 ## Features
 
