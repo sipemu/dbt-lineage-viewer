@@ -3,6 +3,18 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- VS Code extension 0.2.0 (`editors/vscode`): **Show impact of my changes**
+  runs `ci report` against the base branch and renders it in a panel (tables,
+  offline Mermaid impact graph, status-bar item, optional refresh on save).
+  Platform packages bundle the checksum-verified release binary, so the
+  extension needs no separate install; a universal package falls back to
+  `dbt-lineage` on `PATH`. The publish workflow builds and publishes all
+  targets to the VS Code Marketplace and Open VSX.
+
 ## [0.15.0] – 2026-11-05
 
 ### Added

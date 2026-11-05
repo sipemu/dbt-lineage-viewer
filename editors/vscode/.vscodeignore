@@ -1,5 +1,14 @@
-src/**
-out/**/*.map
-tsconfig.json
-.gitignore
-**/*.ts
+# Allow-list: the bundle (out/extension.js, built by scripts/build.mjs),
+# Mermaid's browser build, the webview assets and, in platform packages, bin/.
+**
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+!icon.png
+!out/extension.js
+!out/mermaid.min.js
+!media/impact.css
+!media/impact.js
+!bin/dbt-lineage
+!bin/dbt-lineage.exe

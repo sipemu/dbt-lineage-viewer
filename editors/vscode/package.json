@@ -1,8 +1,9 @@
 {
   "name": "dbt-lineage-viewer",
   "displayName": "dbt-lineage: lineage & impact for dbt",
-  "description": "dbt lineage in the editor: hover and go-to-definition on ref()/source(), upstream/downstream impact per model, lint diagnostics. No warehouse, no Python.",
-  "version": "0.1.0",
+  "description": "See what your dbt change breaks (downstream models, columns, dashboards, contracts) before CI does. Plus hover, go-to-definition and lint for ref()/source(). Binary bundled; no warehouse, no Python.",
+  "version": "0.2.0",
+  "dbtLineageVersion": "0.15.0",
   "publisher": "sipemu",
   "license": "MIT",
   "repository": {
@@ -13,21 +14,31 @@
   "bugs": {
     "url": "https://github.com/sipemu/dbt-lineage-viewer/issues"
   },
-  "homepage": "https://github.com/sipemu/dbt-lineage-viewer/blob/master/docs/EDITORS.md",
+  "homepage": "https://github.com/sipemu/dbt-lineage-viewer/blob/master/editors/vscode/README.md",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages",
     "Linters",
-    "Visualization"
+    "Visualization",
+    "Data Science",
+    "Other"
   ],
   "keywords": [
     "dbt",
+    "dbt-core",
     "lineage",
+    "impact analysis",
+    "data lineage",
+    "column lineage",
     "sql",
+    "jinja",
+    "exposures",
+    "data contracts",
     "data engineering",
-    "analytics engineering"
+    "analytics engineering",
+    "language server"
   ],
   "activationEvents": [
     "workspaceContains:**/dbt_project.yml"
@@ -35,6 +46,11 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "dbt-lineage.showImpact",
+        "title": "dbt-lineage: Show impact of my changes",
+        "icon": "$(git-compare)"
+      },
       {
         "command": "dbt-lineage.showLineage",
         "title": "dbt-lineage: Show lineage"
@@ -49,8 +65,18 @@
       "properties": {
         "dbtLineage.path": {
           "type": "string",
-          "default": "dbt-lineage",
-          "description": "Path to the dbt-lineage binary (a version that provides `dbt-lineage lsp`)."
+          "default": "",
+          "markdownDescription": "Path to a `dbt-lineage` binary (a version that provides `dbt-lineage lsp`). Empty: use the binary bundled with the extension, or `dbt-lineage` on `PATH` when none is bundled."
+        },
+        "dbtLineage.baseRef": {
+          "type": "string",
+          "default": "auto",
+          "markdownDescription": "Git ref that *Show impact of my changes* compares the working tree against. `auto`: the remote's default branch (`origin/HEAD`), else `main`, else `master`."
+        },
+        "dbtLineage.impactOnSave": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Refresh the impact panel whenever a file in the dbt project is saved (only while the panel is open)."
         },
         "dbtLineage.lineageDepth": {
           "type": "integer",
@@ -62,16 +88,26 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "vscode:prepublish": "npm run build",
+    "build": "node scripts/build.mjs --production",
+    "compile": "tsc -p ./ --noEmit && node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "fetch-binary": "node scripts/fetch-binary.mjs",
+    "package": "node scripts/package.mjs",
+    "test:impact": "node scripts/test-impact.mjs"
   },
   "dependencies": {
+    "markdown-it": "^15.0.3",
+    "mermaid": "^12.3.0",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.1.0",
+    "esbuild": "^0.28.2",
+    "ovsx": "^1.3.0",
     "typescript": "^5.4.0"
   },
   "icon": "icon.png",
