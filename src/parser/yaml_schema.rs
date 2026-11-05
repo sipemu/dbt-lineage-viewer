@@ -152,7 +152,7 @@ pub fn parse_schema_file(content: &str) -> Result<SchemaFile, serde_yaml::Error>
 
 /// Build a `serde_yaml::Value` from yaml-rust2 parser events, PyYAML-style:
 /// duplicate keys keep the last value, aliases resolve to their anchors.
-fn lenient_yaml(content: &str) -> Option<serde_yaml::Value> {
+pub(crate) fn lenient_yaml(content: &str) -> Option<serde_yaml::Value> {
     use serde_yaml::{Mapping, Value};
     use std::collections::HashMap;
     use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};

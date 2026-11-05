@@ -379,6 +379,30 @@ pub enum ExposureSource {
         #[arg(short = 'o', long, default_value = "yaml")]
         output: ExposuresOutputFormat,
     },
+    /// Read LookML dashboards offline from a LookML project (views, explores,
+    /// `.dashboard.lookml` files); no Looker API access needed.
+    Looker {
+        /// LookML project directories or files
+        #[arg(long = "lookml", required = true, num_args = 1..)]
+        lookml: Vec<PathBuf>,
+        /// Exposure URL; `{name}` is replaced by the dashboard id
+        /// (default: the dashboard file path)
+        #[arg(long)]
+        url: Option<String>,
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write the YAML to this file (e.g. models/exposures_looker.yml)
+        /// instead of stdout
+        #[arg(long)]
+        write: Option<PathBuf>,
+        /// Output format for stdout: yaml (default) or json
+        #[arg(short = 'o', long, default_value = "yaml")]
+        output: ExposuresOutputFormat,
+    },
     /// Read anofox-visualization dashboards (DuckDB `.sql` files with `::ROLE`
     /// panels); directories are searched recursively.
     Anofox {

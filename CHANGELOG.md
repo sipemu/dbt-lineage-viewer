@@ -3,6 +3,17 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage exposures looker --lookml <dirs|files>` — offline Looker
+  importer: LookML dashboards (`.dashboard.lookml`) → the explores their
+  elements query → base and joined views → tables (`sql_table_name`, or the
+  tables a `derived_table` SQL reads, following `${view.SQL_TABLE_NAME}`,
+  `extends:` and refinements). No Looker API access needed. Tested on four
+  public LookML blocks; output passes `dbt parse` (#54).
+
 ## [0.13.0] – 2026-11-05
 
 ### Added
