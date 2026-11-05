@@ -1,0 +1,44 @@
+name: VS Code extension
+
+# Publishes editors/vscode to the VS Code Marketplace (secret VSCE_PAT) and
+# Open VSX (secret OVSX_PAT) on an `editors-vscode-v*` tag; either step is
+# skipped when its secret is missing. Manual runs only build the .vsix.
+on:
+  push:
+    tags:
+      - "editors-vscode-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx @vscode/vsce package --out dbt-lineage.vsix
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vsix
+          path: editors/vscode/dbt-lineage.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/') && env.VSCE_PAT != ''
+        run: npx @vscode/vsce publish --packagePath dbt-lineage.vsix
+
+      - name: Publish to Open VSX
+        if: startsWith(github.ref, 'refs/tags/') && env.OVSX_PAT != ''
+        run: |
+          npx ovsx create-namespace sipemu -p "$OVSX_PAT" || true  # first publish only
+          npx ovsx publish dbt-lineage.vsix -p "$OVSX_PAT"
