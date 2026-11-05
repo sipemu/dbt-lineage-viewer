@@ -289,7 +289,7 @@ dbt-lineage ci report --base main --out report.md      # explicit base, write to
 dbt-lineage ci report --fail-on lint-errors,plan-empty --outputs "$GITHUB_OUTPUT"
 ```
 
-`--base auto` (default) reads the target branch from GitHub Actions, GitLab CI, Bitbucket Pipelines or Azure Pipelines, and resolves it as `origin/<branch>` (fetching it if the checkout is shallow). `--outputs` appends `selector=…` and `failed=…` lines, usable as `$GITHUB_OUTPUT` or a GitLab dotenv report. `dbt-lineage ci comment --file report.md` posts it as one sticky PR/MR comment. The GitHub Action, the GitLab component and the Bitbucket Pipe are thin wrappers around these two commands; see [`docs/CI.md`](docs/CI.md) for GitLab, Bitbucket and Azure DevOps setup.
+`--base auto` (default) reads the target branch from GitHub Actions, GitLab CI, Bitbucket Pipelines or Azure Pipelines, and resolves it as `origin/<branch>` (fetching it if the checkout is shallow). `--outputs` appends `selector=…` and `failed=…` lines, usable as `$GITHUB_OUTPUT` or a GitLab dotenv report. `dbt-lineage ci comment --file report.md` posts it as one sticky PR/MR comment, and `dbt-lineage ci annotations --format sarif|codeclimate|bitbucket|azure` turns lint findings into inline annotations (Bitbucket Code Insights with `--post`). The GitHub Action, the GitLab component, the Bitbucket Pipe and the Azure Pipelines template are thin wrappers around these commands; see [`docs/CI.md`](docs/CI.md).
 
 ### Manifest freshness
 

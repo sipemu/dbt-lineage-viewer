@@ -186,6 +186,19 @@ fn run(cli: Cli) -> Result<()> {
                     no_lint: *no_lint,
                 }),
                 cli::CiAction::Comment { file } => run_ci_comment_command(file),
+                cli::CiAction::Annotations {
+                    format,
+                    project_dir,
+                    manifest,
+                    out,
+                    post,
+                } => run_ci_annotations_command(
+                    *format,
+                    project_dir,
+                    manifest.as_ref(),
+                    out.as_ref(),
+                    *post,
+                ),
             },
         };
     }
@@ -1012,6 +1025,88 @@ fn run_ci_comment_command(file: &Path) -> Result<()> {
     match upsert(&UreqHttp, &target, &body)? {
         Outcome::Created => eprintln!("dbt-lineage: created PR/MR comment"),
         Outcome::Updated => eprintln!("dbt-lineage: updated PR/MR comment"),
+    }
+    Ok(())
+}
+
+/// Run `ci annotations`: lint findings in a CI platform's annotation format.
+#[cfg(not(tarpaulin_include))]
+fn run_ci_annotations_command(
+    format: cli::AnnotationFormat,
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    out: Option<&PathBuf>,
+    post: bool,
+) -> Result<()> {
+    use dbt_lineage::ci::annotations as ann;
+
+    if post && format != cli::AnnotationFormat::Bitbucket {
+        anyhow::bail!("--post is only supported with --format bitbucket");
+    }
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, manifest, false)?;
+    let mut lint = graph::lint::lint(&dag, &graph::lint::LintConfig::default());
+    lint.findings
+        .extend(graph::governance::private_ref_findings(
+            &dag,
+            &graph::governance::load_governance(&project_dir),
+        ));
+    let locations = repo_locations(&dag, &project_dir);
+
+    let mut buf: Vec<u8> = Vec::new();
+    match format {
+        cli::AnnotationFormat::Sarif => {
+            render::lint::render_lint_sarif_to_writer(&lint, &locations, &mut buf)
+        }
+        cli::AnnotationFormat::Codeclimate => {
+            render::lint::render_lint_codeclimate_to_writer(&lint, &locations, &mut buf)
+        }
+        cli::AnnotationFormat::Azure => {
+            buf.extend(ann::azure_logging_commands(&lint, &locations).into_bytes())
+        }
+        cli::AnnotationFormat::Bitbucket => {
+            let report = ann::bitbucket_report(&lint);
+            let annotations = ann::bitbucket_annotations(&lint, &locations);
+            if post {
+                let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+                let target = ann::BitbucketTarget::from_env(&env)?;
+                let sent = match &target.proxy {
+                    Some(proxy) => ann::post_bitbucket(
+                        &dbt_lineage::ci::comment::ProxyHttp::new(proxy)?,
+                        &target,
+                        &report,
+                        &annotations,
+                    )?,
+                    None => ann::post_bitbucket(
+                        &dbt_lineage::ci::comment::UreqHttp,
+                        &target,
+                        &report,
+                        &annotations,
+                    )?,
+                };
+                eprintln!(
+                    "dbt-lineage: Code Insights report '{}' with {} annotation(s) on {}",
+                    ann::REPORT_ID,
+                    sent,
+                    target.commit
+                );
+            }
+            serde_json::to_writer_pretty(
+                &mut buf,
+                &serde_json::json!({"report": report, "annotations": annotations}),
+            )?;
+            buf.push(b'\n');
+        }
+    }
+    match out {
+        Some(path) => std::fs::write(path, buf)?,
+        None if post => {}
+        None => {
+            use std::io::Write;
+            std::io::stdout().write_all(&buf)?;
+        }
     }
     Ok(())
 }
