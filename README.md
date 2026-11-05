@@ -85,6 +85,13 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 cargo install dbt-lineage
 ```
 
+### pip / uv (no Rust needed)
+
+```sh
+pip install dbt-lineage-cli          # installs the `dbt-lineage` command
+uvx --from dbt-lineage-cli dbt-lineage --help
+```
+
 ### Homebrew (macOS, Linux)
 
 ```sh
