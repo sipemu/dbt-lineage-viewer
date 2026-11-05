@@ -23,6 +23,12 @@ Notable changes per release. Full per-release notes live on the
   federated connections, custom SQL). Extracts, file sources and published
   Server datasources are skipped with a note. Tested on 15 public workbooks;
   output passes `dbt parse` (#54).
+- `dbt-lineage exposures looker --lookml <dirs|files>` — offline Looker
+  importer: LookML dashboards (`.dashboard.lookml`) → the explores their
+  elements query → base and joined views → tables (`sql_table_name`, or the
+  tables a `derived_table` SQL reads, following `${view.SQL_TABLE_NAME}`,
+  `extends:` and refinements). No Looker API access needed. Tested on four
+  public LookML blocks; output passes `dbt parse` (#54).
 
 ### Fixed
 

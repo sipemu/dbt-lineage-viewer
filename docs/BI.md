@@ -79,6 +79,27 @@ dbt-lineage exposures tableau --workbooks workbooks/ \
 
 Tested on 15 public workbooks (Postgres, Snowflake custom SQL, BigQuery, SQL Server, MySQL, federated, extracts, Excel, published datasources); generated YAML passes `dbt parse`.
 
+## Looker (LookML, offline)
+
+`dbt-lineage exposures looker` reads a LookML project from disk, so no Looker API access is needed. Point it at the project (or several):
+
+```sh
+dbt-lineage exposures looker --lookml path/to/lookml-project \
+  --url 'https://looker.example.com/dashboards/{name}' \
+  --write models/exposures_looker.yml
+```
+
+- **Dashboards:** LookML dashboards (`.dashboard.lookml`, YAML). Every element's `model` + `explore` counts, including `query:` and `merged_queries:`; dashboard-level filters don't. Exposure name from `title`, description from `description`, owner `looker`; `--url` replaces `{name}` with the dashboard id (default: the file path). User-defined dashboards stored only in Looker's database are not in the LookML project and are not imported.
+- **Explores** (in any `.lkml` file): base view (`from:` / `view_name:` / the explore name) plus every `join:` (`from:` or the join name), and `extends:`.
+- **Views:** `sql_table_name` (with or without `;;`, BigQuery backticks, `@{CONSTANT}` placeholders), or the tables a `derived_table: { sql: … ;; }` reads (CTEs excluded; `${other_view.SQL_TABLE_NAME}` resolves to that view's tables; Liquid neutralised), or the table of an `extends:` parent. Refinements (`view: +orders`) merge into the original view.
+
+Tested on four public LookML projects (llooker/snowflake-usage-block, llooker/google_ga360, llooker/blocks_redshift_admin, looker-open-source/block-cortex-sap): all 44 dashboards resolve to tables, and generated YAML passes `dbt parse`.
+
+### Limitations
+
+- `include:` statements are not followed; all `.lkml` files under the given paths are read. Explores are looked up per model first, then by name across the project.
+- Looker constants (`@{GCP_PROJECT}`) are not substituted, only stripped to their names; matching uses the last table-name part anyway.
+
 ## Other tools
 
-Looker, Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).
+Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).
