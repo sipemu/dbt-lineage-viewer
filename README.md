@@ -5,7 +5,13 @@
 [![docs.rs](https://img.shields.io/docsrs/dbt-lineage)](https://docs.rs/dbt-lineage)
 [![codecov](https://codecov.io/gh/sipemu/dbt-lineage-viewer/branch/master/graph/badge.svg)](https://codecov.io/gh/sipemu/dbt-lineage-viewer)
 
-![TUI Demo](assets/tui-demo.gif)
+<p align="center">
+  <a href="https://github.com/sipemu/dbt-lineage-demo/pull/1">
+    <img src="assets/pr-comment.png" width="760" alt="dbt-lineage PR comment: lineage diff, column impact, and a downstream impact diagram reaching two dashboards">
+  </a>
+  <br>
+  <sub>Every dbt PR gets one comment: what changed, which downstream columns and dashboards it breaks, and what to rebuild. <a href="https://github.com/sipemu/dbt-lineage-demo/pull/1">Live demo →</a></sub>
+</p>
 
 A fast Rust CLI tool for visualizing [dbt](https://www.getdbt.com/) model lineage. Parses SQL files directly to extract `ref()` and `source()` dependencies, builds a DAG, and renders it as ASCII art, Graphviz DOT, SVG, interactive HTML, or a terminal UI.
 
@@ -57,6 +63,8 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 - **`dbt-lineage lsp`** — language server: hover and go-to-definition on `ref()` / `source()`, lineage code lens per model, lint diagnostics. VS Code extension in [`editors/vscode`](editors/vscode); Neovim and Helix setup in [`docs/EDITORS.md`](docs/EDITORS.md)
 
 ### Interactive TUI
+
+![TUI Demo](assets/tui-demo.gif)
 
 - Navigate, search, and explore lineage in a terminal UI ([`ratatui`](https://crates.io/crates/ratatui)) with Unicode box-drawing nodes, orthogonal edge routing, and full mouse support
 - **Run dbt from TUI** — execute `dbt run` / `dbt test` on selected models with scope control (`+upstream`, `downstream+`, `+all+`) via keyboard menu or right-click context menu
@@ -246,6 +254,8 @@ A self-contained static site — search, one page per model/source/seed/exposure
 ```sh
 dbt-lineage site -p path/to/project --out site
 ```
+
+<a href="https://sipemu.github.io/dbt-lineage-demo/nodes/model.orders.html"><img src="assets/site-node.png" width="760" alt="dbt-lineage site: the orders node page with its lineage diagram (sources to dashboards), upstream and downstream lists, column-level lineage and SQL"></a>
 
 Light/dark, phone-friendly, no server or CDN. See [`docs/SITE.md`](docs/SITE.md) for Pages workflows.
 
