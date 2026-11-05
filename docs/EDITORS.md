@@ -15,14 +15,13 @@ Install the binary first: `brew install sipemu/tap/dbt-lineage`, `cargo binstall
 
 ## VS Code
 
-Install the **dbt-lineage** extension (publisher `sipemu`), or build it from [`editors/vscode`](../editors/vscode):
+Install **dbt-lineage: lineage & impact for dbt** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sipemu.dbt-lineage-viewer) or [Open VSX](https://open-vsx.org/extension/sipemu/dbt-lineage-viewer) (VSCodium, Cursor, Windsurf):
 
 ```sh
-cd editors/vscode
-npm install
-npx @vscode/vsce package          # produces dbt-lineage-<version>.vsix
-code --install-extension dbt-lineage-*.vsix
+code --install-extension sipemu.dbt-lineage-viewer
 ```
+
+The extension starts `dbt-lineage lsp`, so the `dbt-lineage` binary must be on your `PATH` (`pip install dbt-lineage-cli`, `brew install sipemu/tap/dbt-lineage`, or `cargo binstall dbt-lineage`). To build it yourself: `cd editors/vscode && npm install && npx @vscode/vsce package`.
 
 Settings: `dbtLineage.path` (binary, default `dbt-lineage`), `dbtLineage.lineageDepth` (levels shown by **dbt-lineage: Show lineage**, default 3).
 

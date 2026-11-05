@@ -60,7 +60,7 @@ Supports both direct SQL parsing (no dbt compilation or Python runtime needed) a
 
 ### Editor integration
 
-- **`dbt-lineage lsp`** — language server: hover and go-to-definition on `ref()` / `source()`, lineage code lens per model, lint diagnostics. VS Code extension in [`editors/vscode`](editors/vscode); Neovim and Helix setup in [`docs/EDITORS.md`](docs/EDITORS.md)
+- **`dbt-lineage lsp`** — language server: hover and go-to-definition on `ref()` / `source()`, lineage code lens per model, lint diagnostics. VS Code extension on the [Marketplace](https://marketplace.visualstudio.com/items?itemName=sipemu.dbt-lineage-viewer) and [Open VSX](https://open-vsx.org/extension/sipemu/dbt-lineage-viewer) (`code --install-extension sipemu.dbt-lineage-viewer`); Neovim and Helix setup in [`docs/EDITORS.md`](docs/EDITORS.md)
 
 ### Interactive TUI
 
