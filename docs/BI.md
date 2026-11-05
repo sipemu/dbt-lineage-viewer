@@ -100,6 +100,33 @@ Tested on four public LookML projects (llooker/snowflake-usage-block, llooker/go
 - `include:` statements are not followed; all `.lkml` files under the given paths are read. Explores are looked up per model first, then by name across the project.
 - Looker constants (`@{GCP_PROJECT}`) are not substituted, only stripped to their names; matching uses the last table-name part anyway.
 
+## Power BI (PBIP, `.pbit`, offline)
+
+`dbt-lineage exposures powerbi` reads Power BI reports from disk: [PBIP projects](https://learn.microsoft.com/power-bi/developer/projects/projects-overview) (as saved by Power BI Desktop or synced by Fabric Git integration) and `.pbit` templates. No Power BI API access is needed.
+
+```sh
+dbt-lineage exposures powerbi --reports powerbi/ \
+  --url 'https://app.powerbi.com/groups/me/reports/{name}' \
+  --write models/exposures_powerbi.yml
+```
+
+- **Inputs:** `--reports` takes directories (searched recursively) and files. A `*.Report/definition.pbir` points at its semantic model (`datasetReference.byPath`); the model is TMDL (`*.SemanticModel/definition/**/*.tmdl`) or TMSL JSON (`model.bim`). A `.pbip` file selects the reports it lists; a `.bim` file or semantic model folder that no scanned report uses becomes an exposure of its own. A `.pbit` is a zip whose `DataModelSchema` entry holds the model (UTF-16 JSON).
+- **One exposure per report**, named after the report folder (without `.Report`) or the `.pbit` file; owner `powerbi`; `{name}` in `--url` is that name (default URL: the path). Reports with the same name (`Sales.Report` and `Sales.pbit`) get the shortest distinguishing path appended.
+- **Dependencies:** the warehouse tables the model's partitions load:
+  - Power Query navigation steps: `Source{[Schema="dbo",Item="orders"]}[Data]` (SQL Server, Postgres, Oracle, Synapse, Fabric), `{[Name="ORDERS",Kind="Table"]}` / `Kind="View"` after database and schema steps (Snowflake, Databricks, BigQuery), and the innermost `{[Name="region"]}[Data]` step of a chain without `Kind` (Redshift, Unity Catalog);
+  - native SQL in `Value.NativeQuery(…, "select …")` (a literal or a step holding one) and `Sql.Database("srv", "db", [Query="select …"])`, read with the same SQL extraction as the other importers (M escapes `""` and `#(lf)` decoded; T-SQL `[schema].[table]` handled);
+  - shared expressions (`expressions` in `model.bim`, `expressions.tmdl`) referenced by name (`#"Base Query"`), recursively; parameters (`"value" meta [IsParameterQuery=true]`) are substituted into navigation steps;
+  - Direct Lake `entity` partitions (`schemaName.entityName`), legacy `query` partitions, and incremental-refresh `sourceExpression`s.
+- **Skipped, with a note on stderr:** `.pbix` files (the model is stored in a binary format; save as `.pbit` or PBIP), reports bound to a published semantic model (`byConnection`), `.pbit` live-connection templates without a model, and tables whose M reads no warehouse table (Excel, CSV, web, SharePoint, entered data, SQL built at refresh time). DAX calculated tables have no source and are ignored.
+
+Tested on PBIP projects, `model.bim` files and `.pbit` templates from 13 public repositories (databricks-solutions/powerbi-on-databricks-migration-accelerator — Snowflake, Databricks, Redshift, SQL Server, Synapse, native queries, incremental refresh, 14 reports; datalopes1/deliverycenter_dwh; RuiRomano/pbip-demo and fabric-cli-powerbi-cicd-sample; microsoft/fabric-cicd; ProdataSQL/FinancialModelling and DWA; djouallah/aemo_fabric (Direct Lake); Hugoberry/duckdb-pbix-extension; richardswinbank/community; PowerBiDevCamp/ALM-for-PowerBi; alisonpezzott/DataAIVIX2025; GoogleCloudPlatform/BigQuery-Agent-Analytics-SDK); generated YAML passes `dbt parse`.
+
+### Limitations
+
+- Reports are not inspected visual by visual: every table of the report's semantic model counts, including tables no visual uses.
+- M is matched by pattern, not evaluated: SQL assembled from variables at refresh time (`"select * from " & Table`) and navigation by computed values are not resolved. Only the first literal of a concatenated `Query=` string is read.
+- Thin reports on a published semantic model (`byConnection`) can't be resolved offline; import the semantic model's own PBIP folder instead.
+
 ## Other tools
 
-Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).
+Superset is planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).

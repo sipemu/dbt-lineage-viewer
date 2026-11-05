@@ -263,7 +263,7 @@ Reports counts per node type, tag distribution, top downstream-reach models, and
 
 ### BI dashboards as exposures
 
-Generate dbt exposures from Metabase, anofox-visualization, Tableau or Looker dashboards, so impact analysis knows which dashboards a change reaches:
+Generate dbt exposures from Metabase, anofox-visualization, Tableau, Looker or Power BI dashboards, so impact analysis knows which dashboards a change reaches:
 
 ```sh
 METABASE_API_KEY=mb_… dbt-lineage exposures metabase --url https://metabase.example.com \
@@ -295,7 +295,14 @@ From a LookML project, offline:
 dbt-lineage exposures looker --lookml lookml/ --write models/exposures_looker.yml
 ```
 
-Tables the dashboards read are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md). Looker and Power BI are planned.
+From Power BI, offline: PBIP projects (`*.Report` + `*.SemanticModel`, TMDL or `model.bim`) and `.pbit` templates; tables come from the partitions' Power Query (M) sources and native SQL:
+
+```sh
+dbt-lineage exposures powerbi --reports powerbi/ --url 'https://app.powerbi.com/groups/me/reports/{name}' \
+  --write models/exposures_powerbi.yml
+```
+
+Tables the dashboards read are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md).
 
 ### CI report
 

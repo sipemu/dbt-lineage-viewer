@@ -451,6 +451,31 @@ pub enum ExposureSource {
         #[arg(short = 'o', long, default_value = "yaml")]
         output: ExposuresOutputFormat,
     },
+    /// Read Power BI reports offline: PBIP projects (`*.Report`,
+    /// `*.SemanticModel` with TMDL or `model.bim`) and `.pbit` templates;
+    /// directories are searched recursively.
+    Powerbi {
+        /// Report files or directories (PBIP folders, `.pbip`, `.pbit`, `.bim`)
+        #[arg(long = "reports", required = true, num_args = 1..)]
+        reports: Vec<PathBuf>,
+        /// Exposure URL; `{name}` is replaced by the report name
+        /// (default: the report path)
+        #[arg(long)]
+        url: Option<String>,
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write the YAML to this file (e.g. models/exposures_powerbi.yml)
+        /// instead of stdout
+        #[arg(long)]
+        write: Option<PathBuf>,
+        /// Output format for stdout: yaml (default) or json
+        #[arg(short = 'o', long, default_value = "yaml")]
+        output: ExposuresOutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
