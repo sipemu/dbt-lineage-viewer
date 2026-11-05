@@ -1,6 +1,6 @@
 {
-  "name": "dbt-lineage",
-  "displayName": "dbt-lineage",
+  "name": "dbt-lineage-viewer",
+  "displayName": "dbt-lineage: lineage & impact for dbt",
   "description": "dbt lineage in the editor: hover and go-to-definition on ref()/source(), upstream/downstream impact per model, lint diagnostics. No warehouse, no Python.",
   "version": "0.1.0",
   "publisher": "sipemu",
