@@ -17,6 +17,12 @@ Notable changes per release. Full per-release notes live on the
 - Azure Pipelines step template `integrations/azure/dbt-lineage.yml`: report,
   build issues, sticky PR comment via `System.AccessToken`, report artifact.
   Not yet tested on Azure DevOps (#64).
+- `dbt-lineage exposures tableau --workbooks <files|dirs>` — reads Tableau
+  workbooks offline (`.twb`, `.twbx`): one exposure per dashboard, with the
+  tables of the datasources behind its worksheets (table relations, joins,
+  federated connections, custom SQL). Extracts, file sources and published
+  Server datasources are skipped with a note. Tested on 15 public workbooks;
+  output passes `dbt parse` (#54).
 
 ### Fixed
 
@@ -28,12 +34,6 @@ Notable changes per release. Full per-release notes live on the
   manifest from `dbt parse`: in sync, and a one-line edit is detected.
 - MCP `summary` tool and resource reported `project_name: null`; they now read
   it from `dbt_project.yml`.
-- `dbt-lineage exposures tableau --workbooks <files|dirs>` — reads Tableau
-  workbooks offline (`.twb`, `.twbx`): one exposure per dashboard, with the
-  tables of the datasources behind its worksheets (table relations, joins,
-  federated connections, custom SQL). Extracts, file sources and published
-  Server datasources are skipped with a note. Tested on 15 public workbooks;
-  output passes `dbt parse` (#54).
 
 ## [0.13.0] – 2026-11-05
 
