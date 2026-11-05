@@ -3,12 +3,14 @@
 //! A BI connector lists dashboards with the warehouse tables they read; this
 //! module maps those tables onto the project's models and sources and renders
 //! dbt `exposures:` YAML. Connectors: Metabase (REST API),
-//! anofox-visualization (dashboard `.sql` files), Tableau (workbook files) and
-//! Looker (LookML project files); all but Metabase work offline.
+//! anofox-visualization (dashboard `.sql` files), Tableau (workbook files),
+//! Looker (LookML project files) and Superset (dashboard exports); all but
+//! Metabase work offline.
 
 pub mod anofox;
 pub mod looker;
 pub mod metabase;
+pub mod superset;
 pub mod tableau;
 
 use std::collections::{BTreeSet, HashMap};

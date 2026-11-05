@@ -178,6 +178,21 @@ fn run(cli: Cli) -> Result<()> {
                     write.as_ref(),
                     output,
                 ),
+                cli::ExposureSource::Superset {
+                    exports,
+                    url,
+                    project_dir,
+                    manifest,
+                    write,
+                    output,
+                } => run_exposures_superset_command(
+                    exports,
+                    url.as_deref(),
+                    project_dir,
+                    manifest.as_ref(),
+                    write.as_ref(),
+                    output,
+                ),
                 cli::ExposureSource::Anofox {
                     dashboards,
                     url,
@@ -1015,6 +1030,27 @@ fn run_exposures_looker_command(
         .unwrap_or_else(|_| project_dir.to_path_buf());
     let dag = build_dag(&project_dir, manifest, false)?;
     let dashboards = dbt_lineage::bi::looker::dashboards_from_paths(lookml, url)?;
+    emit_exposures(&dag, &dashboards, write, output)
+}
+
+/// Run `exposures superset`: read dashboard exports offline.
+#[cfg(not(tarpaulin_include))]
+fn run_exposures_superset_command(
+    exports: &[PathBuf],
+    url: Option<&str>,
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    write: Option<&PathBuf>,
+    output: &cli::ExposuresOutputFormat,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, manifest, false)?;
+    let (dashboards, notes) = dbt_lineage::bi::superset::dashboards_from_paths(exports, url)?;
+    for note in &notes {
+        eprintln!("dbt-lineage: {}", note);
+    }
     emit_exposures(&dag, &dashboards, write, output)
 }
 

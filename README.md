@@ -263,7 +263,7 @@ Reports counts per node type, tag distribution, top downstream-reach models, and
 
 ### BI dashboards as exposures
 
-Generate dbt exposures from Metabase, anofox-visualization, Tableau or Looker dashboards, so impact analysis knows which dashboards a change reaches:
+Generate dbt exposures from Metabase, anofox-visualization, Tableau, Looker or Superset dashboards, so impact analysis knows which dashboards a change reaches:
 
 ```sh
 METABASE_API_KEY=mb_… dbt-lineage exposures metabase --url https://metabase.example.com \
@@ -289,13 +289,14 @@ From Tableau workbooks, offline (`.twb` / `.twbx`):
 dbt-lineage exposures tableau --workbooks workbooks/ --write models/exposures_tableau.yml
 ```
 
-From a LookML project, offline:
+From Superset dashboard exports, offline (ZIPs from `superset export-dashboards` or the UI; dashboard → charts → datasets → tables, virtual-dataset SQL included):
 
 ```sh
-dbt-lineage exposures looker --lookml lookml/ --write models/exposures_looker.yml
+dbt-lineage exposures superset --exports exports/ \
+  --url 'https://superset.example.com/superset/dashboard/{name}/' --write models/exposures_superset.yml
 ```
 
-Tables the dashboards read are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md). Looker and Power BI are planned.
+Tables the dashboards read are mapped onto models and sources; unmatched tables are listed on stderr. See [`docs/BI.md`](docs/BI.md). Power BI is planned.
 
 ### CI report
 
