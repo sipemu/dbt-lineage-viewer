@@ -1,6 +1,6 @@
 [package]
 name = "dbt-lineage"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 description = "PR-time dbt lineage, impact analysis and rebuild plans without a warehouse: CLI, TUI, CI report and MCP server"
 license = "MIT"
