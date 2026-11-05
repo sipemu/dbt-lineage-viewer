@@ -3,6 +3,21 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage ci annotations --format sarif|codeclimate|bitbucket|azure` —
+  lint findings as inline annotations. `bitbucket --post` publishes a Code
+  Insights report (`PASSED`/`FAILED`) with up to 1,000 annotations in batches
+  of 100, authenticated by token or through the Pipelines proxy
+  (`localhost:29418`); `azure` prints `##vso[task.logissue]` commands (#63, #64).
+- The Bitbucket Pipe publishes the Code Insights report by default
+  (`INSIGHTS: "false"` to skip).
+- Azure Pipelines step template `integrations/azure/dbt-lineage.yml`: report,
+  build issues, sticky PR comment via `System.AccessToken`, report artifact.
+  Not yet tested on Azure DevOps (#64).
+
 ## [0.13.0] – 2026-11-05
 
 ### Added

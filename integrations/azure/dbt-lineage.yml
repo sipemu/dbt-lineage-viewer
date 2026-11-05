@@ -1,0 +1,55 @@
+# dbt-lineage step template for Azure Pipelines. NOT YET TESTED ON AZURE.
+#
+# Runs the ghcr.io/sipemu/dbt-lineage container on the agent: writes the
+# Markdown report, logs lint findings as build warnings/errors
+# (##vso[task.logissue]), posts the report as one sticky PR comment, and
+# publishes it as a pipeline artifact. See integrations/azure/README.md.
+parameters:
+  - name: projectDir
+    type: string
+    default: .
+  - name: base
+    type: string
+    default: auto
+  - name: failOn
+    type: string
+    default: lint-errors
+  - name: comment
+    type: boolean
+    default: true
+  - name: image
+    type: string
+    default: ghcr.io/sipemu/dbt-lineage:v0
+
+steps:
+  - bash: |
+      docker run --rm \
+        -v "$(Build.SourcesDirectory):/workspace" -w /workspace \
+        -e TF_BUILD -e SYSTEM_PULLREQUEST_TARGETBRANCH -e SYSTEM_PULLREQUEST_PULLREQUESTID \
+        -e SYSTEM_COLLECTIONURI -e SYSTEM_TEAMPROJECT -e BUILD_REPOSITORY_ID -e SYSTEM_ACCESSTOKEN \
+        -e DBT_LINEAGE_PROJECT_DIR="${{ parameters.projectDir }}" \
+        -e DBT_LINEAGE_BASE="${{ parameters.base }}" \
+        -e DBT_LINEAGE_FAIL_ON="${{ parameters.failOn }}" \
+        -e DBT_LINEAGE_COMMENT="${{ parameters.comment }}" \
+        --entrypoint sh "${{ parameters.image }}" -c '
+          rc=0
+          dbt-lineage ci report -p "$DBT_LINEAGE_PROJECT_DIR" --base "$DBT_LINEAGE_BASE" \
+            --fail-on "$DBT_LINEAGE_FAIL_ON" --out dbt-lineage-report.md || rc=$?
+          dbt-lineage ci annotations --format azure -p "$DBT_LINEAGE_PROJECT_DIR" || true
+          case "$DBT_LINEAGE_COMMENT" in
+            [Tt]rue)
+              if [ -n "${SYSTEM_PULLREQUEST_PULLREQUESTID:-}" ] && [ -f dbt-lineage-report.md ]; then
+                dbt-lineage ci comment --file dbt-lineage-report.md \
+                  || echo "##vso[task.logissue type=warning]dbt-lineage: PR comment skipped (the build service needs Contribute to pull requests)"
+              fi ;;
+          esac
+          exit $rc'
+    displayName: dbt-lineage
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - publish: $(Build.SourcesDirectory)/dbt-lineage-report.md
+    artifact: dbt-lineage-report
+    displayName: Publish dbt-lineage report
+    condition: always()
+    continueOnError: true

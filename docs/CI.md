@@ -1,13 +1,13 @@
 # CI integrations
 
-`dbt-lineage ci report` renders one Markdown report per pull/merge request (lineage diff including SQL body changes, Mermaid impact diagram, rebuild selector, manifest freshness, lint), and `dbt-lineage ci comment` posts it as one sticky comment that later runs update. Every platform below is a thin wrapper around those two commands.
+`dbt-lineage ci report` renders one Markdown report per pull/merge request (lineage diff including SQL body changes, Mermaid impact diagram, rebuild selector, manifest freshness, lint), `dbt-lineage ci comment` posts it as one sticky comment that later runs update, and `dbt-lineage ci annotations` turns lint findings into the platform's inline annotations. Every platform below is a thin wrapper around these commands.
 
 | Platform | Integration | Comment token | Inline findings |
 | --- | --- | --- | --- |
 | GitHub Actions | `uses: sipemu/dbt-lineage-viewer@v0` | `GITHUB_TOKEN` (automatic) | SARIF via code scanning |
 | GitLab CI | CI/CD component, [`integrations/gitlab`](../integrations/gitlab) | `GITLAB_TOKEN`: project access token, `api` scope | Code Quality (`lint -o codeclimate`) |
-| Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:v0`, [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | — |
-| Azure Pipelines | container step (below) | `SYSTEM_ACCESSTOKEN` | — |
+| Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:v0`, [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | Code Insights report + annotations (`ci annotations --format bitbucket --post`) |
+| Azure Pipelines | step template, [`integrations/azure`](../integrations/azure) | `SYSTEM_ACCESSTOKEN` | build warnings/errors (`ci annotations --format azure`) |
 
 `DBT_LINEAGE_TOKEN` overrides the platform token everywhere.
 
@@ -49,7 +49,24 @@ See [`integrations/bitbucket/README.md`](../integrations/bitbucket/README.md).
 
 ## Azure Pipelines
 
-Not yet tested on Azure; feedback welcome.
+Not yet tested on Azure; feedback welcome. The step template in [`integrations/azure`](../integrations/azure) runs the report, logs lint findings as build issues, posts the PR comment and publishes the report as an artifact:
+
+```yaml
+resources:
+  repositories:
+    - repository: dbt_lineage
+      type: github
+      name: sipemu/dbt-lineage-viewer
+      endpoint: my-github-connection   # GitHub service connection
+      ref: refs/tags/v0.14.0
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - template: integrations/azure/dbt-lineage.yml@dbt_lineage
+    parameters: { projectDir: dbt, failOn: lint-errors }
+```
+
+Inline, without the template:
 
 ```yaml
 pr: [main]
@@ -62,12 +79,25 @@ steps:
         -e TF_BUILD -e SYSTEM_PULLREQUEST_TARGETBRANCH -e SYSTEM_PULLREQUEST_PULLREQUESTID \
         -e SYSTEM_COLLECTIONURI -e SYSTEM_TEAMPROJECT -e BUILD_REPOSITORY_ID -e SYSTEM_ACCESSTOKEN \
         --entrypoint sh ghcr.io/sipemu/dbt-lineage:v0 \
-        -c 'dbt-lineage ci report --out report.md; rc=$?; dbt-lineage ci comment --file report.md; exit $rc'
+        -c 'dbt-lineage ci report --out report.md; rc=$?; dbt-lineage ci annotations --format azure; dbt-lineage ci comment --file report.md; exit $rc'
     env:
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 ```
 
 The build service account needs "Contribute to pull requests" on the repository.
+
+## Inline annotations
+
+`dbt-lineage ci annotations --format <f> [-p DIR] [--out FILE]` renders the lint findings (including `private-ref`) with repository-relative file paths:
+
+| Format | Platform | Notes |
+| --- | --- | --- |
+| `sarif` | GitHub code scanning | upload with `github/codeql-action/upload-sarif` |
+| `codeclimate` | GitLab Code Quality | `artifacts:reports:codequality` |
+| `bitbucket` | Bitbucket Code Insights | `--post` replaces the commit's `dbt-lineage` report and creates up to 1,000 annotations in batches of 100; result `FAILED` when there are error findings |
+| `azure` | Azure Pipelines | `##vso[task.logissue]` lines on stdout |
+
+Bitbucket authentication: `DBT_LINEAGE_TOKEN` or `BITBUCKET_ACCESS_TOKEN` (Bearer, `https://api.bitbucket.org`); without a token, inside Pipelines the request goes through the proxy that runs alongside every step at `localhost:29418` (plain `http://api.bitbucket.org`, auth added by the proxy). `BITBUCKET_PROXY` overrides the proxy address.
 
 ## Outputs and exit codes
 

@@ -452,6 +452,36 @@ pub enum CiAction {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Lint findings as inline annotations: SARIF (GitHub code scanning),
+    /// Code Quality (GitLab), Bitbucket Code Insights, or Azure Pipelines
+    /// logging commands.
+    Annotations {
+        /// Output format
+        #[arg(long, value_enum)]
+        format: AnnotationFormat,
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write to this file instead of stdout
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// bitbucket only: send the report and annotations to the Code
+        /// Insights API (token from DBT_LINEAGE_TOKEN / BITBUCKET_ACCESS_TOKEN,
+        /// else the Pipelines proxy, BITBUCKET_PROXY or localhost:29418)
+        #[arg(long)]
+        post: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum AnnotationFormat {
+    Sarif,
+    Codeclimate,
+    Bitbucket,
+    Azure,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

@@ -404,26 +404,49 @@ pub struct UreqHttp;
 
 impl Http for UreqHttp {
     fn send(&self, req: &Request) -> Result<(u16, Value)> {
-        let mut r = ureq::request(req.method, &req.url);
-        for (k, v) in &req.headers {
-            r = r.set(k, v);
-        }
-        let result = match &req.body {
-            Some(body) => r.send_json(body.clone()),
-            None => r.call(),
-        };
-        let resp = match result {
-            Ok(resp) => resp,
-            Err(ureq::Error::Status(_, resp)) => resp,
-            Err(e) => {
-                return Err(anyhow::Error::new(e).context(format!("{} {}", req.method, req.url)))
-            }
-        };
-        let status = resp.status();
-        let text = resp.into_string().unwrap_or_default();
-        let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
-        Ok((status, body))
+        send_with(&ureq::agent(), req)
     }
+}
+
+/// `ureq` transport through an HTTP forward proxy (e.g. the Bitbucket
+/// Pipelines proxy at `http://localhost:29418`, which adds authentication).
+pub struct ProxyHttp {
+    agent: ureq::Agent,
+}
+
+impl ProxyHttp {
+    pub fn new(proxy: &str) -> Result<Self> {
+        let proxy = ureq::Proxy::new(proxy).with_context(|| format!("invalid proxy {proxy}"))?;
+        Ok(ProxyHttp {
+            agent: ureq::AgentBuilder::new().proxy(proxy).build(),
+        })
+    }
+}
+
+impl Http for ProxyHttp {
+    fn send(&self, req: &Request) -> Result<(u16, Value)> {
+        send_with(&self.agent, req)
+    }
+}
+
+fn send_with(agent: &ureq::Agent, req: &Request) -> Result<(u16, Value)> {
+    let mut r = agent.request(req.method, &req.url);
+    for (k, v) in &req.headers {
+        r = r.set(k, v);
+    }
+    let result = match &req.body {
+        Some(body) => r.send_json(body.clone()),
+        None => r.call(),
+    };
+    let resp = match result {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(_, resp)) => resp,
+        Err(e) => return Err(anyhow::Error::new(e).context(format!("{} {}", req.method, req.url))),
+    };
+    let status = resp.status();
+    let text = resp.into_string().unwrap_or_default();
+    let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
+    Ok((status, body))
 }
 
 #[cfg(test)]

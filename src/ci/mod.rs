@@ -5,6 +5,7 @@
 //! thin: detect the CI platform and target branch from the environment, run
 //! the analyses, render one Markdown report, and decide whether the job fails.
 
+pub mod annotations;
 pub mod comment;
 
 use std::collections::{HashMap, HashSet, VecDeque};
