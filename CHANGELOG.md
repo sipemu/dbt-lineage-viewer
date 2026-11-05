@@ -3,6 +3,18 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage exposures superset --exports <zips|dirs>` — offline Apache
+  Superset importer: dashboard exports (ZIP or unpacked) → charts in the
+  dashboard layout → datasets → tables (`schema.table_name`, or the tables a
+  virtual dataset's SQL reads, Jinja neutralised). `{name}` in `--url` is the
+  slug (else the uuid); owner defaults to `superset`. The legacy JSON export
+  is read too. Tested on Superset's bundled example dashboards; output passes
+  `dbt parse` (#54).
+
 ## [0.14.0] – 2026-11-05
 
 ### Added

@@ -100,6 +100,30 @@ Tested on four public LookML projects (llooker/snowflake-usage-block, llooker/go
 - `include:` statements are not followed; all `.lkml` files under the given paths are read. Explores are looked up per model first, then by name across the project.
 - Looker constants (`@{GCP_PROJECT}`) are not substituted, only stripped to their names; matching uses the last table-name part anyway.
 
+## Superset (dashboard exports, offline)
+
+`dbt-lineage exposures superset` reads Apache Superset dashboard exports, so no Superset API access is needed. Export dashboards with `superset export-dashboards -f dashboards.zip`, the *Download* action in the UI, or `GET /api/v1/dashboard/export/`, and point the command at the ZIPs (or unpacked export directories):
+
+```sh
+dbt-lineage exposures superset --exports exports/ \
+  --url 'https://superset.example.com/superset/dashboard/{name}/' \
+  --write models/exposures_superset.yml
+```
+
+- **Files:** `--exports` takes ZIPs, directories (searched recursively for `.yaml`/`.yml`/`.zip`/`.json`) and single files. YAML files are recognised by content, not path: `dashboard_title` → dashboard, `slice_name` → chart, `table_name` → dataset; databases and `metadata.yaml` are ignored. Assets are matched by `uuid` across all inputs (the first copy wins), so several exports can be read at once.
+- **Dependencies:** dashboard → the charts in its `position` layout (`CHART` entries' `meta.uuid`; a JSON-string layout works too) → each chart's `dataset_uuid` → the dataset's tables. A physical dataset is `schema.table_name` (with `catalog` when set); a virtual dataset (`sql` set) contributes the tables its SQL reads (CTEs excluded; Jinja `{{ … }}`, `{% … %}` and `{# … #}` neutralised), not its own name.
+- **Exposure fields:** name from `dashboard_title`, description from `description`, owner `superset` (exports carry no owners). `--url` replaces `{name}` with the dashboard `slug`, or its `uuid` when it has none (default URL: the export path).
+- **Notes on stderr:** charts in the layout but missing from the export, charts without a dataset (e.g. built on a saved query), datasets missing from the export, and virtual datasets whose SQL yields no table.
+- **Legacy JSON export** (pre-1.0 `dashboards` + `datasources` with `__Dashboard__` / `__Slice__` / `__SqlaTable__`) is read as well: each slice's `datasource_name` (+ `schema` in its `params`) is looked up in `datasources`; `{name}` is the slug, else the dashboard id.
+
+Tested on the example dashboards shipped in the Superset repository: `superset/examples/configs` at tag 3.1.0 (export layout, 6 dashboards, as a ZIP; includes virtual datasets) and `superset/examples` on master (9 dashboards, per-example layout). All charts and datasets resolve; virtual datasets map to their base tables (e.g. *Slack Dashboard* → `channel_members`, `channels`, `exported_stats`, `messages`, `threads`, `users`, `users_channels`). Generated YAML passes `dbt parse`.
+
+### Limitations
+
+- Superset routes dashboards by slug or numeric id; v1 exports carry no numeric id, so for dashboards without a slug the `{name}` fallback is the uuid, which is not a working Superset URL. Give those dashboards a slug, or use a `--url` without `{name}`.
+- Jinja that generates table names (`FROM {{ my_table }}`) can't be resolved; those references are dropped.
+- Dashboards from the export are always imported; a chart's own `dashboards` list (not part of v1 exports) is not used.
+
 ## Other tools
 
-Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).
+Power BI is planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).
