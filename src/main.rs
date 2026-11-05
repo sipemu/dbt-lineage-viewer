@@ -148,6 +148,21 @@ fn run(cli: Cli) -> Result<()> {
                     write.as_ref(),
                     output,
                 ),
+                cli::ExposureSource::Tableau {
+                    workbooks,
+                    url,
+                    project_dir,
+                    manifest,
+                    write,
+                    output,
+                } => run_exposures_tableau_command(
+                    workbooks,
+                    url.as_deref(),
+                    project_dir,
+                    manifest.as_ref(),
+                    write.as_ref(),
+                    output,
+                ),
                 cli::ExposureSource::Anofox {
                     dashboards,
                     url,
@@ -946,6 +961,27 @@ fn run_exposures_anofox_command(
         .unwrap_or_else(|_| project_dir.to_path_buf());
     let dag = build_dag(&project_dir, manifest, false)?;
     let dashboards = dbt_lineage::bi::anofox::dashboards_from_paths(dashboards, url)?;
+    emit_exposures(&dag, &dashboards, write, output)
+}
+
+/// Run `exposures tableau`: read workbook files offline.
+#[cfg(not(tarpaulin_include))]
+fn run_exposures_tableau_command(
+    workbooks: &[PathBuf],
+    url: Option<&str>,
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    write: Option<&PathBuf>,
+    output: &cli::ExposuresOutputFormat,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, manifest, false)?;
+    let (dashboards, notes) = dbt_lineage::bi::tableau::dashboards_from_paths(workbooks, url)?;
+    for note in &notes {
+        eprintln!("dbt-lineage: {}", note);
+    }
     emit_exposures(&dag, &dashboards, write, output)
 }
 
