@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sipemu/dbt-lineage",
+  "title": "dbt-lineage",
+  "description": "dbt model and column lineage, downstream impact and test proposals; no warehouse or dbt compile",
+  "repository": {
+    "url": "https://github.com/sipemu/dbt-lineage-viewer",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/sipemu/dbt-lineage-viewer/blob/master/docs/MCP.md",
+  "version": "0.15.0",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "identifier": "dbt-lineage",
+      "version": "0.15.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "named",
+          "name": "--project-dir",
+          "description": "Path to the dbt project (defaults to the current directory)",
+          "isRequired": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}
