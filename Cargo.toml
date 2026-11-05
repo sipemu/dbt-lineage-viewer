@@ -62,6 +62,8 @@ yaml-rust2 = "0.10"
 lsp-server = { version = "0.7", optional = true }
 lsp-types = { version = "0.95", optional = true }
 url = { version = "2", optional = true }
+quick-xml = "0.37"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

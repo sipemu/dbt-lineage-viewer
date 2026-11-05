@@ -379,6 +379,30 @@ pub enum ExposureSource {
         #[arg(short = 'o', long, default_value = "yaml")]
         output: ExposuresOutputFormat,
     },
+    /// Read Tableau workbooks offline (`.twb`, `.twbx`); directories are
+    /// searched recursively.
+    Tableau {
+        /// Workbook files or directories
+        #[arg(long = "workbooks", required = true, num_args = 1..)]
+        workbooks: Vec<PathBuf>,
+        /// Exposure URL; `{name}` is replaced by the workbook file name
+        /// without extension (default: the file path)
+        #[arg(long)]
+        url: Option<String>,
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+        /// Use manifest.json instead of parsing SQL
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write the YAML to this file (e.g. models/exposures_tableau.yml)
+        /// instead of stdout
+        #[arg(long)]
+        write: Option<PathBuf>,
+        /// Output format for stdout: yaml (default) or json
+        #[arg(short = 'o', long, default_value = "yaml")]
+        output: ExposuresOutputFormat,
+    },
     /// Read anofox-visualization dashboards (DuckDB `.sql` files with `::ROLE`
     /// panels); directories are searched recursively.
     Anofox {

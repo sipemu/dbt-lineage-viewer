@@ -63,6 +63,22 @@ dbt-lineage exposures anofox --dashboards dashboards/ \
 
 On the anofox-visualization repository itself (72 dashboards) every remaining unmatched table is a real table the dashboards expect to exist.
 
+## Tableau
+
+Tableau workbooks are read offline, from `.twb` files or `.twbx` packages, e.g. a repository of exported workbooks:
+
+```sh
+dbt-lineage exposures tableau --workbooks workbooks/ \
+  --url 'https://tableau.example.com/#/views/{name}' \
+  --write models/exposures_tableau.yml
+```
+
+- **One exposure per dashboard**, named `<workbook>: <dashboard>`; a workbook without dashboards becomes one exposure. Owner defaults to `tableau`; `{name}` in `--url` is the workbook file name without extension (default URL: the file path).
+- **Dependencies:** the tables of the datasources behind the dashboard's worksheets (`<zone>` → worksheet → `<datasource-dependencies>`): `<relation type="table">` entries, including joins and federated (multi-connection) sources, plus tables read by custom SQL (`type="text"`; `<[Parameters].[…]>` placeholders are neutralised).
+- **Skipped, with a note on stderr:** extracts (`.hyper`, `[Extract].[Extract]`), file sources (Excel, CSV, Google Sheets, …), and published Server datasources (`sqlproxy`), whose tables the workbook doesn't record.
+
+Tested on 15 public workbooks (Postgres, Snowflake custom SQL, BigQuery, SQL Server, MySQL, federated, extracts, Excel, published datasources); generated YAML passes `dbt parse`.
+
 ## Other tools
 
-Looker, Tableau, Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).
+Looker, Power BI and Superset are planned. Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).

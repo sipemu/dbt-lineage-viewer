@@ -3,6 +3,17 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Added
+
+- `dbt-lineage exposures tableau --workbooks <files|dirs>` — reads Tableau
+  workbooks offline (`.twb`, `.twbx`): one exposure per dashboard, with the
+  tables of the datasources behind its worksheets (table relations, joins,
+  federated connections, custom SQL). Extracts, file sources and published
+  Server datasources are skipped with a note. Tested on 15 public workbooks;
+  output passes `dbt parse` (#54).
+
 ## [0.13.0] – 2026-11-05
 
 ### Added
