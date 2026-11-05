@@ -72,7 +72,8 @@ pub fn check_manifest(project_dir: &Path, manifest_path: &Path) -> Result<Manife
             source: e,
         })?;
 
-    let referenced: HashSet<String> = collect_referenced_paths(&manifest);
+    let referenced: HashSet<String> =
+        collect_referenced_paths(&manifest, &collect_disabled_paths(&content));
     let checksums: HashMap<String, String> = collect_checksums(&manifest);
 
     let mut missing = Vec::new();
@@ -88,8 +89,7 @@ pub fn check_manifest(project_dir: &Path, manifest_path: &Path) -> Result<Manife
         };
         // Authoritative: dbt's recorded checksum if present and named "sha256".
         if let Some(expected) = checksums.get(rel) {
-            let actual = sha256_hex(&bytes);
-            if &actual != expected {
+            if !dbt_checksum_matches(&bytes, expected) {
                 modified.push(Modification {
                     file: rel.clone(),
                     detection: DetectionMethod::ContentHash,
@@ -133,13 +133,30 @@ pub fn check_manifest(project_dir: &Path, manifest_path: &Path) -> Result<Manife
 fn collect_checksums(manifest: &Manifest) -> HashMap<String, String> {
     let mut out: HashMap<String, String> = HashMap::new();
     for n in manifest.nodes.values() {
-        if let (Some(p), Some(c)) = (&n.path, &n.checksum) {
+        // Generic tests carry their YAML file's path but no file checksum.
+        if let (Some(p), Some(c)) = (node_file(&n.original_file_path, &n.path), &n.checksum) {
             if c.name == "sha256" && !c.checksum.is_empty() {
-                out.insert(p.replace('\\', "/"), c.checksum.clone());
+                out.insert(p, c.checksum.clone());
             }
         }
     }
     out
+}
+
+/// dbt's file checksum, which differs by version and file type: dbt 1.10+
+/// hashes SQL/YAML with all whitespace runs collapsed to one space
+/// (`" ".join(contents.split())`); seeds and older versions hash the
+/// contents with leading/trailing whitespace stripped.
+fn dbt_checksum_matches(bytes: &[u8], expected: &str) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return sha256_hex(bytes) == expected;
+    };
+    let stripped = text.trim();
+    if sha256_hex(stripped.as_bytes()) == expected {
+        return true;
+    }
+    let collapsed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+    sha256_hex(collapsed.as_bytes()) == expected
 }
 
 /// SHA-256 hex of bytes. dbt records SHA-256 in manifest.json, not blake3, so
@@ -279,19 +296,56 @@ mod sha256 {
 
 /// Collect every project-relative path referenced anywhere in the manifest, normalized
 /// to forward-slash strings for portable cross-platform comparison.
-fn collect_referenced_paths(manifest: &Manifest) -> HashSet<String> {
+/// Project-relative file of a node: dbt's `original_file_path` (`path` is
+/// relative to the resource folder, or virtual for generic tests).
+fn node_file(original: &Option<String>, path: &Option<String>) -> Option<String> {
+    original
+        .as_ref()
+        .or(path.as_ref())
+        .map(|p| p.replace('\\', "/"))
+}
+
+fn collect_referenced_paths(manifest: &Manifest, disabled: &[String]) -> HashSet<String> {
     let mut out: HashSet<String> = HashSet::new();
     for n in manifest.nodes.values() {
-        if let Some(p) = &n.path {
-            out.insert(p.replace('\\', "/"));
+        if let Some(p) = node_file(&n.original_file_path, &n.path) {
+            out.insert(p);
         }
     }
     for s in manifest.sources.values() {
-        if let Some(p) = &s.path {
-            out.insert(p.replace('\\', "/"));
+        if let Some(p) = node_file(&s.original_file_path, &s.path) {
+            out.insert(p);
         }
     }
+    // Disabled nodes (e.g. `enabled: false` or a var-driven `enabled`) are
+    // still known to dbt: their files are tracked, not "untracked".
+    out.extend(disabled.iter().cloned());
     out
+}
+
+/// Files of nodes in the manifest's `disabled` section.
+fn collect_disabled_paths(content: &str) -> Vec<String> {
+    #[derive(serde::Deserialize)]
+    struct DisabledNode {
+        #[serde(default)]
+        original_file_path: Option<String>,
+        #[serde(default)]
+        path: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct WithDisabled {
+        #[serde(default)]
+        disabled: HashMap<String, Vec<DisabledNode>>,
+    }
+    serde_json::from_str::<WithDisabled>(content)
+        .map(|m| {
+            m.disabled
+                .into_values()
+                .flatten()
+                .filter_map(|n| node_file(&n.original_file_path, &n.path))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Walk standard dbt directories under `project_dir` and return any `.sql` file that
@@ -335,6 +389,58 @@ fn scan_untracked_sql(project_dir: &Path, referenced: &HashSet<String>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_dbt_manifest_shape_is_in_sync() {
+        // dbt writes `path` relative to the resource folder (models/ is
+        // dropped), a virtual path for generic tests, whitespace-collapsed
+        // SQL checksums (1.10+), and disabled nodes under `disabled`.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join("models/staging")).unwrap();
+        std::fs::create_dir_all(p.join("target")).unwrap();
+        let sql = "select\n    id,\n    amount\nfrom raw\n";
+        std::fs::write(p.join("models/staging/stg.sql"), sql).unwrap();
+        std::fs::write(p.join("models/staging/off.sql"), "select 1\n").unwrap();
+        std::fs::write(p.join("models/staging/schema.yml"), "version: 2\n").unwrap();
+        let collapsed = sha256_hex(
+            sql.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .as_bytes(),
+        );
+        let manifest = serde_json::json!({
+            "nodes": {
+                "model.p.stg": {"unique_id": "model.p.stg", "resource_type": "model", "name": "stg",
+                    "path": "staging/stg.sql", "original_file_path": "models/staging/stg.sql",
+                    "checksum": {"name": "sha256", "checksum": collapsed}},
+                "test.p.not_null_stg_id.abc": {"unique_id": "test.p.not_null_stg_id.abc",
+                    "resource_type": "test", "name": "not_null_stg_id",
+                    "path": "not_null_stg_id.sql", "original_file_path": "models/staging/schema.yml",
+                    "checksum": {"name": "none", "checksum": ""}}
+            },
+            "sources": {},
+            "disabled": {"model.p.off": [{"original_file_path": "models/staging/off.sql",
+                "path": "staging/off.sql"}]}
+        });
+        let mpath = p.join("target/manifest.json");
+        std::fs::write(&mpath, manifest.to_string()).unwrap();
+        let report = check_manifest(p, &mpath).unwrap();
+        assert!(!report.is_stale, "{report:?}");
+
+        std::fs::write(p.join("models/staging/stg.sql"), "select id from raw\n").unwrap();
+        let report = check_manifest(p, &mpath).unwrap();
+        assert!(report.is_stale);
+        assert_eq!(report.modified[0].file, "models/staging/stg.sql");
+    }
+
+    #[test]
+    fn checksum_variants() {
+        let text = b"  a  b\n c \n";
+        assert!(dbt_checksum_matches(text, &sha256_hex(b"a  b\n c")));
+        assert!(dbt_checksum_matches(text, &sha256_hex(b"a b c")));
+        assert!(!dbt_checksum_matches(text, &sha256_hex(b"a b d")));
+    }
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};

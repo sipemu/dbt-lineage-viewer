@@ -3,6 +3,17 @@
 Notable changes per release. Full per-release notes live on the
 [GitHub Releases page](https://github.com/sipemu/dbt-lineage-viewer/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **`check-manifest` reported every real dbt project as stale.** It used the
+  manifest's `path` (relative to the resource folder, virtual for generic
+  tests) instead of `original_file_path`, ignored disabled nodes, and compared
+  plain SHA-256 where dbt hashes stripped (seeds, older dbt) or
+  whitespace-collapsed (SQL, dbt 1.10+) contents. Verified on tuva with a
+  manifest from `dbt parse`: in sync, and a one-line edit is detected.
+
 ## [0.13.0] – 2026-11-05
 
 ### Added
