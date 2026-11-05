@@ -1,8 +1,15 @@
 name: VS Code extension
 
-# Publishes editors/vscode to the VS Code Marketplace (secret VSCE_PAT) and
-# Open VSX (secret OVSX_PAT) on an `editors-vscode-v*` tag; either step is
-# skipped when its secret is missing. Manual runs only build the .vsix.
+# Builds editors/vscode as one .vsix per platform (linux-x64, linux-arm64,
+# darwin-x64, darwin-arm64, win32-x64), each bundling the dbt-lineage release
+# binary pinned in package.json ("dbtLineageVersion", checksum-verified), plus
+# a universal .vsix without a binary for every other platform (it uses
+# dbt-lineage from PATH). The marketplaces serve the platform package when one
+# matches and fall back to the universal one.
+#
+# On an `editors-vscode-v*` tag all six are published to the VS Code
+# Marketplace (secret VSCE_PAT) and Open VSX (secret OVSX_PAT); either step is
+# skipped when its secret is missing. Manual runs only build the .vsix files.
 on:
   push:
     tags:
@@ -27,18 +34,27 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx @vscode/vsce package --out dbt-lineage.vsix
+      - run: npm run typecheck
+
+      - name: Package all targets
+        run: node scripts/package.mjs
+      - name: List packages
+        run: |
+          ls -l dist
+          for f in dist/*.vsix; do echo "== $f"; unzip -l "$f" | grep -E 'bin/|out/' ; done
+
       - uses: actions/upload-artifact@v6
         with:
           name: vsix
-          path: editors/vscode/dbt-lineage.vsix
+          path: editors/vscode/dist/*.vsix
 
       - name: Publish to VS Code Marketplace
         if: startsWith(github.ref, 'refs/tags/') && env.VSCE_PAT != ''
-        run: npx @vscode/vsce publish --packagePath dbt-lineage.vsix
+        run: npx vsce publish --skip-duplicate --packagePath dist/*.vsix
 
       - name: Publish to Open VSX
         if: startsWith(github.ref, 'refs/tags/') && env.OVSX_PAT != ''
         run: |
           npx ovsx create-namespace sipemu -p "$OVSX_PAT" || true  # first publish only
-          npx ovsx publish dbt-lineage.vsix -p "$OVSX_PAT"
+          # The target platform is read from each package's manifest.
+          npx ovsx publish --skip-duplicate --packagePath dist/*.vsix -p "$OVSX_PAT"

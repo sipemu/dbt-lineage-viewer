@@ -11,7 +11,7 @@
 
 Each file's project is the nearest ancestor directory with a `dbt_project.yml`, so monorepos with several projects work. The graph is built from disk with the parse cache (`.dbt-lineage/cache.bin`) and rebuilt when a file is saved; unsaved edits change hover positions but not the graph.
 
-Install the binary first: `brew install sipemu/tap/dbt-lineage`, `cargo binstall dbt-lineage`, or `cargo install dbt-lineage`.
+The VS Code extension bundles the binary. For the other editors install it first: `pip install dbt-lineage-cli`, `brew install sipemu/tap/dbt-lineage`, `cargo binstall dbt-lineage`, or `cargo install dbt-lineage`.
 
 ## VS Code
 
@@ -21,9 +21,13 @@ Install **dbt-lineage: lineage & impact for dbt** from the [VS Code Marketplace]
 code --install-extension sipemu.dbt-lineage-viewer
 ```
 
-The extension starts `dbt-lineage lsp`, so the `dbt-lineage` binary must be on your `PATH` (`pip install dbt-lineage-cli`, `brew install sipemu/tap/dbt-lineage`, or `cargo binstall dbt-lineage`). To build it yourself: `cd editors/vscode && npm install && npx @vscode/vsce package`.
+No separate install is needed: the Marketplace and Open VSX serve a platform package with the `dbt-lineage` binary bundled (Linux x64/arm64, macOS Intel/Apple silicon, Windows x64). On other platforms a universal package uses `dbt-lineage` from your `PATH`.
 
-Settings: `dbtLineage.path` (binary, default `dbt-lineage`), `dbtLineage.lineageDepth` (levels shown by **dbt-lineage: Show lineage**, default 3).
+**dbt-lineage: Show impact of my changes** (also the **dbt impact** status-bar item) runs `dbt-lineage ci report` against the base branch and shows the report in a panel: changed nodes and columns, column impact, breaking changes, the Mermaid impact graph, the rebuild selector and lint, the same content as the PR comment.
+
+Settings: `dbtLineage.baseRef` (ref the impact report compares against; `auto` = `origin/HEAD`, else `main`, else `master`), `dbtLineage.impactOnSave` (refresh the open impact panel on save, default off), `dbtLineage.path` (your own binary instead of the bundled one; empty by default), `dbtLineage.lineageDepth` (levels shown by **dbt-lineage: Show lineage**, default 3).
+
+To build the packages yourself: `cd editors/vscode && npm ci && npm run package` (writes `dist/dbt-lineage-viewer-<target>.vsix` for every target plus `universal`; `node scripts/package.mjs linux-x64` builds one). The bundled CLI version is `dbtLineageVersion` in `package.json`; `scripts/fetch-binary.mjs` downloads it from the GitHub release and verifies its `.sha256`.
 
 ## Neovim (nvim-lspconfig)
 

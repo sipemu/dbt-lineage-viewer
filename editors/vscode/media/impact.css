@@ -1,0 +1,113 @@
+/* Impact panel. Colours come from the VS Code theme variables; the fallbacks
+   only matter outside VS Code (README screenshot). */
+:root {
+  --fg: var(--vscode-foreground, #1f2328);
+  --bg: var(--vscode-editor-background, #ffffff);
+  --muted: var(--vscode-descriptionForeground, #59636e);
+  --border: var(--vscode-panel-border, var(--vscode-widget-border, #d1d9e0));
+  --head-bg: var(--vscode-editorWidget-background, #f6f8fa);
+  --code-bg: var(--vscode-textCodeBlock-background, #f6f8fa);
+  --link: var(--vscode-textLink-foreground, #0969da);
+  --warn-bg: var(--vscode-inputValidation-warningBackground, #fff8c5);
+  --warn-border: var(--vscode-inputValidation-warningBorder, #d4a72c);
+  --btn-bg: var(--vscode-button-background, #0b5cad);
+  --btn-fg: var(--vscode-button-foreground, #ffffff);
+  --btn-hover: var(--vscode-button-hoverBackground, #0a4f96);
+  --font: var(--vscode-font-family, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+  --mono: var(--vscode-editor-font-family, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+}
+
+body {
+  margin: 0;
+  padding: 0 20px 32px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--vscode-font-size, 13px);
+  line-height: 1.5;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.title { font-size: 1.25em; font-weight: 600; }
+.subtitle { color: var(--muted); font-size: 0.92em; }
+
+button {
+  font: inherit;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 2px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  cursor: pointer;
+}
+button:hover { background: var(--btn-hover); }
+
+.notice {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--vscode-inputValidation-warningForeground, inherit);
+  border-radius: 3px;
+}
+
+.report h2 { display: none; } /* "dbt-lineage report"; the bar has the title */
+.report h3 {
+  margin: 22px 0 8px;
+  font-size: 1.08em;
+  font-weight: 600;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.report p { margin: 6px 0; }
+.report a { color: var(--link); }
+
+.report table {
+  border-collapse: collapse;
+  margin: 8px 0 12px;
+  width: 100%;
+}
+.report th, .report td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.report th { background: var(--head-bg); font-weight: 600; }
+
+.report code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--code-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.report pre {
+  background: var(--code-bg);
+  padding: 8px 12px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+.report pre code { background: none; padding: 0; }
+
+.report pre.mermaid {
+  background: none;
+  padding: 8px 0;
+  text-align: center;
+  white-space: pre;
+}
+.report pre.mermaid svg { max-width: 100%; height: auto; }
+
+.report details { margin: 16px 0; }
+.report summary { cursor: pointer; color: var(--muted); }
