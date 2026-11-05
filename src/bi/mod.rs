@@ -4,12 +4,13 @@
 //! module maps those tables onto the project's models and sources and renders
 //! dbt `exposures:` YAML. Connectors: Metabase (REST API),
 //! anofox-visualization (dashboard `.sql` files), Tableau (workbook files),
-//! Looker (LookML project files) and Superset (dashboard exports); all but
-//! Metabase work offline.
+//! Looker (LookML project files), Superset (dashboard exports) and Power BI
+//! (PBIP projects, `.pbit` templates); all but Metabase work offline.
 
 pub mod anofox;
 pub mod looker;
 pub mod metabase;
+pub mod powerbi;
 pub mod superset;
 pub mod tableau;
 

@@ -14,6 +14,15 @@ Notable changes per release. Full per-release notes live on the
   slug (else the uuid); owner defaults to `superset`. The legacy JSON export
   is read too. Tested on Superset's bundled example dashboards; output passes
   `dbt parse` (#54).
+- `dbt-lineage exposures powerbi --reports <files|dirs>` — offline Power BI
+  importer: PBIP projects (`*.Report/definition.pbir` → `*.SemanticModel`,
+  TMDL or `model.bim`) and `.pbit` templates (UTF-16 `DataModelSchema`), one
+  exposure per report. Tables come from partition sources: Power Query
+  navigation steps (`{[Schema=…,Item=…]}`, nested `{[Name=…,Kind="Table"]}`
+  for Snowflake/Databricks/BigQuery), native SQL (`Value.NativeQuery`,
+  `[Query="…"]`), shared expressions referenced by name, Direct Lake entities.
+  `.pbix` files and reports on published semantic models are skipped with a
+  note. Tested on 13 public repositories; output passes `dbt parse` (#54).
 
 ## [0.14.0] – 2026-11-05
 
