@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#5b6b80"/>
+    </marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#ff8a65"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="640" fill="#0f1720"/>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="80" y="150" font-size="76" font-weight="bold" fill="#f3f6fa">dbt-lineage</text>
+    <text x="80" y="215" font-size="34" fill="#c9d4e0">See what a dbt change breaks —</text>
+    <text x="80" y="258" font-size="34" fill="#c9d4e0">before it ships.</text>
+    <text x="80" y="320" font-size="24" fill="#8fa1b5">Models · columns · dashboards · contracts</text>
+    <text x="80" y="356" font-size="24" fill="#8fa1b5">No warehouse. No Python. No dbt compile.</text>
+  </g>
+  <!-- lineage graph -->
+  <g font-family="DejaVu Sans Mono, monospace" font-size="18">
+    <path d="M870 150 C920 150 920 230 960 230" stroke="#5b6b80" stroke-width="3" fill="none" marker-end="url(#a)"/>
+    <path d="M870 310 C920 310 920 230 960 230" stroke="#5b6b80" stroke-width="3" fill="none" marker-end="url(#a)"/>
+    <path d="M1080 245 C1095 245 1080 342 1098 342" stroke="#ff8a65" stroke-width="3" fill="none" marker-end="url(#r)"/>
+    <path d="M1080 215 C1095 215 1080 138 1098 138" stroke="#ff8a65" stroke-width="3" fill="none" marker-end="url(#r)"/>
+    <rect x="740" y="128" width="130" height="44" rx="8" fill="#1b2633" stroke="#3a4a5e" stroke-width="2"/>
+    <text x="805" y="156" text-anchor="middle" fill="#c9d4e0">orders</text>
+    <rect x="740" y="288" width="130" height="44" rx="8" fill="#1b2633" stroke="#3a4a5e" stroke-width="2"/>
+    <text x="805" y="316" text-anchor="middle" fill="#c9d4e0">customers</text>
+    <rect x="960" y="206" width="120" height="48" rx="8" fill="#3b2418" stroke="#ff8a65" stroke-width="3"/>
+    <text x="1020" y="236" text-anchor="middle" fill="#ffd2c2">fct_rev</text>
+    <rect x="1100" y="116" width="130" height="44" rx="8" fill="#2a1d18" stroke="#ff8a65" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="1165" y="144" text-anchor="middle" fill="#ffb59c">mart</text>
+    <rect x="1100" y="320" width="130" height="44" rx="8" fill="#2a1d18" stroke="#ff8a65" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="1165" y="348" text-anchor="middle" fill="#ffb59c">dashboard</text>
+  </g>
+  <!-- surfaces -->
+  <g font-family="DejaVu Sans, sans-serif" font-size="22" fill="#c9d4e0">
+    <line x1="80" y1="440" x2="1200" y2="440" stroke="#26333f" stroke-width="2"/>
+    <text x="80" y="500">GitHub Action</text>
+    <text x="290" y="500">GitLab · Bitbucket · Azure</text>
+    <text x="600" y="500">VS Code</text>
+    <text x="730" y="500">CLI · TUI</text>
+    <text x="870" y="500">MCP server</text>
+    <text x="1030" y="500">BI exposures</text>
+    <text x="80" y="570" font-family="DejaVu Sans Mono, monospace" font-size="20" fill="#5b6b80">github.com/sipemu/dbt-lineage-viewer · written in Rust</text>
+  </g>
+</svg>
