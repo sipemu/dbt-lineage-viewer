@@ -49,7 +49,7 @@ See [`integrations/bitbucket/README.md`](../integrations/bitbucket/README.md).
 
 ## Azure Pipelines
 
-Not yet tested on Azure; feedback welcome. The step template in [`integrations/azure`](../integrations/azure) runs the report, logs lint findings as build issues, posts the PR comment and publishes the report as an artifact:
+Tested on Azure DevOps (Azure Repos, policy-triggered PR builds). Grant the build service *Contribute to pull requests*; see [`integrations/azure/README.md`](../integrations/azure/README.md) for the template. The step template in [`integrations/azure`](../integrations/azure) runs the report, logs lint findings as build issues, posts the PR comment and publishes the report as an artifact:
 
 ```yaml
 resources:

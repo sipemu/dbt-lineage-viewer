@@ -1,6 +1,6 @@
 # dbt-lineage — Azure Pipelines template
 
-> **Not yet tested on Azure DevOps.** The template uses only documented features (step templates, `resources.repositories`, logging commands, `System.AccessToken`); feedback and fixes welcome.
+> **Tested on Azure DevOps** (Azure Repos, Microsoft-hosted `ubuntu-latest`, Nov 2026): build warnings, report artifact and the sticky PR comment (posted once, then updated in place).
 
 On every PR build it:
 
@@ -44,5 +44,7 @@ steps:
 | `image` | `ghcr.io/sipemu/dbt-lineage:v0` | Container image |
 
 **Permissions.** The comment is posted with `System.AccessToken`; grant the project's build service account *Contribute to pull requests* on the repository. Without it the step logs a warning and continues.
+
+**PR builds.** Azure Repos ignores the YAML `pr:` trigger; add the pipeline as a *Build validation* branch policy on the target branch. The PR comment and `--base auto` need the PR variables, which Azure sets only for policy-triggered builds — a build queued manually on `refs/pull/<id>/merge` runs the report but skips the comment.
 
 **Without the template**, see the inline variant in [`docs/CI.md`](../../docs/CI.md#azure-pipelines).
