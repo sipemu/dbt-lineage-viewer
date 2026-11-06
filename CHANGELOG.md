@@ -34,6 +34,13 @@ Notable changes per release. Full per-release notes live on the
   (`get_enabled_unioned_models`) goes from 200 to 210 of 210 model
   dependencies; every pinned project in the model-accuracy corpus is now at
   100%.
+- Column lineage traces scalar subqueries in a projection:
+  `(select name from measures where id = 'X') as measure_name` reads
+  `measures.name`.
+- `scripts/accuracy-columns/run.py --reuse` re-measures from an earlier run's
+  dbt artifacts without re-running dbt, and `--dump DIR` writes the reference
+  and dbt-lineage edges for `compare.py -v`. A project's `columns` entry may
+  set its own `lineage_dir`.
 
 ### Changed
 
@@ -68,6 +75,12 @@ Notable changes per release. Full per-release notes live on the
 
 ### Fixed
 
+- Compiled SQL from `target/manifest.json` is now used for package models:
+  dbt records their `original_file_path` relative to the package, so the
+  checksum check looked for the file in the wrong place and fell back to
+  parsing the Jinja SQL. Tuva's column lineage with compiled SQL: 9,664 →
+  12,141 of 12,143 dependencies (80% → 99.98%), measured from its
+  `integration_tests` project where dbt ran.
 - Column lineage used ~100 MiB per worker thread on large projects
   (2.1 GB at 2.2k models): the regex fallback's case-insensitive Unicode
   patterns. Now 318 MiB and faster, with identical output.

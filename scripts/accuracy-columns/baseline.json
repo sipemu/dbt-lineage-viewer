@@ -11,12 +11,12 @@
   },
   "tuva": {
     "raw": {
-      "recall": 50.9,
-      "precision": 93.0
+      "recall": 59.6,
+      "precision": 93.6
     },
     "compiled": {
-      "recall": 79.6,
-      "precision": 99.0
+      "recall": 100.0,
+      "precision": 100.0
     }
   },
   "Fivetran dbt_hubspot": {

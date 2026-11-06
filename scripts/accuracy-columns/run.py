@@ -15,6 +15,12 @@ Prints a Markdown table and exits 1 when any recall or precision drops more
 than 0.5 points below baseline.json (`--update-baseline` rewrites it).
 
     python3 scripts/accuracy-columns/run.py [--binary path/to/dbt-lineage]
+        [--only tuva] [--reuse] [--dump DIR]
+
+--reuse skips checkout and the dbt commands for a project whose earlier run
+left its manifest, catalog and database in --work-dir (for iterating on the
+parser). --dump writes each project's reference and dbt-lineage edges to DIR
+(<slug>.ref.json, <slug>.raw.json, <slug>.compiled.json) for compare.py -v.
 
 Needs git and uv (`uvx`, `uv run`) on PATH.
 """
@@ -62,6 +68,9 @@ def main():
     ap.add_argument("--work-dir", default=str(ROOT / ".accuracy" / "columns"))
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--only", help="comma-separated project names to measure")
+    ap.add_argument("--reuse", action="store_true",
+                    help="reuse an earlier run's dbt artifacts instead of re-running dbt")
+    ap.add_argument("--dump", help="directory to write reference and dbt-lineage edges to")
     args = ap.parse_args()
 
     config = json.loads((HERE.parent / "accuracy" / "projects.json").read_text())
@@ -78,25 +87,28 @@ def main():
             continue
         slug = re.sub(r"[^\w-]+", "-", p["name"]).strip("-").lower()
         repo_dir = work / slug
-        checkout(p["repo"], p["commit"], repo_dir)
         parse_dir = repo_dir / p["parse_dir"]
-        lineage_dir = repo_dir / p["lineage_dir"]
-
-        profiles = work / "profiles" / slug
-        profiles.mkdir(parents=True, exist_ok=True)
+        # The column check may run where dbt ran (a package measured through
+        # its integration_tests project, which adds models of its own).
+        lineage_dir = repo_dir / p["columns"].get("lineage_dir", p["lineage_dir"])
         db = work / f"{slug}.duckdb"
-        db.unlink(missing_ok=True)
-        write_profiles(profiles / "profiles.yml", profile_name(parse_dir), db)
-        flags = ["--profiles-dir", str(profiles), "--no-version-check",
-                 "--target-path", "target-columns"]
-        if p["columns"].get("vars"):
-            flags += ["--vars", p["columns"]["vars"]]
-        run(dbt + ["deps"] + flags[:3], cwd=parse_dir)
-        run(dbt + ["seed"] + flags, cwd=parse_dir)
-        run(dbt + ["run"] + flags, cwd=parse_dir)
-        run(dbt + ["docs", "generate"] + flags, cwd=parse_dir)
         manifest = parse_dir / "target-columns" / "manifest.json"
         catalog = parse_dir / "target-columns" / "catalog.json"
+
+        if not (args.reuse and manifest.exists() and catalog.exists() and db.exists()):
+            checkout(p["repo"], p["commit"], repo_dir)
+            profiles = work / "profiles" / slug
+            profiles.mkdir(parents=True, exist_ok=True)
+            db.unlink(missing_ok=True)
+            write_profiles(profiles / "profiles.yml", profile_name(parse_dir), db)
+            flags = ["--profiles-dir", str(profiles), "--no-version-check",
+                     "--target-path", "target-columns"]
+            if p["columns"].get("vars"):
+                flags += ["--vars", p["columns"]["vars"]]
+            run(dbt + ["deps"] + flags[:3], cwd=parse_dir)
+            run(dbt + ["seed"] + flags, cwd=parse_dir)
+            run(dbt + ["run"] + flags, cwd=parse_dir)
+            run(dbt + ["docs", "generate"] + flags, cwd=parse_dir)
 
         packages = lineage_dir / "dbt_packages"
         if parse_dir != lineage_dir and not packages.exists():
@@ -113,13 +125,21 @@ def main():
                      (catalog, lineage_dir / "target" / "catalog.json")]
         for _, dest in artifacts:
             dest.unlink(missing_ok=True)
-        raw = compare(ref, column_lineage(args.binary, lineage_dir))
+        raw_edges = column_lineage(args.binary, lineage_dir)
+        raw = compare(ref, raw_edges)
         (lineage_dir / "target").mkdir(exist_ok=True)
         for src, dest in artifacts:
             shutil.copy(src, dest)
-        compiled = compare(ref, column_lineage(args.binary, lineage_dir))
+        compiled_edges = column_lineage(args.binary, lineage_dir)
+        compiled = compare(ref, compiled_edges)
         for _, dest in artifacts:
             dest.unlink()
+        if args.dump:
+            dump = Path(args.dump)
+            dump.mkdir(parents=True, exist_ok=True)
+            (dump / f"{slug}.ref.json").write_text(json.dumps(ref))
+            for mode, e in (("raw", raw_edges), ("compiled", compiled_edges)):
+                (dump / f"{slug}.{mode}.json").write_text(json.dumps({"edges": e}))
 
         results[p["name"]] = {"raw": raw, "compiled": compiled}
         for mode, r in results[p["name"]].items():
