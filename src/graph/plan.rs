@@ -28,6 +28,16 @@ impl PlanReport {
     }
 }
 
+/// Changes `state:modified` doesn't see: dbt compares neither descriptions
+/// (unless docs are persisted, which `state` reports as a property change)
+/// nor the documented column list of a node.
+fn doc_only(change: &str) -> bool {
+    change == "description changed"
+        || change == "columns reordered"
+        || change.starts_with("columns added: ")
+        || change.starts_with("columns removed: ")
+}
+
 /// Build a rebuild plan from a precomputed `LineageDiff`. Only Added/Modified
 /// buildable nodes (models, seeds, snapshots; tests on request) trigger rebuild
 /// work: removed nodes can't be rebuilt, sources/exposures/metrics aren't built
@@ -44,6 +54,12 @@ pub fn build_plan(diff: &LineageDiff, style: PlanStyle, exclude_tests: bool) -> 
         if exclude_tests && node.node_type == "test" {
             continue;
         }
+        if node.status == DiffStatus::Modified
+            && !node.changes.is_empty()
+            && node.changes.iter().all(|c| doc_only(c))
+        {
+            continue;
+        }
         // dbt doesn't build sources, but a modified source's downstream
         // needs rebuilding (`state:modified+` selects it).
         if node.node_type == "source" && node.status == DiffStatus::Modified {
@@ -51,6 +67,18 @@ pub fn build_plan(diff: &LineageDiff, style: PlanStyle, exclude_tests: bool) -> 
                 && seen_labels.insert(format!("source:{}", node.label))
             {
                 selectors.push(format!("source:{}+", node.label));
+            }
+            continue;
+        }
+        // A new or re-pinned package: its own nodes (and their downstream).
+        if node.node_type == "package" {
+            if seen_labels.insert(format!("package:{}", node.label)) {
+                let suffix = if style == PlanStyle::Downstream {
+                    "+"
+                } else {
+                    ""
+                };
+                selectors.push(format!("package:{}{suffix}", node.label));
             }
             continue;
         }
@@ -145,6 +173,44 @@ mod tests {
         // Leaf-only: sources aren't built, so nothing to select for them.
         let plan = build_plan(&diff, PlanStyle::LeafOnly, true);
         assert_eq!(plan.selectors, vec!["a"]);
+    }
+
+    #[test]
+    fn test_doc_only_changes_need_no_rebuild() {
+        let with = |label: &str, node_type: &str, changes: &[&str]| DiffNode {
+            changes: changes.iter().map(|c| c.to_string()).collect(),
+            ..node(label, node_type, DiffStatus::Modified)
+        };
+        let diff = diff_with(vec![
+            with(
+                "jira.sprint",
+                "source",
+                &["columns added: _fivetran_deleted"],
+            ),
+            with("a", "model", &["description changed", "columns reordered"]),
+            with("b", "model", &["columns removed: x", "SQL changed"]),
+            with("c", "model", &["tags: [] -> [\"t\"]"]),
+        ]);
+        let plan = build_plan(&diff, PlanStyle::Downstream, true);
+        assert_eq!(plan.selectors, vec!["b+", "c+"]);
+    }
+
+    #[test]
+    fn test_new_and_repinned_packages_select_their_nodes() {
+        let diff = diff_with(vec![
+            node("fivetran_utils", "package", DiffStatus::Modified),
+            node("ccsr", "package", DiffStatus::Added),
+        ]);
+        let plan = build_plan(&diff, PlanStyle::Downstream, true);
+        assert_eq!(
+            plan.selectors,
+            vec!["package:ccsr+", "package:fivetran_utils+"]
+        );
+        let plan = build_plan(&diff, PlanStyle::LeafOnly, true);
+        assert_eq!(
+            plan.selectors,
+            vec!["package:ccsr", "package:fivetran_utils"]
+        );
     }
 
     #[test]
