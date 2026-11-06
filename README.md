@@ -105,15 +105,15 @@ dependency:
 | Project | Models compared | Dependencies found | Extra, not in manifest |
 | --- | ---: | ---: | ---: |
 | [jaffle-shop](https://github.com/dbt-labs/jaffle-shop) `5beb145` | 13 | 17 / 17 | 0 |
-| [tuva](https://github.com/tuva-health/tuva) `465927a` | 293 | 916 / 916 | 3 |
+| [tuva](https://github.com/tuva-health/tuva) `465927a` | 555 | 1,560 / 1,560 | 5 |
 | [cal-itp data-infra](https://github.com/cal-itp/data-infra) `3801da6` | 625 | 1,192 / 1,192 | 0 |
 | [Fivetran dbt_hubspot](https://github.com/fivetran/dbt_hubspot) `5f00935` | 176 | 280 / 280 | 18 |
 | [Fivetran dbt_jira](https://github.com/fivetran/dbt_jira) `1a9f8b4` | 61 | 108 / 108 | 0 |
 | [Fivetran dbt_shopify](https://github.com/fivetran/dbt_shopify) `a033782` | 240 | 414 / 414 | 25 |
 | [Fivetran dbt_quickbooks](https://github.com/fivetran/dbt_quickbooks) `0b9da0d` | 114 | 210 / 210 | 35 |
-| [Fivetran dbt_netsuite](https://github.com/fivetran/dbt_netsuite) `e3c026e` | 106 | 166 / 183 | 7 |
-| [Fivetran dbt_zendesk](https://github.com/fivetran/dbt_zendesk) `c5f2cfa` | 88 | 161 / 162 | 5 |
-| [Fivetran dbt_stripe](https://github.com/fivetran/dbt_stripe) `7f5d6ae` | 65 | 115 / 117 | 0 |
+| [Fivetran dbt_netsuite](https://github.com/fivetran/dbt_netsuite) `e3c026e` | 106 | 183 / 183 | 7 |
+| [Fivetran dbt_zendesk](https://github.com/fivetran/dbt_zendesk) `c5f2cfa` | 88 | 162 / 162 | 6 |
+| [Fivetran dbt_stripe](https://github.com/fivetran/dbt_stripe) `7f5d6ae` | 65 | 117 / 117 | 2 |
 | [Fivetran dbt_salesforce](https://github.com/fivetran/dbt_salesforce) `8f9e9c0` | 24 | 42 / 42 | 1 |
 <!-- accuracy:end -->
 
