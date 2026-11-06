@@ -7,6 +7,20 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- `plan` / `diff` / `ci report` mark nodes modified the way dbt's
+  `state:modified` does for changes outside the node's own file: an edited
+  macro the node calls (directly or through other macros), edited YAML
+  properties (config, contracts; descriptions and columns only with
+  `persist_docs`), edited `dbt_project.yml` configs for its directory, and
+  changed `vars` it reads. A modified source selects its downstream
+  (`source:<name>+`).
+- Rebuild-selector benchmark (`scripts/accuracy-plan/`): replays 12 real
+  commits per pinned project and compares `plan`'s selection with
+  `dbt ls -s state:modified+`. Column-impact benchmark
+  (`scripts/accuracy-impact/`): removes columns one at a time and compares
+  the PR comment's column impact with sqlglot lineage. Both run weekly in
+  the accuracy workflow with a baseline gate.
+
 - Column lineage reads `target/catalog.json` (from `dbt docs generate`) when
   present: the warehouse's actual columns, so `select *` from a source
   expands to columns YAML doesn't declare. With compiled SQL and the catalog,

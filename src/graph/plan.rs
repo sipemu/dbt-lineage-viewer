@@ -3,7 +3,7 @@ use serde::Serialize;
 use super::diff::{DiffStatus, LineageDiff};
 
 /// Style of dbt selector expression to emit.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanStyle {
     /// `model+` form: include the changed model AND its downstream. Default.
     /// (dbt's `+model` would select its upstream ancestors instead.)
@@ -42,6 +42,16 @@ pub fn build_plan(diff: &LineageDiff, style: PlanStyle, exclude_tests: bool) -> 
             continue;
         }
         if exclude_tests && node.node_type == "test" {
+            continue;
+        }
+        // dbt doesn't build sources, but a modified source's downstream
+        // needs rebuilding (`state:modified+` selects it).
+        if node.node_type == "source" && node.status == DiffStatus::Modified {
+            if style == PlanStyle::Downstream
+                && seen_labels.insert(format!("source:{}", node.label))
+            {
+                selectors.push(format!("source:{}+", node.label));
+            }
             continue;
         }
         if !matches!(
@@ -122,6 +132,19 @@ mod tests {
         ]);
         let plan = build_plan(&diff, PlanStyle::Downstream, true);
         assert_eq!(plan.selectors, vec!["a+", "s+"]);
+    }
+
+    #[test]
+    fn test_modified_source_selects_its_downstream() {
+        let diff = diff_with(vec![
+            node("raw.orders", "source", DiffStatus::Modified),
+            node("a", "model", DiffStatus::Modified),
+        ]);
+        let plan = build_plan(&diff, PlanStyle::Downstream, true);
+        assert_eq!(plan.selectors, vec!["a+", "source:raw.orders+"]);
+        // Leaf-only: sources aren't built, so nothing to select for them.
+        let plan = build_plan(&diff, PlanStyle::LeafOnly, true);
+        assert_eq!(plan.selectors, vec!["a"]);
     }
 
     #[test]
