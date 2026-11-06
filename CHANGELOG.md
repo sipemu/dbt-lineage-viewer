@@ -7,6 +7,22 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- Column lineage renders model Jinja when it writes the SELECT (loops,
+  macros producing columns or whole queries), approximating `dbt compile`
+  without dbt: the project's and installed packages' macros with their
+  namespaces and `adapter.dispatch`, `vars`, and the columns already known
+  for each upstream relation answering `adapter.get_columns_in_relation`.
+  From SQL alone, Fivetran's dbt_hubspot goes from 46% to 92% of column
+  dependencies (precision 92% to 97%), dbt_jira 39% to 73%, dbt_shopify 52%
+  to 94%, dbt_quickbooks 44% to 69%, dbt_netsuite 25% to 61%, dbt_zendesk
+  24% to 93%, dbt_stripe 34% to 87%, dbt_salesforce 74% to 92% and tuva 51%
+  to 73%, with precision up on every project (tuva 93% to 98%, salesforce
+  48% to 76%). Tuva with compiled SQL also rises from 9,664 to 10,090 of
+  12,143, as models missing from the manifest are now rendered. Models that read warehouse data at render time
+  (`run_query`, `get_column_values` pivots) or introspect relations with
+  unknown columns fall back to the previous Jinja handling. Uses the
+  `minijinja` crate.
+
 - `plan` / `diff` / `ci report` mark nodes modified the way dbt's
   `state:modified` does for changes outside the node's own file: an edited
   macro the node calls (directly or through other macros), edited YAML
