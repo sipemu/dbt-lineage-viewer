@@ -981,6 +981,14 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
         match ci_diff(&project_dir, &base, args.head) {
             Ok((diff, head_graph)) => {
                 report.impact_diagram = ci::impact_mermaid(&diff, &head_graph);
+                // Head files are only on disk when head is the working tree.
+                if args.head.is_none() {
+                    report.lineage_gaps = graph::gaps::lineage_gaps(
+                        &head_graph,
+                        &project_dir,
+                        ci::impact_scope(&diff, &head_graph),
+                    );
+                }
                 report.plan = Some(graph::plan::build_plan(
                     &diff,
                     graph::plan::PlanStyle::Downstream,

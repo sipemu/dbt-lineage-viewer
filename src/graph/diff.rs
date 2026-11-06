@@ -379,7 +379,8 @@ pub fn diff_git_with_head(
 
     let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
     mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
-    diff.column_impacts = removed_column_impacts(&base_graph, &head_graph, base_tree.path());
+    diff.column_impacts =
+        removed_column_impacts(&base_graph, &head_graph, base_tree.path(), head_root);
     diff.breaking_changes = crate::graph::governance::breaking_changes(
         &crate::graph::governance::load_governance(base_tree.path()),
         &crate::graph::governance::load_governance(head_root),
@@ -395,17 +396,30 @@ pub fn removed_column_impacts(
     base_graph: &LineageGraph,
     head_graph: &LineageGraph,
     base_root: &Path,
+    head_root: &Path,
 ) -> Vec<ColumnImpact> {
     let head_nodes = collect_node_map(head_graph);
-    let removed: Vec<(&NodeData, &String)> = base_graph
+    // Output columns as the SQL analyzer infers them (through CTEs and `*`),
+    // else the columns read from the outermost SELECT or YAML.
+    let base_cols = crate::parser::ast_column_lineage::model_output_columns(base_graph, base_root);
+    let head_cols = crate::parser::ast_column_lineage::model_output_columns(head_graph, head_root);
+    let columns_of = |inferred: &HashMap<String, Vec<String>>, n: &NodeData| -> Vec<String> {
+        inferred
+            .get(&n.unique_id)
+            .cloned()
+            .unwrap_or_else(|| n.columns.iter().map(|c| c.to_lowercase()).collect())
+    };
+    let removed: Vec<(&NodeData, String)> = base_graph
         .node_indices()
         .map(|i| &base_graph[i])
         .filter(|n| n.node_type == NodeType::Model)
         .flat_map(|n| {
-            let head_cols = head_nodes.get(&n.unique_id).map(|h| &h.columns);
-            n.columns
-                .iter()
-                .filter(move |c| head_cols.is_none_or(|hc| !hc.contains(c)))
+            let head = head_nodes
+                .get(&n.unique_id)
+                .map(|h| columns_of(&head_cols, h));
+            columns_of(&base_cols, n)
+                .into_iter()
+                .filter(move |c| head.as_ref().is_none_or(|hc| !hc.contains(c)))
                 .map(move |c| (n, c))
         })
         .collect();

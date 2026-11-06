@@ -266,3 +266,125 @@ mod tests {
         assert!(extract_loop_calls(sql).1.is_empty());
     }
 }
+
+static CALL_OPEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(ref|source)\s*\(").unwrap());
+static LITERAL_ARG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"^\s*(?:'[^']*'|"[^"]*"|(?:v|version)\s*=.*)\s*$"#).unwrap());
+static IDENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_]\w*$").unwrap());
+
+/// `ref()` / `source()` calls whose arguments are computed at render time
+/// (`ref(var('model'))`, `source(src, table)`) and that no for-loop over a
+/// literal list resolves. Parsing can't know what they point to.
+pub fn unresolved_dynamic_calls(sql: &str) -> Vec<String> {
+    let cleaned = super::lexer::strip_non_code(sql);
+    let blocks: Vec<&str> = JINJA_BLOCK
+        .find_iter(&cleaned)
+        .map(|m| m.as_str())
+        .collect();
+
+    // Literal lists, and for each block the loop variables bound to them.
+    let mut lists: HashMap<String, Vec<Item>> = HashMap::new();
+    let mut bound: Vec<Vec<String>> = vec![Vec::new(); blocks.len()];
+    for (i, block) in blocks.iter().enumerate() {
+        if let Some(c) = SET_LIST.captures(block) {
+            if let Some(items) = parse_items(&c[2]) {
+                lists.insert(c[1].to_string(), items);
+            }
+            continue;
+        }
+        if let Some(c) = APPEND.captures(block) {
+            if let (Some(list), Some(mut items)) = (lists.get_mut(&c[1]), parse_items(&c[2])) {
+                list.append(&mut items);
+            }
+            continue;
+        }
+        let Some(c) = FOR.captures(block) else {
+            continue;
+        };
+        let iterable = c[2].trim();
+        let literal = iterable
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .is_some_and(|l| parse_items(l).is_some())
+            || lists.contains_key(iterable);
+        if !literal {
+            continue;
+        }
+        let targets: Vec<String> = c[1].split(',').map(|t| t.trim().to_string()).collect();
+        let mut depth = 1;
+        for (j, b) in blocks.iter().enumerate().skip(i + 1) {
+            if FOR.is_match(b) {
+                depth += 1;
+            } else if ENDFOR.is_match(b) {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            bound[j].extend(targets.iter().cloned());
+        }
+    }
+
+    let mut out = Vec::new();
+    for (i, block) in blocks.iter().enumerate() {
+        for m in CALL_OPEN.find_iter(block) {
+            let Some(args) = super::macros::call_args(block, m.end()) else {
+                continue;
+            };
+            let parts: Vec<&str> = args.split(',').collect();
+            let dynamic: Vec<&str> = parts
+                .iter()
+                .map(|a| a.trim())
+                .filter(|a| !LITERAL_ARG.is_match(a))
+                .collect();
+            if dynamic.is_empty() {
+                continue;
+            }
+            let resolved = dynamic
+                .iter()
+                .all(|a| IDENT.is_match(a) && bound[i].iter().any(|v| v == a));
+            if !resolved {
+                out.push(format!(
+                    "{}({})",
+                    m.as_str()[..m.as_str().len() - 1].trim_end(),
+                    args.trim()
+                ));
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod dynamic_tests {
+    use super::unresolved_dynamic_calls;
+
+    #[test]
+    fn literal_calls_are_not_dynamic() {
+        let sql = "select * from {{ ref('a') }} join {{ ref('pkg', 'b', v=2) }} join {{ source('s', 't') }}";
+        assert!(unresolved_dynamic_calls(sql).is_empty());
+    }
+
+    #[test]
+    fn computed_arguments_are_reported() {
+        let sql =
+            "select * from {{ ref(var('orders_model')) }} join {{ source(src, 'customers') }}";
+        assert_eq!(
+            unresolved_dynamic_calls(sql),
+            ["ref(var('orders_model'))", "source(src, 'customers')"]
+        );
+    }
+
+    #[test]
+    fn calls_resolved_by_literal_loops_are_not_reported() {
+        let sql = "{% for m in ['a', 'b'] %}select * from {{ ref(m) }}{% endfor %}";
+        assert!(unresolved_dynamic_calls(sql).is_empty());
+        let sql = "{% for m in var('models') %}select * from {{ ref(m) }}{% endfor %}";
+        assert_eq!(unresolved_dynamic_calls(sql), ["ref(m)"]);
+    }
+
+    #[test]
+    fn calls_in_comments_are_ignored() {
+        assert!(unresolved_dynamic_calls("-- {{ ref(x) }}\n{# ref(y) #}").is_empty());
+    }
+}

@@ -3,6 +3,7 @@ pub mod collapse;
 pub mod coverage;
 pub mod diff;
 pub mod filter;
+pub mod gaps;
 pub mod governance;
 pub mod impact;
 pub mod lint;

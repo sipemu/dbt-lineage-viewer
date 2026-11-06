@@ -59,6 +59,37 @@ pub fn resolve_column_lineage_ast_for(
     root: &std::path::Path,
     only: Option<&HashSet<NodeIndex>>,
 ) -> ColumnLineage {
+    ColumnLineage {
+        edges: analyze_graph(graph, root, only).0,
+    }
+}
+
+/// Output columns (lowercase) of every model and snapshot whose columns are
+/// fully known from its SQL, falling back to its YAML-declared columns.
+pub fn model_output_columns(
+    graph: &LineageGraph,
+    root: &std::path::Path,
+) -> HashMap<String, Vec<String>> {
+    let models: HashSet<&str> = graph
+        .node_indices()
+        .map(|i| &graph[i])
+        .filter(|n| matches!(n.node_type, NodeType::Model | NodeType::Snapshot))
+        .map(|n| n.unique_id.as_str())
+        .collect();
+    analyze_graph(graph, root, Some(&HashSet::new()))
+        .1
+        .into_iter()
+        .filter(|(id, _)| models.contains(id.as_str()))
+        .collect()
+}
+
+/// Edges into the nodes in `only` (all when `None`), and the known columns
+/// of every node after analysis.
+fn analyze_graph(
+    graph: &LineageGraph,
+    root: &std::path::Path,
+    only: Option<&HashSet<NodeIndex>>,
+) -> (Vec<ColumnEdge>, HashMap<String, Vec<String>>) {
     let relations = Relations::new(graph);
     let mut schema: HashMap<String, Vec<String>> = graph
         .node_indices()
@@ -103,7 +134,7 @@ pub fn resolve_column_lineage_ast_for(
             );
         }
     }
-    ColumnLineage { edges }
+    (edges, schema)
 }
 
 /// Analyze one model's SQL. Public for direct testing: `schema` maps node ids
@@ -855,6 +886,53 @@ fn analyze_model(
     })
 }
 
+static FOR_LOOP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{%-?\s*for\s").unwrap());
+
+/// Whether Jinja writes part of this model's SELECT (a loop, a macro that
+/// expands to columns or to the whole query), or the SQL can't be parsed. The
+/// model's column lineage may then be incomplete.
+pub fn sql_generated_by_jinja(sql: &str) -> bool {
+    if FOR_LOOP.is_match(&JINJA_COMMENT.replace_all(sql, "")) {
+        return true;
+    }
+    let relations = Relations {
+        by_ref: HashMap::new(),
+        sources: HashSet::new(),
+    };
+    let (cleaned, _) = neutralize_jinja(sql, &relations);
+    match parse(&cleaned).or_else(|| parse(&separate_jinja_items(&cleaned))) {
+        Some(query) => query_has_jinja_projection(&query),
+        None => true,
+    }
+}
+
+fn query_has_jinja_projection(q: &Query) -> bool {
+    q.with.as_ref().is_some_and(|w| {
+        w.cte_tables
+            .iter()
+            .any(|c| query_has_jinja_projection(&c.query))
+    }) || set_expr_has_jinja_projection(&q.body)
+}
+
+fn set_expr_has_jinja_projection(body: &SetExpr) -> bool {
+    match body {
+        SetExpr::Select(s) => {
+            s.projection.iter().any(|item| {
+                matches!(item, SelectItem::UnnamedExpr(Expr::Function(f)) if is_jinja_fn(&f.name))
+            }) || s.from.iter().any(|twj| {
+                std::iter::once(&twj.relation)
+                    .chain(twj.joins.iter().map(|j| &j.relation))
+                    .any(|f| matches!(f, TableFactor::Derived { subquery, .. } if query_has_jinja_projection(subquery)))
+            })
+        }
+        SetExpr::Query(q) => query_has_jinja_projection(q),
+        SetExpr::SetOperation { left, right, .. } => {
+            set_expr_has_jinja_projection(left) || set_expr_has_jinja_projection(right)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1038,6 +1116,20 @@ mod tests {
             pairs(sql, &[("model.a", &["id"])]),
             vec![p("model.a.id", "id")]
         );
+    }
+
+    #[test]
+    fn detects_sql_written_by_jinja() {
+        assert!(!sql_generated_by_jinja(
+            "select {{ cents_to_dollars('x') }} as x from {{ ref('a') }}"
+        ));
+        assert!(sql_generated_by_jinja(
+            "select {% for c in cols %}{{ c }},{% endfor %} id from {{ ref('a') }}"
+        ));
+        assert!(sql_generated_by_jinja(
+            "with b as (select {{ fill_staging_columns(a, b) }} from {{ ref('a') }}) select * from b"
+        ));
+        assert!(sql_generated_by_jinja("{{ union_connections('x', 'y') }}"));
     }
 
     #[test]

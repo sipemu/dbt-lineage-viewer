@@ -271,7 +271,7 @@ fn split_args(raw: &str) -> Vec<String> {
 
 /// The argument text of a call whose opening parenthesis ends at `open_end`,
 /// up to the matching closing parenthesis.
-fn call_args(text: &str, open_end: usize) -> Option<&str> {
+pub(crate) fn call_args(text: &str, open_end: usize) -> Option<&str> {
     let mut depth = 1i32;
     let mut quote: Option<char> = None;
     for (i, ch) in text[open_end..].char_indices() {

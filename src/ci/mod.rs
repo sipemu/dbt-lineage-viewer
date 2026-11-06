@@ -109,6 +109,8 @@ pub struct CiReport {
     pub manifest_check: Option<ManifestCheckReport>,
     /// Mermaid diagram of changed nodes and their downstream (see [`impact_mermaid`]).
     pub impact_diagram: Option<String>,
+    /// Models in the impact path whose lineage may be incomplete.
+    pub lineage_gaps: Vec<crate::graph::gaps::LineageGap>,
     pub errors: Vec<SectionError>,
 }
 
@@ -190,6 +192,7 @@ pub fn render_markdown(report: &CiReport) -> String {
         render_diff_section(&mut md, diff);
         render_column_impact_section(&mut md, diff);
     }
+    render_gaps_section(&mut md, &report.lineage_gaps);
     if let Some(diagram) = &report.impact_diagram {
         let _ = writeln!(md, "### Impact\n");
         let _ = writeln!(
@@ -285,6 +288,43 @@ fn render_column_impact_section(md: &mut String, diff: &LineageDiff) {
     md.push('\n');
 }
 
+fn render_gaps_section(md: &mut String, gaps: &[crate::graph::gaps::LineageGap]) {
+    use crate::graph::gaps::GapReason;
+    if gaps.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        md,
+        "### ⚠️ Lineage may be incomplete
+"
+    );
+    let _ = writeln!(
+        md,
+        "dbt-lineage reads SQL without running dbt. In these models on the impact path, Jinja \
+         decides part of the lineage at render time, so the impact above may miss some \
+         dependencies or columns.\n"
+    );
+    let _ = writeln!(md, "| Model | Why |");
+    let _ = writeln!(md, "| --- | --- |");
+    for gap in gaps.iter().take(MAX_ROWS) {
+        let why: Vec<String> = gap
+            .reasons
+            .iter()
+            .map(|r| match r {
+                GapReason::DynamicRef(call) => {
+                    format!("dependency computed at render time: `{}`", escape(call))
+                }
+                GapReason::GeneratedSql => "columns written by a Jinja loop or macro".to_string(),
+            })
+            .collect();
+        let _ = writeln!(md, "| `{}` | {} |", gap.model, why.join("; "));
+    }
+    if gaps.len() > MAX_ROWS {
+        let _ = writeln!(md, "\n…and {} more.", gaps.len() - MAX_ROWS);
+    }
+    md.push('\n');
+}
+
 fn render_plan_section(md: &mut String, plan: &PlanReport) {
     let _ = writeln!(md, "### Rebuild selector\n");
     if plan.selectors.is_empty() {
@@ -368,27 +408,23 @@ fn render_summary_section(md: &mut String, summary: &SummaryReport) {
 /// Mermaid flowchart of added/modified nodes plus everything downstream of
 /// them in `head`, styled by status. Tests and phantom nodes are left out to
 /// keep it readable. `None` when no node in `head` changed.
-pub fn impact_mermaid(diff: &LineageDiff, head: &LineageGraph) -> Option<String> {
-    let changed: HashMap<&str, DiffStatus> = diff
+/// Changed nodes and everything downstream of them in `head`, breadth-first
+/// in a stable order (tests and phantom nodes left out).
+pub fn impact_scope(diff: &LineageDiff, head: &LineageGraph) -> Vec<NodeIndex> {
+    let changed: HashSet<&str> = diff
         .nodes
         .iter()
         .filter(|n| matches!(n.status, DiffStatus::Added | DiffStatus::Modified))
-        .map(|n| (n.unique_id.as_str(), n.status))
+        .map(|n| n.unique_id.as_str())
         .collect();
     let drawable =
         |idx: NodeIndex| !matches!(head[idx].node_type, NodeType::Test | NodeType::Phantom);
     let by_label = |a: &NodeIndex, b: &NodeIndex| head[*a].label.cmp(&head[*b].label);
-
     let mut seeds: Vec<NodeIndex> = head
         .node_indices()
-        .filter(|&i| drawable(i) && changed.contains_key(head[i].unique_id.as_str()))
+        .filter(|&i| drawable(i) && changed.contains(head[i].unique_id.as_str()))
         .collect();
     seeds.sort_by(by_label);
-    if seeds.is_empty() {
-        return None;
-    }
-
-    // Breadth-first downstream walk, in a stable order.
     let mut seen: HashSet<NodeIndex> = seeds.iter().copied().collect();
     let mut queue: VecDeque<NodeIndex> = seeds.into_iter().collect();
     let mut order = Vec::new();
@@ -405,6 +441,20 @@ pub fn impact_mermaid(diff: &LineageDiff, head: &LineageGraph) -> Option<String>
                 queue.push_back(n);
             }
         }
+    }
+    order
+}
+
+pub fn impact_mermaid(diff: &LineageDiff, head: &LineageGraph) -> Option<String> {
+    let changed: HashMap<&str, DiffStatus> = diff
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.status, DiffStatus::Added | DiffStatus::Modified))
+        .map(|n| (n.unique_id.as_str(), n.status))
+        .collect();
+    let mut order = impact_scope(diff, head);
+    if order.is_empty() {
+        return None;
     }
     let total = order.len();
     order.truncate(MAX_DIAGRAM_NODES);
