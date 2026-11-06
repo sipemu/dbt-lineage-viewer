@@ -99,7 +99,7 @@ def main():
             packages.symlink_to(parse_dir / "dbt_packages", target_is_directory=True)
 
         ref = json.loads(subprocess.run(
-            ["uv", "run", "-q", "--with", "sqlglot", "--with", "duckdb", "python",
+            ["uv", "run", "-q", "--no-project", "--with", "sqlglot", "--with", "duckdb", "python",
              str(HERE / "reference.py"), str(manifest), "--duckdb", str(db)],
             text=True, stdout=subprocess.PIPE, check=True,
         ).stdout)

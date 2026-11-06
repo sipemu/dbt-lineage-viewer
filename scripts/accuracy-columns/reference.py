@@ -10,7 +10,7 @@ Output (stdout, JSON): {"edges": [[src_node, src_col, tgt_node, tgt_col], ...],
 "measured": [model ids traced], "skipped": {model id: reason}}. Node ids use
 dbt-lineage's short form: model.x, seed.x, snapshot.x, source.src.table.
 
-Usage: uv run --with sqlglot --with duckdb reference.py <manifest.json>
+Usage: uv run --no-project --with sqlglot --with duckdb reference.py <manifest.json>
        [--dialect duckdb] [--duckdb <database file>]
 
 With --duckdb, table columns come from that database's information_schema
