@@ -4,19 +4,19 @@
     "precision": 100.0
   },
   "tuva": {
-    "recall": 77.3,
-    "precision": 99.8
+    "recall": 62.3,
+    "precision": 100.0
   },
   "cal-itp data-infra": {
-    "recall": 93.5,
+    "recall": 100.0,
     "precision": 100.0
   },
   "Fivetran dbt_hubspot": {
     "recall": 48.0,
-    "precision": 98.9
+    "precision": 100.0
   },
   "Fivetran dbt_jira": {
     "recall": 100.0,
-    "precision": 99.3
+    "precision": 100.0
   }
 }

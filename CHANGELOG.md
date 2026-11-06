@@ -14,6 +14,16 @@ Notable changes per release. Full per-release notes live on the
   `persist_docs`), edited `dbt_project.yml` configs for its directory, and
   changed `vars` it reads. A modified source selects its downstream
   (`source:<name>+`).
+- `plan` closes more gaps with `state:modified`: with `persist_docs`, an
+  edited `{% docs %}` block marks the models whose model or column
+  descriptions reference it via `doc()`. A package re-pinned in
+  `packages.yml` / `package-lock.yml` (version, revision or source) marks
+  every model and macro calling into it (`pkg.macro(…)` or a dispatch into
+  its namespace), since its macro bodies can't be compared without
+  installing both versions; new and re-pinned packages are selected as
+  `package:<name>+`. Changes dbt ignores (descriptions without
+  `persist_docs`, documented columns of a source or model) no longer
+  trigger a rebuild on their own.
 - Rebuild-selector benchmark (`scripts/accuracy-plan/`): replays 12 real
   commits per pinned project and compares `plan`'s selection with
   `dbt ls -s state:modified+`. Column-impact benchmark
