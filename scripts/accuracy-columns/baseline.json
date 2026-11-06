@@ -1,0 +1,32 @@
+{
+  "jaffle-shop": {
+    "raw": {
+      "recall": 100.0,
+      "precision": 100.0
+    },
+    "compiled": {
+      "recall": 100.0,
+      "precision": 100.0
+    }
+  },
+  "Fivetran dbt_hubspot": {
+    "raw": {
+      "recall": 14.8,
+      "precision": 27.0
+    },
+    "compiled": {
+      "recall": 100.0,
+      "precision": 96.2
+    }
+  },
+  "Fivetran dbt_jira": {
+    "raw": {
+      "recall": 22.1,
+      "precision": 51.0
+    },
+    "compiled": {
+      "recall": 100.0,
+      "precision": 98.2
+    }
+  }
+}

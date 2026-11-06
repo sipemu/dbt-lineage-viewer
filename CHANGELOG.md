@@ -16,6 +16,12 @@ Notable changes per release. Full per-release notes live on the
   compiled manifest, so PR column impact uses compiled SQL on both sides.
   Per model, both sides use the same method (compiled only when both have it
   for that model), so an edited file never shows spurious removed columns.
+- `verify --no-cache`, for measuring a parser you're changing (the parse
+  cache only invalidates per release).
+- The accuracy workflow also measures column lineage against sqlglot
+  (`scripts/accuracy-columns/run.py`: `dbt seed` + `dbt run` on DuckDB, raw
+  and compiled) and fails when recall or precision drops below
+  `baseline.json`.
 
 ## [0.17.0] – 2026-11-06
 

@@ -2,7 +2,9 @@ name: Lineage accuracy
 
 # Measures SQL-parse lineage against `dbt parse` on the public projects in
 # scripts/accuracy/projects.json and fails when dbt-lineage misses a
-# dependency dbt knows about. Weekly runs catch upstream dbt releases.
+# dependency dbt knows about. Then measures column lineage against sqlglot
+# (scripts/accuracy-columns) and fails when it drops below baseline.json.
+# Weekly runs catch upstream dbt releases.
 
 on:
   pull_request:
@@ -10,6 +12,7 @@ on:
     paths:
       - "src/**"
       - "scripts/accuracy/**"
+      - "scripts/accuracy-columns/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/accuracy.yml"
@@ -18,6 +21,7 @@ on:
     paths:
       - "src/**"
       - "scripts/accuracy/**"
+      - "scripts/accuracy-columns/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/accuracy.yml"
@@ -54,3 +58,5 @@ jobs:
           key: accuracy-projects-${{ hashFiles('scripts/accuracy/projects.json') }}
       - run: cargo build --release --no-default-features
       - run: python3 scripts/accuracy/run.py
+      - name: Column lineage vs sqlglot
+        run: python3 scripts/accuracy-columns/run.py

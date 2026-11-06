@@ -68,12 +68,16 @@ fn run(cli: Cli) -> Result<()> {
                 manifest,
                 output,
             } => run_check_manifest_command(project_dir, manifest.as_ref(), output),
-            Command::ColumnLineage { project_dir } => run_column_lineage_command(project_dir),
+            Command::ColumnLineage {
+                project_dir,
+                no_cache,
+            } => run_column_lineage_command(project_dir, *no_cache),
             Command::Verify {
                 project_dir,
                 manifest,
                 output,
-            } => run_verify_command(project_dir, manifest.as_ref(), output),
+                no_cache,
+            } => run_verify_command(project_dir, manifest.as_ref(), output, *no_cache),
             Command::Mcp {
                 project_dir,
                 manifest,
@@ -838,11 +842,11 @@ fn run_check_manifest_command(
 /// Run the hidden `column-lineage` subcommand: all column edges as JSON, from
 /// the same analyzers the PR report uses.
 #[cfg(not(tarpaulin_include))]
-fn run_column_lineage_command(project_dir: &Path) -> Result<()> {
+fn run_column_lineage_command(project_dir: &Path, no_cache: bool) -> Result<()> {
     let project_dir = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
-    let dag = build_dag(&project_dir, None, false)?;
+    let dag = build_dag(&project_dir, None, no_cache)?;
     let lineage = merge_column_lineage(
         parser::ast_column_lineage::resolve_column_lineage_ast_in(&dag, &project_dir),
         parser::column_lineage::resolve_column_lineage_in(&dag, &project_dir),
@@ -859,6 +863,7 @@ fn run_verify_command(
     project_dir: &Path,
     manifest: Option<&PathBuf>,
     output: &cli::VerifyOutputFormat,
+    no_cache: bool,
 ) -> Result<()> {
     let project_dir = project_dir
         .canonicalize()
@@ -875,7 +880,7 @@ fn run_verify_command(
         );
     }
 
-    let parsed = build_dag(&project_dir, None, false)?;
+    let parsed = build_dag(&project_dir, None, no_cache)?;
     let from_manifest = parser::manifest::build_graph_from_manifest(&manifest_path)?;
     let report = graph::verify::verify(
         &parsed,

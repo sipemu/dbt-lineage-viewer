@@ -20,7 +20,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -112,13 +111,11 @@ def main():
         if parse_dir != lineage_dir and not packages.exists():
             packages.symlink_to(parse_dir / "dbt_packages", target_is_directory=True)
 
-        # The parse cache is keyed on the release version, not the build: drop
-        # it so a changed parser is measured, not its predecessor's results.
-        shutil.rmtree(lineage_dir / ".dbt-lineage", ignore_errors=True)
-
+        # The parse cache is keyed on the release version, not the build:
+        # bypass it so a changed parser is measured, not its predecessor.
         # verify exits 1 on a miss; the JSON is what counts here.
         verify = subprocess.run(
-            [args.binary, "verify", "-p", str(lineage_dir),
+            [args.binary, "verify", "-p", str(lineage_dir), "--no-cache",
              "--manifest", str(parse_dir / "target" / "manifest.json"), "-o", "json"],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )

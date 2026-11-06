@@ -301,6 +301,10 @@ pub enum Command {
         /// Path to dbt project directory
         #[arg(short = 'p', long = "project-dir", default_value = ".")]
         project_dir: PathBuf,
+
+        /// Bypass the on-disk parse cache
+        #[arg(long)]
+        no_cache: bool,
     },
 
     /// Check how closely SQL-parse lineage matches dbt's own: compares the
@@ -318,6 +322,11 @@ pub enum Command {
         /// Output format: text (default) or json
         #[arg(short = 'o', long, default_value = "text")]
         output: VerifyOutputFormat,
+
+        /// Bypass the on-disk parse cache (.dbt-lineage/cache.bin), e.g. to
+        /// measure a parser you are changing
+        #[arg(long)]
+        no_cache: bool,
     },
 
     /// Emit a dbt selector expression covering models added or modified since

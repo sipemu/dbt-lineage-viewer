@@ -125,7 +125,9 @@ variables or macro return values. `verify` lists those, and any command reads
 Column impact ("removing `stg_orders.customer_id` breaks `orders.customer_id`")
 is measured the same way against a reference: [sqlglot](https://github.com/tobymao/sqlglot)
 column lineage over the SQL dbt compiled after `dbt seed` and `dbt run` on
-DuckDB ([`scripts/accuracy-columns/`](scripts/accuracy-columns)).
+DuckDB ([`scripts/accuracy-columns/`](scripts/accuracy-columns)). CI re-runs
+it alongside the model check and fails when a number drops below its
+baseline.
 
 | Project | From SQL alone | Precision | With compiled SQL | Precision |
 | --- | ---: | ---: | ---: | ---: |
