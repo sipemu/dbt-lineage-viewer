@@ -11,6 +11,7 @@ pub mod manifest;
 pub mod manifest_check;
 pub mod project;
 pub mod python;
+pub mod render;
 pub mod sql;
 #[allow(dead_code)]
 pub mod yaml_schema;

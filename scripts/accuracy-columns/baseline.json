@@ -11,18 +11,18 @@
   },
   "tuva": {
     "raw": {
-      "recall": 50.9,
-      "precision": 93.0
+      "recall": 73.1,
+      "precision": 98.1
     },
     "compiled": {
-      "recall": 79.6,
-      "precision": 99.0
+      "recall": 83.1,
+      "precision": 98.7
     }
   },
   "Fivetran dbt_hubspot": {
     "raw": {
-      "recall": 46.3,
-      "precision": 92.0
+      "recall": 91.8,
+      "precision": 96.8
     },
     "compiled": {
       "recall": 100.0,
@@ -31,18 +31,18 @@
   },
   "Fivetran dbt_jira": {
     "raw": {
-      "recall": 38.8,
-      "precision": 98.0
+      "recall": 73.4,
+      "precision": 98.1
     },
     "compiled": {
       "recall": 100.0,
-      "precision": 99.0
+      "precision": 99.2
     }
   },
   "Fivetran dbt_shopify": {
     "raw": {
-      "recall": 51.8,
-      "precision": 86.0
+      "recall": 94.0,
+      "precision": 98.5
     },
     "compiled": {
       "recall": 100.0,
@@ -51,8 +51,8 @@
   },
   "Fivetran dbt_quickbooks": {
     "raw": {
-      "recall": 43.7,
-      "precision": 96.0
+      "recall": 68.7,
+      "precision": 99.0
     },
     "compiled": {
       "recall": 100.0,
@@ -61,28 +61,28 @@
   },
   "Fivetran dbt_netsuite": {
     "raw": {
-      "recall": 25.5,
-      "precision": 96.0
+      "recall": 61.1,
+      "precision": 97.8
     },
     "compiled": {
       "recall": 98.3,
-      "precision": 99.0
+      "precision": 98.6
     }
   },
   "Fivetran dbt_zendesk": {
     "raw": {
-      "recall": 24.3,
-      "precision": 92.0
+      "recall": 93.3,
+      "precision": 99.3
     },
     "compiled": {
       "recall": 99.3,
-      "precision": 100.0
+      "precision": 99.9
     }
   },
   "Fivetran dbt_stripe": {
     "raw": {
-      "recall": 33.7,
-      "precision": 88.0
+      "recall": 86.8,
+      "precision": 95.5
     },
     "compiled": {
       "recall": 99.6,
@@ -91,8 +91,8 @@
   },
   "Fivetran dbt_salesforce": {
     "raw": {
-      "recall": 73.7,
-      "precision": 48.0
+      "recall": 91.9,
+      "precision": 75.8
     },
     "compiled": {
       "recall": 100.0,

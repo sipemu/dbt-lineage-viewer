@@ -21,6 +21,11 @@
 //! become a function of the column names they mention, and `{% if %}` keeps
 //! its first branch. A model whose SQL still does not parse yields no edges;
 //! the regex analyzer covers it.
+//!
+//! When Jinja writes part of the SELECT (a loop, a macro producing columns),
+//! the model is first rendered with the project's macros ([`super::render`]),
+//! which sees the columns neutralisation can't; a failed render falls back
+//! to neutralisation. Compiled SQL from the manifest still wins over both.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
@@ -135,6 +140,7 @@ fn analyze_graph(
     let order =
         petgraph::algo::toposort(graph, None).unwrap_or_else(|_| graph.node_indices().collect());
     let mut edges = Vec::new();
+    let mut renderer: Option<Option<super::render::Renderer>> = None;
     for idx in order {
         let node = &graph[idx];
         if !matches!(node.node_type, NodeType::Model | NodeType::Snapshot) {
@@ -158,7 +164,32 @@ fn analyze_graph(
                 analyze_compiled(compiled_sql, &c.relations, &schema, &declared)
                     .or_else(|| analyze_model(&sql, &relations, &schema, &parents, &declared))
             }
-            None => analyze_model(&sql, &relations, &schema, &parents, &declared),
+            None => {
+                // Jinja writes part of the SELECT: render it like `dbt compile`.
+                let rendered = sql_generated_by_jinja(&sql)
+                    .then(|| {
+                        renderer
+                            .get_or_insert_with(|| {
+                                super::render::Renderer::new(root, relations.by_ref.clone())
+                            })
+                            .as_ref()?
+                            .render(
+                                &sql,
+                                super::render::ModelInput {
+                                    node_id: &node.unique_id,
+                                    file_path: node.file_path.as_deref(),
+                                    columns: parents
+                                        .iter()
+                                        .filter_map(|p| Some((p.clone(), schema.get(p)?.clone())))
+                                        .collect(),
+                                },
+                            )
+                    })
+                    .flatten();
+                rendered
+                    .and_then(|r| analyze_rendered(&r.sql, &r.relations, &schema, &declared))
+                    .or_else(|| analyze_model(&sql, &relations, &schema, &parents, &declared))
+            }
         };
         let Some(model) = model else {
             continue;
@@ -248,29 +279,37 @@ impl Relations {
     /// labelled `name.v<version>`; without a version this picks the highest,
     /// dbt's default latest (the graph builder also honours `latest_version`).
     fn resolve_ref(&self, name: &str, version: Option<&str>) -> String {
-        if let Some(v) = version {
-            if let Some(id) = self.by_ref.get(&format!("{name}.v{v}")) {
-                return id.clone();
-            }
-        }
-        if let Some(id) = self.by_ref.get(name) {
+        resolve_ref_in(&self.by_ref, name, version)
+    }
+}
+
+/// Node id of `ref(name[, v=version])` given ref name → node id.
+pub(crate) fn resolve_ref_in(
+    by_ref: &HashMap<String, String>,
+    name: &str,
+    version: Option<&str>,
+) -> String {
+    if let Some(v) = version {
+        if let Some(id) = by_ref.get(&format!("{name}.v{v}")) {
             return id.clone();
         }
-        let prefix = format!("{name}.v");
-        let latest = self
-            .by_ref
-            .iter()
-            .filter_map(|(label, id)| Some((label.strip_prefix(&prefix)?, id)))
-            .max_by(
-                |(a, _), (b, _)| match (a.parse::<f64>(), b.parse::<f64>()) {
-                    (Ok(x), Ok(y)) => x.total_cmp(&y),
-                    _ => a.cmp(b),
-                },
-            );
-        latest
-            .map(|(_, id)| id.clone())
-            .unwrap_or_else(|| format!("model.{name}"))
     }
+    if let Some(id) = by_ref.get(name) {
+        return id.clone();
+    }
+    let prefix = format!("{name}.v");
+    let latest = by_ref
+        .iter()
+        .filter_map(|(label, id)| Some((label.strip_prefix(&prefix)?, id)))
+        .max_by(
+            |(a, _), (b, _)| match (a.parse::<f64>(), b.parse::<f64>()) {
+                (Ok(x), Ok(y)) => x.total_cmp(&y),
+                _ => a.cmp(b),
+            },
+        );
+    latest
+        .map(|(_, id)| id.clone())
+        .unwrap_or_else(|| format!("model.{name}"))
 }
 
 /// An edge into the model being analyzed.
@@ -871,6 +910,23 @@ fn analyze_model(
     Some(model_result(&binder, &query, declared))
 }
 
+/// Analyze SQL rendered by [`super::render`]: plain SQL whose relation
+/// placeholders point into `relations`.
+fn analyze_rendered(
+    sql: &str,
+    relations: &[String],
+    schema: &HashMap<String, Vec<String>>,
+    declared: &[String],
+) -> Option<ModelResult> {
+    let query = parse(sql)?;
+    let binder = Binder {
+        schema,
+        placeholders: relations,
+        relations: None,
+    };
+    Some(model_result(&binder, &query, declared))
+}
+
 /// Analyze SQL dbt compiled (no Jinja), resolving relation names through the
 /// manifest.
 fn analyze_compiled(
@@ -1230,6 +1286,55 @@ mod tests {
             "with b as (select {{ fill_staging_columns(a, b) }} from {{ ref('a') }}) select * from b"
         ));
         assert!(sql_generated_by_jinja("{{ union_connections('x', 'y') }}"));
+    }
+
+    #[test]
+    fn jinja_written_selects_are_rendered_with_package_macros() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = [
+            ("dbt_project.yml", "name: shop\n"),
+            (
+                "models/sources.yml",
+                "version: 2\nsources:\n  - name: raw\n    tables:\n      - name: orders\n        columns:\n          - name: id\n          - name: amount\n",
+            ),
+            (
+                "models/stg_orders.sql",
+                "select\n  {{ fill(source_columns=adapter.get_columns_in_relation(source('raw', 'orders')), staging_columns=get_order_columns()) }}\nfrom {{ source('raw', 'orders') }}",
+            ),
+            (
+                "macros/get_order_columns.sql",
+                "{% macro get_order_columns() %}{% set columns = [{'name': 'id', 'alias': 'order_id'}, {'name': 'amount'}, {'name': 'missing'}] %}{{ return(columns) }}{% endmacro %}",
+            ),
+            ("dbt_packages/utils/dbt_project.yml", "name: utils\n"),
+            (
+                "dbt_packages/utils/macros/fill.sql",
+                "{% macro fill(source_columns, staging_columns) %}{%- set names = source_columns | map(attribute='name') | list -%}{%- for c in staging_columns %}{% if c.name in names %}{{ c.name }}{% if c.alias %} as {{ c.alias }}{% endif %}{% else %}cast(null as {{ dbt.type_string() }}) as {{ c.name }}{% endif %}{% if not loop.last %},{% endif %}\n{% endfor %}{% endmacro %}",
+            ),
+        ];
+        for (path, content) in files {
+            let p = dir.path().join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, content).unwrap();
+        }
+        let project = super::super::project::DbtProject::load(dir.path()).unwrap();
+        let found =
+            super::super::discovery::discover_files(&project.resolve_paths(dir.path())).unwrap();
+        let graph = crate::graph::builder::build_graph_no_cache(dir.path(), &found).unwrap();
+        let mut got: Vec<(String, String, String)> =
+            resolve_column_lineage_ast_in(&graph, dir.path())
+                .edges
+                .into_iter()
+                .filter(|e| e.target_node.ends_with("stg_orders"))
+                .map(|e| (e.source_node, e.source_column, e.target_column))
+                .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("source.raw.orders".into(), "amount".into(), "amount".into()),
+                ("source.raw.orders".into(), "id".into(), "order_id".into()),
+            ]
+        );
     }
 
     #[test]
