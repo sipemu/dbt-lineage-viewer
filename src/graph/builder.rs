@@ -95,6 +95,9 @@ struct GraphBuilder {
     graph: LineageGraph,
     node_map: HashMap<String, NodeIndex>,
     versions: ModelVersions,
+    /// Names of the root project and installed packages. A two-argument
+    /// `ref('project', 'model')` to any other project can't be resolved here.
+    projects: std::collections::HashSet<String>,
 }
 
 /// dbt model versions declared in YAML. A versioned model's node is
@@ -165,6 +168,7 @@ impl GraphBuilder {
             graph: LineageGraph::new(),
             node_map: HashMap::new(),
             versions: ModelVersions::default(),
+            projects: std::collections::HashSet::new(),
         }
     }
 
@@ -178,33 +182,46 @@ impl GraphBuilder {
 
     /// Get or create a phantom ref node, returning its index
     fn get_or_create_phantom_ref(&mut self, ref_name: &str, sql_path: &Path) -> NodeIndex {
-        self.get_or_create_phantom_versioned_ref(ref_name, None, sql_path)
+        self.get_or_create_phantom_versioned_ref(None, ref_name, None, sql_path)
     }
 
     /// Like [`Self::get_or_create_phantom_ref`] for `ref(name, v=version)`.
     fn get_or_create_phantom_versioned_ref(
         &mut self,
+        package: Option<&str>,
         ref_name: &str,
         version: Option<&str>,
         sql_path: &Path,
     ) -> NodeIndex {
-        let dep_id = self
-            .versions
-            .resolve(ref_name, version)
-            .filter(|id| self.node_map.contains_key(id))
-            .unwrap_or_else(|| resolve_ref(ref_name, &self.node_map));
-        if let Some(&idx) = self.node_map.get(&dep_id) {
-            return idx;
+        let external = package.is_some_and(|p| !self.projects.contains(p));
+        if !external {
+            let dep_id = self
+                .versions
+                .resolve(ref_name, version)
+                .filter(|id| self.node_map.contains_key(id))
+                .unwrap_or_else(|| resolve_ref(ref_name, &self.node_map));
+            if let Some(&idx) = self.node_map.get(&dep_id) {
+                return idx;
+            }
         }
         eprintln!(
             "Warning: unresolved ref '{}' in {}",
             ref_name,
             sql_path.display()
         );
-        let phantom_id = format!("model.{}", ref_name);
+        // `ref('other_project', 'model')` to a project that isn't installed
+        // (dbt Mesh): an external node named like dbt's selector,
+        // `other_project.model`, so it can't merge with a local `model`.
+        let (phantom_id, label) = match package.filter(|_| external) {
+            Some(p) => (format!("model.{p}.{ref_name}"), format!("{p}.{ref_name}")),
+            None => (format!("model.{ref_name}"), ref_name.to_string()),
+        };
+        if let Some(&idx) = self.node_map.get(&phantom_id) {
+            return idx;
+        }
         self.add_node(NodeData {
             unique_id: phantom_id,
-            label: ref_name.to_string(),
+            label,
             node_type: NodeType::Phantom,
             file_path: None,
             description: None,
@@ -601,6 +618,7 @@ fn process_sql_edges(
             .chain(parsed_file.wrapped_refs.iter())
         {
             let dep_idx = gb.get_or_create_phantom_versioned_ref(
+                ref_call.package.as_deref(),
                 &ref_call.name,
                 ref_call.version.as_deref(),
                 sql_path,
@@ -687,6 +705,16 @@ fn build_graph_with_cache(
     persist: bool,
 ) -> Result<LineageGraph> {
     let mut gb = GraphBuilder::new();
+    if let Ok(p) = crate::parser::project::DbtProject::load(project_dir) {
+        gb.projects.insert(p.name);
+    }
+    if let Ok(entries) = std::fs::read_dir(project_dir.join("dbt_packages")) {
+        for e in entries.filter_map(|e| e.ok()) {
+            if let Ok(p) = crate::parser::project::DbtProject::load(&e.path()) {
+                gb.projects.insert(p.name);
+            }
+        }
+    }
 
     let (model_meta, exposures) = process_yaml_files(&mut gb, files)?;
 
@@ -772,6 +800,52 @@ fn parse_exposure_ref(dep: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_project_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let write = |rel: &str, text: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        write("dbt_project.yml", "name: app\n");
+        write("models/orders.sql", "select 1 as id");
+        // Installed package, own project by name, and a Mesh project that
+        // isn't installed (with a model name that also exists locally).
+        write(
+            "models/report.sql",
+            "select * from {{ ref('pkg', 'contacts') }} join {{ ref('app', 'orders') }} \
+             join {{ ref('finance', 'orders') }}",
+        );
+        write("dbt_packages/pkg/dbt_project.yml", "name: pkg\n");
+        write("dbt_packages/pkg/models/contacts.sql", "select 1 as id");
+        let project = crate::parser::project::DbtProject::load(root).unwrap();
+        let files = crate::parser::discovery::discover_files_with_packages(
+            root,
+            &project.resolve_paths(root),
+        )
+        .unwrap();
+        let graph = build_graph_no_cache(root, &files).unwrap();
+        let report = graph
+            .node_indices()
+            .find(|&i| graph[i].unique_id == "model.report")
+            .unwrap();
+        let mut parents: Vec<(String, NodeType)> = graph
+            .neighbors_directed(report, petgraph::Direction::Incoming)
+            .map(|p| (graph[p].label.clone(), graph[p].node_type))
+            .collect();
+        parents.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            parents,
+            vec![
+                ("contacts".to_string(), NodeType::Model),
+                ("finance.orders".to_string(), NodeType::Phantom),
+                ("orders".to_string(), NodeType::Model),
+            ]
+        );
+    }
 
     #[test]
     fn lineage_continues_into_installed_packages() {

@@ -26,6 +26,10 @@ Notable changes per release. Full per-release notes live on the
   shadows a package model of the same name), so refs to package models are
   no longer phantom nodes. Lint and summary leave package nodes out; the PR
   diff stays project-only (the base checkout has no installed packages).
+- Cross-project refs: `ref('project', 'model')` resolves within the root
+  project or an installed package; to any other project (dbt Mesh, not
+  installed) it becomes an external node `project.model`, so it no longer
+  merges with a local model of the same name.
 - `var()` resolution for dependencies: `{{ var('x') }}` whose value is Jinja
   (`"{{ ref('orders') }}"`, tuva's style) and `ref(var('model_name'))`, from
   the project's and the installed packages' `vars`.
