@@ -113,7 +113,12 @@ def bench(binary, project):
         rows["site"] = measure([binary, "site", "-p", p, "--out", str(site)])
     finally:
         shutil.rmtree(site, ignore_errors=True)
-    rows["lsp_startup"] = lsp_startup(binary, project, model)
+    # Builds without the `lsp` feature (CI uses --no-default-features) exit
+    # at once; there is no server to time then.
+    try:
+        rows["lsp_startup"] = lsp_startup(binary, project, model)
+    except (BrokenPipeError, OSError):
+        pass  # binary built without the `lsp` feature
     return rows
 
 
@@ -178,6 +183,8 @@ def main():
         for key in LABELS:
             # lint exits 1 on error findings; a missing command (lsp in a
             # --no-default-features build) exits 2 within milliseconds.
+            if any(key not in results[s] for s in (small, large)):
+                continue
             if any(results[s][key][2] not in (0, 1) for s in (small, large)) or (
                 key == "lsp_startup" and results[small][key][2] != 0
             ):
