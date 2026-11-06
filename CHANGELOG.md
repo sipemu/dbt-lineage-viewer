@@ -5,6 +5,8 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
+## [0.16.0] – 2026-11-06
+
 ### Added
 
 - `dbt-lineage verify` compares SQL-parse lineage with a `manifest.json`
@@ -14,7 +16,6 @@ Notable changes per release. Full per-release notes live on the
 - README: an Accuracy section with `verify` results on five public dbt
   projects, and a comparison with dbt v2 / the dbt VS Code extension / dbt
   platform Advanced CI.
-
 - VS Code extension 0.2.0 (`editors/vscode`): **Show impact of my changes**
   runs `ci report` against the base branch and renders it in a panel (tables,
   offline Mermaid impact graph, status-bar item, optional refresh on save).
@@ -25,6 +26,8 @@ Notable changes per release. Full per-release notes live on the
 
 ### Changed
 
+- **Upgrade recommended:** earlier versions under-reported downstream impact
+  on Jinja- and macro-heavy projects.
 - SQL-parse lineage now finds 100% of dbt's dependencies on the five
   projects in the README, up from 78% overall (tuva 91%, cal-itp 73%,
   dbt_hubspot 56%, dbt_jira 83%):
