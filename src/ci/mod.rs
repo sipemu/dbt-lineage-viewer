@@ -562,6 +562,67 @@ fn strip_ansi(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn verify_report(missed: bool) -> crate::graph::verify::VerifyReport {
+        use crate::graph::verify::{EdgeMismatch, VerifyReport};
+        VerifyReport {
+            nodes_compared: 2,
+            manifest_edges: 3,
+            parsed_edges: 3,
+            matched_edges: if missed { 2 } else { 3 },
+            missing: if missed {
+                vec![EdgeMismatch {
+                    child: "model.fct".into(),
+                    parent: "model.stg".into(),
+                    file: None,
+                }]
+            } else {
+                vec![]
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn verify_section_and_fail_on() {
+        let ok = CiReport {
+            verify: Some(verify_report(false)),
+            ..Default::default()
+        };
+        assert!(render_markdown(&ok)
+            .contains("✅ All 3 dependencies dbt records for 2 models were found."));
+        assert!(ok.failures(&[FailOn::VerifyMissed]).is_empty());
+
+        let missed = CiReport {
+            verify: Some(verify_report(true)),
+            ..Default::default()
+        };
+        let md = render_markdown(&missed);
+        assert!(md.contains("Found 2 of 3 dependencies dbt records (66.7%)"));
+        assert!(md.contains("| `model.fct` | `model.stg` |"));
+        assert_eq!(missed.failures(&[FailOn::VerifyMissed]).len(), 1);
+    }
+
+    #[test]
+    fn gaps_section_lists_reasons() {
+        use crate::graph::gaps::{GapReason, LineageGap};
+        let report = CiReport {
+            lineage_gaps: vec![LineageGap {
+                model: "fct".into(),
+                reasons: vec![
+                    GapReason::DynamicRef("ref(var('x'))".into()),
+                    GapReason::GeneratedSql,
+                ],
+            }],
+            ..Default::default()
+        };
+        let md = render_markdown(&report);
+        assert!(md.contains("### ⚠️ Lineage may be incomplete"));
+        assert!(md.contains(
+            "| `fct` | dependency computed at render time: `ref(var('x'))`; columns written by a Jinja loop or macro |"
+        ));
+        assert!(!render_markdown(&CiReport::default()).contains("may be incomplete"));
+    }
     use crate::graph::diff::{DiffNode, DiffSummary};
     use crate::graph::lint::LintFinding;
 

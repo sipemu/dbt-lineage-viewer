@@ -102,4 +102,5 @@ Bitbucket authentication: `DBT_LINEAGE_TOKEN` or `BITBUCKET_ACCESS_TOKEN` (Beare
 ## Outputs and exit codes
 
 - `--outputs <file>` appends `selector=…` and `failed=…` (`$GITHUB_OUTPUT`, GitLab dotenv).
-- `--fail-on lint-errors,plan-empty,manifest-stale,breaking-changes` (default `lint-errors`; `never` to only report) makes `ci report` exit 1 after writing the report, so the comment is still posted.
+- `--fail-on lint-errors,plan-empty,manifest-stale,breaking-changes,verify-missed` (default `lint-errors`; `never` to only report) makes `ci report` exit 1 after writing the report, so the comment is still posted.
+- `--verify` compares the parsed lineage with `target/manifest.json` (or `--manifest`) and adds a **Lineage verified against dbt** section. Run `dbt parse` in an earlier step; it needs your adapter and `profiles.yml` but never connects to the warehouse.

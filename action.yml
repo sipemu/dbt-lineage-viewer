@@ -39,10 +39,18 @@ inputs:
   fail-on:
     description: >
       Cause the step to fail when given findings are present. Comma-separated:
-      `lint-errors`, `plan-empty`, `manifest-stale`, `breaking-changes`, or `never`. The PR comment
+      `lint-errors`, `plan-empty`, `manifest-stale`, `breaking-changes`, `verify-missed`, or `never`. The PR comment
       and SARIF upload still happen before the step fails.
     required: false
     default: lint-errors
+  verify:
+    description: >
+      When true, compare dbt-lineage's lineage with dbt's own manifest.json
+      and add the result to the PR comment. Run `dbt parse` (no warehouse
+      queries) in an earlier step. Combine with `fail-on: verify-missed` to
+      fail when parsing missed a dependency.
+    required: false
+    default: "false"
 
 outputs:
   selector:
@@ -98,11 +106,13 @@ runs:
         INPUT_MANIFEST: ${{ inputs.manifest }}
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_VERIFY: ${{ inputs.verify }}
       run: |
         set -uo pipefail
         summary_md="$RUNNER_TEMP/dbt-lineage-report.md"
         manifest_args=()
         [ -n "$INPUT_MANIFEST" ] && manifest_args=(--manifest "$INPUT_MANIFEST")
+        [ "$INPUT_VERIFY" = "true" ] && manifest_args+=(--verify)
 
         rc=0
         dbt-lineage ci report -p "$INPUT_PROJECT_DIR" --base "$INPUT_BASE" ${manifest_args[@]+"${manifest_args[@]}"} \

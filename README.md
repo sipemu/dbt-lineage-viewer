@@ -120,6 +120,31 @@ What parsing can't follow: refs whose names are computed at render time from
 variables or macro return values. `verify` lists those, and any command reads
 `--manifest` for exact lineage when you need it.
 
+### Column lineage
+
+Column impact ("removing `stg_orders.customer_id` breaks `orders.customer_id`")
+is measured the same way against a reference: [sqlglot](https://github.com/tobymao/sqlglot)
+column lineage over the SQL dbt compiled after `dbt seed` and `dbt run` on
+DuckDB ([`scripts/accuracy-columns/`](scripts/accuracy-columns)).
+
+| Project | Column dependencies found | Precision | In plain-SQL models |
+| --- | ---: | ---: | ---: |
+| jaffle-shop | 87 / 87 | 100% | 100% |
+| Fivetran dbt_jira | 157 / 712 | 51% | 100% (8 / 8) |
+| Fivetran dbt_hubspot | 186 / 1,259 | 27% | 100% (56 / 56) |
+
+Columns of models written in SQL are traced completely, through CTEs,
+subqueries, joins, unions and `select *`. Fivetran's packages generate 99% of
+their SELECTs with Jinja loops and macros (column lists from vars, whole
+queries from macros). No SQL parser can see those columns without rendering
+Jinja, and most of the "imprecise" edges there come from models the test
+setup fills with `null` because its sources don't exist.
+
+Where Jinja decides lineage at render time, the PR comment says so: a
+**Lineage may be incomplete** section lists the affected models on the
+impact path and why (a `ref()` with computed arguments, or columns written by
+a loop or macro), so a short impact list isn't mistaken for a complete one.
+
 ## Compared with dbt's own tools
 
 dbt Labs' new engine (dbt v2, formerly "Fusion", [GA since September
@@ -202,6 +227,16 @@ jobs:
 ```
 
 `@v0` tracks the latest `0.x` release; pin an exact tag (e.g. `@v0.9.1`) if you prefer. The action installs the matching `dbt-lineage` binary from this repo's release artifacts, runs `summary`, `diff`, `plan`, and optionally `lint`/`coverage` SARIF, then posts a single sticky comment on the PR with the rendered report. See [`action.yml`](action.yml) for the full input/output reference.
+
+To check dbt-lineage against dbt on your own project in every PR, run `dbt parse` first (it needs your `profiles.yml` but never connects to the warehouse) and set `verify: true`; the comment then reports how much of dbt's lineage was found, and `fail-on: verify-missed` fails the check when a dependency was missed:
+
+```yaml
+      - run: pip install dbt-core dbt-snowflake && dbt parse   # your adapter; no connection made
+      - uses: sipemu/dbt-lineage-viewer@v0
+        with:
+          verify: true
+          fail-on: lint-errors,verify-missed
+```
 
 ### Container image
 
