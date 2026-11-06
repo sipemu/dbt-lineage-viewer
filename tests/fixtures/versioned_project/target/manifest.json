@@ -1,0 +1,177 @@
+{
+ "nodes": {
+  "model.versioned.fct_stores": {
+   "unique_id": "model.versioned.fct_stores",
+   "name": "fct_stores",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.versioned.stores.v1",
+     "model.versioned.stores.v2"
+    ]
+   },
+   "original_file_path": "models/fct_stores.sql",
+   "path": "fct_stores.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "ebe41d98d4d424a2afe303c52ecd119f67059ac118606e21ed3136460d913e8e"
+   }
+  },
+  "model.versioned.fct_legacy": {
+   "unique_id": "model.versioned.fct_legacy",
+   "name": "fct_legacy",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.versioned.dim_customers.v1"
+    ]
+   },
+   "original_file_path": "models/fct_legacy.sql",
+   "path": "fct_legacy.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "43cc7ce98297430d138f8ba664d5b4faf5df0947b788be705c099508742bd214"
+   }
+  },
+  "model.versioned.fct_orders": {
+   "unique_id": "model.versioned.fct_orders",
+   "name": "fct_orders",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.versioned.dim_customers.v2"
+    ]
+   },
+   "original_file_path": "models/fct_orders.sql",
+   "path": "fct_orders.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "d5cbdb2a46cabd905c6c4e0da8ae57f05e9729261930068c39dd09adafb30ae1"
+   }
+  },
+  "model.versioned.stg_customers": {
+   "unique_id": "model.versioned.stg_customers",
+   "name": "stg_customers",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/stg_customers.sql",
+   "path": "stg_customers.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "f98e6803ef139c51f7fc28df219b3b35c925304b6ecc8b2f3b04269a85a5d3ea"
+   }
+  },
+  "model.versioned.dim_customers.v1": {
+   "unique_id": "model.versioned.dim_customers.v1",
+   "name": "dim_customers",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.versioned.stg_customers"
+    ]
+   },
+   "original_file_path": "models/dim_customers_v1.sql",
+   "path": "dim_customers_v1.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "aeb3281bc3b5cc4e3721827be9e37bc0fd0f6f8f8ab2fcdbfb2a3ca981485db2"
+   }
+  },
+  "model.versioned.dim_customers.v2": {
+   "unique_id": "model.versioned.dim_customers.v2",
+   "name": "dim_customers",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.versioned.stg_customers"
+    ]
+   },
+   "original_file_path": "models/dim_customers_v2.sql",
+   "path": "dim_customers_v2.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "9b3459c312b1a21bd8c7bd450ea21a1cc7426ceb23ce05a08c3f8470ffb75e57"
+   }
+  },
+  "model.versioned.stores.v1": {
+   "unique_id": "model.versioned.stores.v1",
+   "name": "stores",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/stores_current.sql",
+   "path": "stores_current.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "ad2d9e2526a98881b646425628a6befacccfa674e6588a84224031ab1ffdee7b"
+   }
+  },
+  "model.versioned.stores.v2": {
+   "unique_id": "model.versioned.stores.v2",
+   "name": "stores",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/stores_next.sql",
+   "path": "stores_next.sql",
+   "config": {
+    "materialized": "view",
+    "tags": []
+   },
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "c3221bb6e67d580bb5ca80e4f071f9c28c3a470a8a55b6fbbb3d286434ef9a0c"
+   }
+  }
+ },
+ "sources": {},
+ "exposures": {}
+}

@@ -244,10 +244,31 @@ impl Relations {
         Relations { by_ref, sources }
     }
 
-    fn resolve_ref(&self, name: &str) -> String {
-        self.by_ref
-            .get(name)
-            .cloned()
+    /// Node id of `ref(name[, v=version])`. A versioned model's nodes are
+    /// labelled `name.v<version>`; without a version this picks the highest,
+    /// dbt's default latest (the graph builder also honours `latest_version`).
+    fn resolve_ref(&self, name: &str, version: Option<&str>) -> String {
+        if let Some(v) = version {
+            if let Some(id) = self.by_ref.get(&format!("{name}.v{v}")) {
+                return id.clone();
+            }
+        }
+        if let Some(id) = self.by_ref.get(name) {
+            return id.clone();
+        }
+        let prefix = format!("{name}.v");
+        let latest = self
+            .by_ref
+            .iter()
+            .filter_map(|(label, id)| Some((label.strip_prefix(&prefix)?, id)))
+            .max_by(
+                |(a, _), (b, _)| match (a.parse::<f64>(), b.parse::<f64>()) {
+                    (Ok(x), Ok(y)) => x.total_cmp(&y),
+                    _ => a.cmp(b),
+                },
+            );
+        latest
+            .map(|(_, id)| id.clone())
             .unwrap_or_else(|| format!("model.{name}"))
     }
 }
@@ -286,7 +307,7 @@ static JINJA_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{.*?\}\}|\{%.*?%\}").unwrap());
 static REF_CALL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"^\{\{-?\s*ref\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*['"]([^'"]+)['"]\s*)?(?:,\s*(?:v|version)\s*=[^)]*)?\)\s*-?\}\}$"#,
+        r#"^\{\{-?\s*ref\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*['"]([^'"]+)['"]\s*)?(?:,\s*(?:v|version)\s*=\s*['"]?([^'")\s]+)['"]?\s*)?\)\s*-?\}\}$"#,
     )
     .unwrap()
 });
@@ -370,7 +391,7 @@ fn neutralize_jinja(sql: &str, relations: &Relations) -> (String, Vec<String>) {
         }
         let replacement = if let Some(c) = REF_CALL.captures(tag) {
             let name = c.get(2).unwrap_or_else(|| c.get(1).unwrap()).as_str();
-            placeholders.push(relations.resolve_ref(name));
+            placeholders.push(relations.resolve_ref(name, c.get(3).map(|v| v.as_str())));
             format!("{REL_PREFIX}{}__", placeholders.len() - 1)
         } else if let Some(c) = SOURCE_CALL.captures(tag) {
             placeholders.push(format!("source.{}.{}", &c[1], &c[2]));
@@ -1255,6 +1276,31 @@ mod tests {
                 ),
                 ("source.raw.customers".into(), "name".into(), "name".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn versioned_refs_resolve_to_version_nodes() {
+        let labels: HashMap<String, String> =
+            [("dim.v1", "model.dim.v1"), ("dim.v2", "model.dim.v2")]
+                .iter()
+                .map(|(l, id)| (l.to_string(), id.to_string()))
+                .collect();
+        let schema = HashMap::new();
+        let src = |sql: &str| -> Vec<String> {
+            analyze_sql(sql, "model.t", &labels, &schema)
+                .into_iter()
+                .map(|e| e.source_node)
+                .collect()
+        };
+        assert_eq!(src("select id from {{ ref('dim') }}"), ["model.dim.v2"]);
+        assert_eq!(
+            src("select id from {{ ref('dim', v=1) }}"),
+            ["model.dim.v1"]
+        );
+        assert_eq!(
+            src("select id from {{ ref('dim', version='1') }}"),
+            ["model.dim.v1"]
         );
     }
 

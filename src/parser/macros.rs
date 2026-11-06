@@ -341,6 +341,7 @@ pub fn extract_wrapper_calls(
                             refs.push(RefCall {
                                 package: None,
                                 name,
+                                version: None,
                             });
                         }
                     }
@@ -613,6 +614,7 @@ fn collect_source_model(
     let model = |name: &str| RefCall {
         package: None,
         name: name.to_string(),
+        version: None,
     };
     match value {
         Value::String(name) if is_identifier(name) => refs.push(model(name)),

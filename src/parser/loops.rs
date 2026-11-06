@@ -175,10 +175,12 @@ pub fn extract_loop_calls(sql: &str) -> (Vec<RefCall>, Vec<SourceCall>) {
                         (Some(package), Some(name), true) => refs.push(RefCall {
                             package: Some(package),
                             name,
+                            version: None,
                         }),
                         (Some(name), _, false) => refs.push(RefCall {
                             package: None,
                             name,
+                            version: None,
                         }),
                         _ => {}
                     }

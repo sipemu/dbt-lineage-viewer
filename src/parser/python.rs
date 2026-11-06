@@ -59,16 +59,19 @@ pub fn extract_refs(py: &str) -> Vec<RefCall> {
             refs.push(RefCall {
                 package: Some(pkg.as_str().to_string()),
                 name: name.as_str().to_string(),
+                version: None,
             });
         } else if let Some(name) = cap.get(3) {
             refs.push(RefCall {
                 package: None,
                 name: name.as_str().to_string(),
+                version: None,
             });
         } else if let Some(name) = cap.get(4) {
             refs.push(RefCall {
                 package: None,
                 name: name.as_str().to_string(),
+                version: None,
             });
         }
     }

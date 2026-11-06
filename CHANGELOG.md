@@ -23,6 +23,13 @@ Notable changes per release. Full per-release notes live on the
 
 ### Fixed
 
+- Versioned models (dbt 1.5+) were broken in every mode: manifest ids
+  `model.proj.dim.v2` collapsed to `model.v2`, SQL-parse mode treated
+  `dim_v1.sql` / `dim_v2.sql` as unrelated models so `ref('dim')` became a
+  phantom node, and `ref('dim', v=1)` dropped the version. Versions now
+  follow dbt: nodes `model.dim.v2` labelled `dim.v2`, files `<name>_v<v>` or
+  `defined_in`, unversioned refs to `latest_version` (default: highest).
+  Tested against `dbt parse` on a fixture project.
 - Column-accuracy measurement: Fivetran's seeds landed in `main` while its
   sources read `<pkg>_integration_tests`, so staging models compiled to
   `null` placeholders for the reference and every tool. The README numbers

@@ -137,12 +137,53 @@ mod cli {
     use std::process::Command;
 
     fn binary_path() -> std::path::PathBuf {
-        // The built binary path
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("target");
-        path.push("debug");
-        path.push("dbt-lineage");
-        path
+        // The binary cargo built for this test run (debug or release), not a
+        // possibly stale target/debug one.
+        std::path::PathBuf::from(env!("CARGO_BIN_EXE_dbt-lineage"))
+    }
+
+    fn versioned_fixture() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("versioned_project")
+    }
+
+    #[test]
+    fn test_versioned_models_match_dbt() {
+        // target/manifest.json was written by `dbt parse` (dbt-core 1.12) for
+        // this project: default latest version, `v=` / `version=`,
+        // `defined_in` and an explicit `latest_version`.
+        let output = Command::new(binary_path())
+            .args(["verify", "--no-cache", "-p"])
+            .arg(versioned_fixture())
+            .output()
+            .expect("Failed to run binary");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("dependencies found: 6/6"), "{stdout}");
+        assert!(stdout.contains("Lineage matches dbt exactly."), "{stdout}");
+    }
+
+    #[test]
+    fn test_versioned_models_in_lineage_output() {
+        let output = Command::new(binary_path())
+            .args(["--no-cache", "-o", "json", "-p"])
+            .arg(versioned_fixture())
+            .output()
+            .expect("Failed to run binary");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        for label in [
+            "dim_customers.v1",
+            "dim_customers.v2",
+            "stores.v1",
+            "stores.v2",
+        ] {
+            assert!(stdout.contains(label), "missing {label}: {stdout}");
+        }
+        // No phantom node for the unversioned ref('dim_customers').
+        assert!(!stdout.contains("\"phantom\""), "{stdout}");
     }
 
     #[test]

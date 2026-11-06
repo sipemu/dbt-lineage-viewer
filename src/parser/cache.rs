@@ -64,7 +64,7 @@ pub struct CacheEntry {
 }
 
 /// Bump whenever parse output for the same file content changes.
-const CACHE_VERSION: u32 = 4;
+const CACHE_VERSION: u32 = 5;
 const CACHE_REL_PATH: &str = ".dbt-lineage/cache.bin";
 
 /// Thread-safe parse cache. Constructed once per build, reused across all
@@ -172,6 +172,7 @@ mod tests {
             refs: vec![RefCall {
                 package: None,
                 name: "orders".into(),
+                version: None,
             }],
             sources: vec![],
             wrapped_refs: vec![],

@@ -167,6 +167,8 @@ fn simplify_unique_id(unique_id: &str, resource_type: &str) -> String {
                 unique_id.to_string()
             }
         }
+        // Versioned model: model.project.name.v2 -> model.name.v2
+        "model" if parts.len() >= 4 => format!("{}.{}", parts[0], parts[2..].join(".")),
         _ => {
             // model.project.name -> model.name
             if parts.len() >= 3 {
@@ -510,9 +512,14 @@ fn add_regular_nodes(
         let node_type = resource_type_to_node_type(&node.resource_type);
         let simple_id = simplify_unique_id(orig_id, &node.resource_type);
 
+        // Versioned models: label `name.v2`, dbt's selector syntax.
+        let label = match (node.resource_type.as_str(), simple_id.split_once('.')) {
+            ("model", Some((_, rest))) if rest != node.name => rest.to_string(),
+            _ => node.name.clone(),
+        };
         let idx = graph.add_node(NodeData {
             unique_id: simple_id.clone(),
-            label: node.name.clone(),
+            label,
             node_type,
             file_path: node
                 .original_file_path

@@ -1,0 +1,12 @@
+models:
+  - name: dim_customers
+    versions:
+      - v: 1
+      - v: 2
+  - name: stores
+    latest_version: 1
+    versions:
+      - v: 1
+        defined_in: stores_current
+      - v: 2
+        defined_in: stores_next

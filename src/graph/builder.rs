@@ -82,6 +82,69 @@ fn parse_files_in_parallel(
 struct GraphBuilder {
     graph: LineageGraph,
     node_map: HashMap<String, NodeIndex>,
+    versions: ModelVersions,
+}
+
+/// dbt model versions declared in YAML. A versioned model's node is
+/// `model.<name>.v<version>` (as in dbt's unique ids, without the project),
+/// labelled `<name>.v<version>` (dbt's selector syntax).
+#[derive(Default)]
+struct ModelVersions {
+    /// File stem → (model name, version).
+    by_file: HashMap<String, (String, String)>,
+    /// Model name → the version an unversioned `ref()` resolves to.
+    latest: HashMap<String, String>,
+}
+
+impl ModelVersions {
+    fn add(&mut self, model: &crate::parser::yaml_schema::ModelDefinition) {
+        use crate::parser::yaml_schema::version_string;
+        if model.versions.is_empty() {
+            return;
+        }
+        let mut versions = Vec::new();
+        for v in &model.versions {
+            let version = version_string(&v.v);
+            let file = v
+                .defined_in
+                .clone()
+                .unwrap_or_else(|| format!("{}_v{}", model.name, version));
+            self.by_file
+                .insert(file, (model.name.clone(), version.clone()));
+            versions.push(version);
+        }
+        let latest = match &model.latest_version {
+            Some(v) => version_string(v),
+            // Highest version, numerically when the versions are numbers.
+            None => versions
+                .iter()
+                .max_by(|a, b| match (a.parse::<f64>(), b.parse::<f64>()) {
+                    (Ok(x), Ok(y)) => x.total_cmp(&y),
+                    _ => a.cmp(b),
+                })
+                .cloned()
+                .unwrap_or_default(),
+        };
+        self.latest.insert(model.name.clone(), latest);
+    }
+
+    /// (unique id, label, model name) for a model file.
+    fn node_for_file(&self, stem: &str) -> (String, String, String) {
+        match self.by_file.get(stem) {
+            Some((name, v)) => (
+                format!("model.{name}.v{v}"),
+                format!("{name}.v{v}"),
+                name.clone(),
+            ),
+            None => (format!("model.{stem}"), stem.to_string(), stem.to_string()),
+        }
+    }
+
+    /// Node id a `ref(name[, v=version])` points to, when `name` is versioned.
+    fn resolve(&self, name: &str, version: Option<&str>) -> Option<String> {
+        let v = version.or_else(|| self.latest.get(name).map(String::as_str))?;
+        Some(format!("model.{name}.v{v}"))
+    }
 }
 
 impl GraphBuilder {
@@ -89,6 +152,7 @@ impl GraphBuilder {
         Self {
             graph: LineageGraph::new(),
             node_map: HashMap::new(),
+            versions: ModelVersions::default(),
         }
     }
 
@@ -102,7 +166,21 @@ impl GraphBuilder {
 
     /// Get or create a phantom ref node, returning its index
     fn get_or_create_phantom_ref(&mut self, ref_name: &str, sql_path: &Path) -> NodeIndex {
-        let dep_id = resolve_ref(ref_name, &self.node_map);
+        self.get_or_create_phantom_versioned_ref(ref_name, None, sql_path)
+    }
+
+    /// Like [`Self::get_or_create_phantom_ref`] for `ref(name, v=version)`.
+    fn get_or_create_phantom_versioned_ref(
+        &mut self,
+        ref_name: &str,
+        version: Option<&str>,
+        sql_path: &Path,
+    ) -> NodeIndex {
+        let dep_id = self
+            .versions
+            .resolve(ref_name, version)
+            .filter(|id| self.node_map.contains_key(id))
+            .unwrap_or_else(|| resolve_ref(ref_name, &self.node_map));
         if let Some(&idx) = self.node_map.get(&dep_id) {
             return idx;
         }
@@ -250,6 +328,7 @@ fn process_yaml_files(
         add_source_nodes(gb, &schema, yaml_path);
 
         for model_def in &schema.models {
+            gb.versions.add(model_def);
             let mut meta = YamlModelMeta {
                 description: model_def.description.clone(),
                 columns: model_def.columns.iter().map(|c| c.name.clone()).collect(),
@@ -288,7 +367,8 @@ fn process_model_files(
     let parsed = parse_files_in_parallel(&files.model_sql_files, wrappers, cache)?;
 
     for (sql_path, parsed_file) in files.model_sql_files.iter().zip(parsed.iter()) {
-        let model_name = file_stem_str(sql_path);
+        let (unique_id, label, yaml_name) = gb.versions.node_for_file(&file_stem_str(sql_path));
+        let model_name = label.clone();
 
         if let Some(existing_path) = model_name_paths.get(&model_name) {
             eprintln!(
@@ -301,7 +381,7 @@ fn process_model_files(
         model_name_paths.insert(model_name.clone(), sql_path.clone());
 
         let sql_config: SqlConfig = parsed_file.config.clone().into();
-        let yaml_meta = model_meta.get(&model_name);
+        let yaml_meta = model_meta.get(&yaml_name);
 
         // SQL config takes precedence over YAML config; merge tags
         let materialization = sql_config
@@ -315,7 +395,6 @@ fn process_model_files(
         tags.sort();
         tags.dedup();
 
-        let unique_id = format!("model.{}", model_name);
         let relative_path = sql_path
             .strip_prefix(project_dir)
             .unwrap_or(sql_path)
@@ -323,7 +402,7 @@ fn process_model_files(
 
         gb.add_node(NodeData {
             unique_id,
-            label: model_name.clone(),
+            label,
             node_type: NodeType::Model,
             file_path: Some(relative_path),
             description: yaml_meta.and_then(|m| m.description.clone()),
@@ -473,7 +552,11 @@ fn process_sql_edges(
 
     for ((sql_path, file_type), parsed_file) in all_sql_files.iter().zip(parsed.iter()) {
         let node_name = file_stem_str(sql_path);
-        let node_unique_id = format!("{}.{}", file_type, node_name);
+        let node_unique_id = if *file_type == "model" {
+            gb.versions.node_for_file(&node_name).0
+        } else {
+            format!("{}.{}", file_type, node_name)
+        };
 
         // Create test nodes on the fly
         if *file_type == "test" {
@@ -503,7 +586,11 @@ fn process_sql_edges(
             .iter()
             .chain(parsed_file.wrapped_refs.iter())
         {
-            let dep_idx = gb.get_or_create_phantom_ref(&ref_call.name, sql_path);
+            let dep_idx = gb.get_or_create_phantom_versioned_ref(
+                &ref_call.name,
+                ref_call.version.as_deref(),
+                sql_path,
+            );
             gb.graph.add_edge(
                 dep_idx,
                 current_idx,

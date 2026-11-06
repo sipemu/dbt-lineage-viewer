@@ -9,6 +9,9 @@ pub struct RefCall {
     pub package: Option<String>,
     /// Model name
     pub name: String,
+    /// Model version from `ref('m', v=2)` / `ref('m', version='2')`.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 /// A reference to a dbt source via source()
@@ -36,7 +39,7 @@ static REF_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         \bref\s*\(\s*
         ['"]([^'"]+)['"]\s*
         (?:,\s*['"]([^'"]+)['"]\s*)?
-        (?:,\s*(?:v|version)\s*=\s*[^)]*)?
+        (?:,\s*(?:v|version)\s*=\s*['"]?([^'")\s]+)['"]?\s*)?
         \)
     "#,
     )
@@ -70,15 +73,18 @@ pub fn extract_refs(sql: &str) -> Vec<RefCall> {
 
     for block in JINJA_BLOCK.find_iter(&cleaned) {
         for cap in REF_PATTERN.captures_iter(block.as_str()) {
+            let version = cap.get(3).map(|v| v.as_str().to_string());
             refs.push(match cap.get(2) {
                 // Two positional arguments: ref('package', 'model')
                 Some(name) => RefCall {
                     package: Some(cap[1].to_string()),
                     name: name.as_str().to_string(),
+                    version,
                 },
                 None => RefCall {
                     package: None,
                     name: cap[1].to_string(),
+                    version,
                 },
             });
         }
@@ -292,9 +298,11 @@ mod tests {
         let refs = extract_refs("select * from {{ ref('dim_customers', v=2) }}");
         assert_eq!(refs[0].name, "dim_customers");
         assert_eq!(refs[0].package, None);
+        assert_eq!(refs[0].version.as_deref(), Some("2"));
         let refs = extract_refs("select * from {{ ref('pkg', 'm', version='3') }}");
         assert_eq!(refs[0].package.as_deref(), Some("pkg"));
         assert_eq!(refs[0].name, "m");
+        assert_eq!(refs[0].version.as_deref(), Some("3"));
     }
 
     #[test]

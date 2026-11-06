@@ -70,12 +70,31 @@ pub struct ModelDefinition {
     /// Model versions (`versions: [{v: 1}, {v: 2}]`).
     #[serde(default)]
     pub versions: Vec<ModelVersion>,
+    /// Version an unversioned `ref()` resolves to; dbt defaults to the
+    /// highest.
+    #[serde(default)]
+    pub latest_version: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ModelVersion {
     /// Version identifier; numbers and strings are both allowed by dbt.
     pub v: serde_yaml::Value,
+    /// File (without `.sql`) defining this version; default `<model>_v<v>`.
+    #[serde(default)]
+    pub defined_in: Option<String>,
+}
+
+/// A version identifier as dbt writes it in unique ids (`2`, `2.1`, `beta`).
+pub fn version_string(v: &serde_yaml::Value) -> String {
+    match v {
+        serde_yaml::Value::String(s) => s.clone(),
+        serde_yaml::Value::Number(n) => n.to_string(),
+        other => serde_yaml::to_string(other)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
