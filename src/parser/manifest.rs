@@ -509,6 +509,11 @@ fn add_regular_nodes(
     nodes: &HashMap<String, ManifestNode>,
 ) {
     for (orig_id, node) in nodes {
+        // Hooks (`on-run-start` / `on-run-end`, resource type `operation`)
+        // are not part of the DAG dbt builds.
+        if node.resource_type == "operation" {
+            continue;
+        }
         let node_type = resource_type_to_node_type(&node.resource_type);
         let simple_id = simplify_unique_id(orig_id, &node.resource_type);
 
@@ -623,6 +628,25 @@ fn non_empty_string(s: &Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hooks_are_not_models() {
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "nodes": {
+                "model.p.a": {"unique_id": "model.p.a", "name": "a", "resource_type": "model"},
+                "operation.p.p-on-run-start-0": {"unique_id": "operation.p.p-on-run-start-0",
+                    "name": "p-on-run-start-0", "resource_type": "operation"}
+            },
+            "sources": {}
+        }))
+        .unwrap();
+        let graph = build_graph_from_parsed_manifest(&manifest).unwrap();
+        let ids: Vec<_> = graph
+            .node_indices()
+            .map(|i| graph[i].unique_id.clone())
+            .collect();
+        assert_eq!(ids, ["model.a"]);
+    }
 
     #[test]
     fn load_catalog_columns_orders_by_index() {

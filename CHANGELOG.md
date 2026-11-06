@@ -80,6 +80,10 @@ Notable changes per release. Full per-release notes live on the
 
 ### Fixed
 
+- Manifest mode counted `on-run-start` / `on-run-end` hooks (resource type
+  `operation`) as models, so `summary` counted them and `lint`
+  flagged them as dead-end models (#69).
+
 - Column lineage used ~100 MiB per worker thread on large projects
   (2.1 GB at 2.2k models): the regex fallback's case-insensitive Unicode
   patterns. Now 318 MiB and faster, with identical output.
