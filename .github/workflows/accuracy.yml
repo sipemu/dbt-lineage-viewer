@@ -13,6 +13,8 @@ on:
       - "src/**"
       - "scripts/accuracy/**"
       - "scripts/accuracy-columns/**"
+      - "scripts/accuracy-impact/**"
+      - "scripts/accuracy-plan/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/accuracy.yml"
@@ -22,6 +24,8 @@ on:
       - "src/**"
       - "scripts/accuracy/**"
       - "scripts/accuracy-columns/**"
+      - "scripts/accuracy-impact/**"
+      - "scripts/accuracy-plan/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/accuracy.yml"
@@ -39,7 +43,7 @@ jobs:
   accuracy:
     name: Lineage accuracy vs dbt parse
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -60,3 +64,11 @@ jobs:
       - run: python3 scripts/accuracy/run.py
       - name: Column lineage vs sqlglot
         run: python3 scripts/accuracy-columns/run.py
+      # Slow (a dbt compile per column removal, two dbt parse per commit):
+      # weekly and on demand only.
+      - name: Column impact vs sqlglot
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python3 scripts/accuracy-impact/run.py
+      - name: Rebuild selector vs dbt state:modified+
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python3 scripts/accuracy-plan/run.py

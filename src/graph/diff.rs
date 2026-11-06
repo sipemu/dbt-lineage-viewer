@@ -384,6 +384,7 @@ pub fn diff_git_with_head(
     };
 
     let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
+    super::state::mark_state_changes(&mut diff, &head_graph, base_tree.path(), head_root);
     mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
     let base_compiled = match base_manifest {
         Some(m) => crate::parser::manifest::load_compiled_sql(m, base_tree.path()),

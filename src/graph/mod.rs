@@ -10,6 +10,7 @@ pub mod lint;
 pub mod macros;
 pub mod perf;
 pub mod plan;
+pub mod state;
 pub mod summary;
 pub mod types;
 pub mod verify;

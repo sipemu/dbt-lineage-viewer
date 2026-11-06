@@ -1,0 +1,22 @@
+{
+  "jaffle-shop": {
+    "recall": 100.0,
+    "precision": 100.0
+  },
+  "tuva": {
+    "recall": 77.3,
+    "precision": 99.8
+  },
+  "cal-itp data-infra": {
+    "recall": 93.5,
+    "precision": 100.0
+  },
+  "Fivetran dbt_hubspot": {
+    "recall": 48.0,
+    "precision": 98.9
+  },
+  "Fivetran dbt_jira": {
+    "recall": 100.0,
+    "precision": 99.3
+  }
+}
