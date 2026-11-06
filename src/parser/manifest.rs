@@ -241,6 +241,54 @@ pub fn load_compiled_sql(manifest_path: &Path, project_dir: &Path) -> Option<Com
     (!compiled.sql.is_empty()).then_some(compiled)
 }
 
+/// Columns per node id (lowercase) from a `catalog.json` written by
+/// `dbt docs generate`: the warehouse's actual columns, including those YAML
+/// doesn't declare. `None` when the file is missing or unreadable.
+pub fn load_catalog_columns(path: &Path) -> Option<HashMap<String, Vec<String>>> {
+    #[derive(Deserialize)]
+    struct Catalog {
+        #[serde(default)]
+        nodes: HashMap<String, CatalogEntry>,
+        #[serde(default)]
+        sources: HashMap<String, CatalogEntry>,
+    }
+    #[derive(Deserialize)]
+    struct CatalogEntry {
+        #[serde(default)]
+        columns: HashMap<String, CatalogColumn>,
+    }
+    #[derive(Deserialize)]
+    struct CatalogColumn {
+        #[serde(default)]
+        index: usize,
+        name: String,
+    }
+    let catalog: Catalog = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let mut out = HashMap::new();
+    let entries = catalog
+        .nodes
+        .into_iter()
+        .map(|(uid, e)| {
+            let kind = uid.split('.').next().unwrap_or("model").to_string();
+            (simplify_unique_id(&uid, &kind), e)
+        })
+        .chain(
+            catalog
+                .sources
+                .into_iter()
+                .map(|(uid, e)| (simplify_unique_id(&uid, "source"), e)),
+        );
+    for (id, entry) in entries {
+        let mut cols: Vec<CatalogColumn> = entry.columns.into_values().collect();
+        cols.sort_by_key(|c| c.index);
+        out.insert(
+            id,
+            cols.into_iter().map(|c| c.name.to_lowercase()).collect(),
+        );
+    }
+    Some(out)
+}
+
 /// Build a LineageGraph from a parsed manifest.json file.
 /// Build a map from simplified unique_id → SQL content extracted from the manifest.
 /// Prefers `raw_code` (closer to what a developer would read) over `compiled_code`.
@@ -568,6 +616,24 @@ fn non_empty_string(s: &Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_catalog_columns_orders_by_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("catalog.json");
+        std::fs::write(
+            &path,
+            r#"{"nodes": {"model.p.orders": {"columns": {
+                    "B": {"index": 2, "name": "B"}, "A": {"index": 1, "name": "A"}}}},
+                "sources": {"source.p.raw.users": {"columns": {
+                    "_fivetran_synced": {"index": 1, "name": "_fivetran_synced"}}}}}"#,
+        )
+        .unwrap();
+        let cols = load_catalog_columns(&path).unwrap();
+        assert_eq!(cols["model.orders"], vec!["a", "b"]);
+        assert_eq!(cols["source.raw.users"], vec!["_fivetran_synced"]);
+        assert!(load_catalog_columns(&tmp.path().join("missing.json")).is_none());
+    }
 
     #[test]
     fn load_compiled_sql_skips_changed_files() {

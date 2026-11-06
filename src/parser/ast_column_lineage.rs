@@ -63,7 +63,10 @@ pub fn resolve_column_lineage_ast_for(
     only: Option<&HashSet<NodeIndex>>,
 ) -> ColumnLineage {
     let compiled = compiled_sql_in(root);
-    resolve_column_lineage_ast_with(graph, root, only, compiled.as_ref())
+    let catalog = super::manifest::load_catalog_columns(&root.join("target").join("catalog.json"));
+    ColumnLineage {
+        edges: analyze_graph(graph, root, only, compiled.as_ref(), catalog.as_ref()).0,
+    }
 }
 
 /// Like [`resolve_column_lineage_ast_for`] with explicit compiled SQL (`None`:
@@ -75,7 +78,7 @@ pub fn resolve_column_lineage_ast_with(
     compiled: Option<&CompiledSql>,
 ) -> ColumnLineage {
     ColumnLineage {
-        edges: analyze_graph(graph, root, only, compiled).0,
+        edges: analyze_graph(graph, root, only, compiled, None).0,
     }
 }
 
@@ -97,7 +100,7 @@ pub fn model_output_columns(
         .filter(|n| matches!(n.node_type, NodeType::Model | NodeType::Snapshot))
         .map(|n| n.unique_id.as_str())
         .collect();
-    analyze_graph(graph, root, Some(&HashSet::new()), compiled)
+    analyze_graph(graph, root, Some(&HashSet::new()), compiled, None)
         .1
         .into_iter()
         .filter(|(id, _)| models.contains(id.as_str()))
@@ -111,13 +114,22 @@ fn analyze_graph(
     root: &std::path::Path,
     only: Option<&HashSet<NodeIndex>>,
     compiled: Option<&CompiledSql>,
+    catalog: Option<&HashMap<String, Vec<String>>>,
 ) -> (Vec<ColumnEdge>, HashMap<String, Vec<String>>) {
     let relations = Relations::new(graph);
+    // Known columns: the warehouse's (catalog.json) when given, else
+    // YAML-declared / CSV-header / SELECT-read ones. Models' columns are
+    // replaced by what analysis infers as it reaches them.
     let mut schema: HashMap<String, Vec<String>> = graph
         .node_indices()
         .map(|i| &graph[i])
-        .filter(|n| !n.columns.is_empty())
-        .map(|n| (n.unique_id.clone(), lower_all(&n.columns)))
+        .filter_map(|n| {
+            let cols = catalog
+                .and_then(|c| c.get(&n.unique_id))
+                .cloned()
+                .unwrap_or_else(|| lower_all(&n.columns));
+            (!cols.is_empty()).then(|| (n.unique_id.clone(), cols))
+        })
         .collect();
 
     let order =
@@ -140,7 +152,7 @@ fn analyze_graph(
             .neighbors_directed(idx, petgraph::Direction::Incoming)
             .map(|p| graph[p].unique_id.clone())
             .collect();
-        let declared = lower_all(&node.columns);
+        let declared = schema.get(&node.unique_id).cloned().unwrap_or_default();
         let model = match compiled.and_then(|c| c.sql.get(&node.unique_id).map(|sql| (c, sql))) {
             Some((c, compiled_sql)) => {
                 analyze_compiled(compiled_sql, &c.relations, &schema, &declared)

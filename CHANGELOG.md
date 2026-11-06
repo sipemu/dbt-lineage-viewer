@@ -5,6 +5,29 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Column lineage reads `target/catalog.json` (from `dbt docs generate`) when
+  present: the warehouse's actual columns, so `select *` from a source
+  expands to columns YAML doesn't declare. With compiled SQL and the catalog,
+  Fivetran's dbt_hubspot reaches 100% of column dependencies at 100%
+  precision and dbt_jira 100% at 99%.
+
+### Changed
+
+- The regex column analyzer now only fills in models the AST analyzer can't
+  parse; it used to add its guesses to every model. Edges with an empty
+  column name are dropped. Column-lineage precision from SQL alone on the
+  Fivetran packages: 83% → 87% (hubspot), 92% → 93% (jira); with compiled SQL
+  96–98% → 99–100%.
+
+### Fixed
+
+- Column-accuracy measurement: Fivetran's seeds landed in `main` while its
+  sources read `<pkg>_integration_tests`, so staging models compiled to
+  `null` placeholders for the reference and every tool. The README numbers
+  are now measured over real source tables.
+
 ## [0.18.0] – 2026-11-06
 
 ### Added

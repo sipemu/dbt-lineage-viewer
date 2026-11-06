@@ -48,6 +48,40 @@ pub struct ColumnLineage {
 }
 
 impl ColumnLineage {
+    /// Combine the AST analyzer's lineage (`primary`) with the regex
+    /// analyzer's (`fallback`): fallback edges only for models the AST
+    /// analyzer produced nothing for (SQL it could not parse). Running both on
+    /// every model added the regex analyzer's guesses to correct AST lineage.
+    /// Edges with an empty column name are dropped.
+    pub fn with_fallback(primary: ColumnLineage, fallback: ColumnLineage) -> ColumnLineage {
+        let analyzed: std::collections::HashSet<String> = primary
+            .edges
+            .iter()
+            .map(|e| e.target_node.clone())
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        let edges = primary
+            .edges
+            .into_iter()
+            .chain(
+                fallback
+                    .edges
+                    .into_iter()
+                    .filter(|e| !analyzed.contains(&e.target_node)),
+            )
+            .filter(|e| !e.source_column.is_empty() && !e.target_column.is_empty())
+            .filter(|e| {
+                seen.insert((
+                    e.source_node.clone(),
+                    e.source_column.clone(),
+                    e.target_node.clone(),
+                    e.target_column.clone(),
+                ))
+            })
+            .collect();
+        ColumnLineage { edges }
+    }
+
     /// Get all column edges for a target node
     pub fn edges_for_target(&self, target_node: &str) -> Vec<&ColumnEdge> {
         self.edges
@@ -415,6 +449,37 @@ fn try_function_pattern(sql: &str, output_col: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edge(src: &str, scol: &str, tgt: &str, tcol: &str) -> ColumnEdge {
+        ColumnEdge {
+            source_node: src.into(),
+            source_column: scol.into(),
+            target_node: tgt.into(),
+            target_column: tcol.into(),
+            confidence: ColumnConfidence::Direct,
+        }
+    }
+
+    #[test]
+    fn fallback_only_fills_models_the_ast_analyzer_missed() {
+        let ast = ColumnLineage {
+            edges: vec![edge("model.a", "x", "model.b", "x")],
+        };
+        let regex = ColumnLineage {
+            edges: vec![
+                edge("model.a", "guess", "model.b", "guess"), // b was analyzed: dropped
+                edge("model.a", "y", "model.c", "y"),         // c wasn't: kept
+                edge("model.a", "", "model.c", "z"),          // empty column: dropped
+            ],
+        };
+        let merged = ColumnLineage::with_fallback(ast, regex);
+        let got: Vec<_> = merged
+            .edges
+            .iter()
+            .map(|e| (e.target_node.as_str(), e.target_column.as_str()))
+            .collect();
+        assert_eq!(got, [("model.b", "x"), ("model.c", "y")]);
+    }
 
     #[test]
     fn test_column_confidence_labels() {

@@ -741,30 +741,14 @@ fn run_coverage_command(project_dir: &Path, output: &cli::CoverageOutputFormat) 
     Ok(())
 }
 
-/// Union two `ColumnLineage` outputs, deduplicating by (source_node,
-/// source_column, target_node, target_column). The AST analyzer's edges take
-/// precedence on ties (better confidence). Edges unique to either analyzer
-/// are kept as-is.
+/// AST lineage, with regex-analyzer lineage for models the AST analyzer
+/// could not parse (see [`parser::column_lineage::ColumnLineage::with_fallback`]).
 #[cfg(not(tarpaulin_include))]
 fn merge_column_lineage(
     primary: parser::column_lineage::ColumnLineage,
     secondary: parser::column_lineage::ColumnLineage,
 ) -> parser::column_lineage::ColumnLineage {
-    use std::collections::HashSet;
-    let mut seen: HashSet<(String, String, String, String)> = HashSet::new();
-    let mut edges = Vec::with_capacity(primary.edges.len() + secondary.edges.len());
-    for e in primary.edges.into_iter().chain(secondary.edges) {
-        let key = (
-            e.source_node.clone(),
-            e.source_column.clone(),
-            e.target_node.clone(),
-            e.target_column.clone(),
-        );
-        if seen.insert(key) {
-            edges.push(e);
-        }
-    }
-    parser::column_lineage::ColumnLineage { edges }
+    parser::column_lineage::ColumnLineage::with_fallback(primary, secondary)
 }
 
 /// Run the `mcp` subcommand: load the graph (manifest preferred, SQL-parse fallback)

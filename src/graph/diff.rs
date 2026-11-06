@@ -484,24 +484,20 @@ pub fn removed_column_impacts(
             }
         }
     }
-    let lineage = {
-        let mut edges = crate::parser::ast_column_lineage::resolve_column_lineage_ast_with(
+    let lineage = crate::parser::column_lineage::ColumnLineage::with_fallback(
+        crate::parser::ast_column_lineage::resolve_column_lineage_ast_with(
             base_graph,
             base_root,
             Some(&scope),
             base_compiled,
-        )
-        .edges;
-        edges.extend(
-            crate::parser::column_lineage::resolve_column_lineage_for(
-                base_graph,
-                base_root,
-                Some(&scope),
-            )
-            .edges,
-        );
-        edges
-    };
+        ),
+        crate::parser::column_lineage::resolve_column_lineage_for(
+            base_graph,
+            base_root,
+            Some(&scope),
+        ),
+    )
+    .edges;
     let mut children: HashMap<(&str, &str), Vec<(&str, &str)>> = HashMap::new();
     for e in &lineage {
         children

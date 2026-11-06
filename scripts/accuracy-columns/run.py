@@ -7,8 +7,9 @@ that query the warehouse compile against real tables), and build the
 reference with reference.py (sqlglot over the compiled SQL). Then compare
 `dbt-lineage column-lineage` against it twice:
 
-- raw: parsing the project's SQL, as dbt-lineage does without a manifest;
-- compiled: with the run's manifest.json in target/, as after `dbt compile`.
+- raw: parsing the project's SQL, as dbt-lineage does without dbt artifacts;
+- compiled: with the run's manifest.json and catalog.json (`dbt docs
+  generate`) in target/, as after `dbt compile` and `dbt docs generate`.
 
 Prints a Markdown table and exits 1 when any recall or precision drops more
 than 0.5 points below baseline.json (`--update-baseline` rewrites it).
@@ -92,7 +93,9 @@ def main():
         run(dbt + ["deps"] + flags[:3], cwd=parse_dir)
         run(dbt + ["seed"] + flags, cwd=parse_dir)
         run(dbt + ["run"] + flags, cwd=parse_dir)
+        run(dbt + ["docs", "generate"] + flags, cwd=parse_dir)
         manifest = parse_dir / "target-columns" / "manifest.json"
+        catalog = parse_dir / "target-columns" / "catalog.json"
 
         packages = lineage_dir / "dbt_packages"
         if parse_dir != lineage_dir and not packages.exists():
@@ -104,14 +107,18 @@ def main():
             text=True, stdout=subprocess.PIPE, check=True,
         ).stdout)
 
-        # raw: no compiled manifest where dbt-lineage looks for one.
-        target_manifest = lineage_dir / "target" / "manifest.json"
-        target_manifest.unlink(missing_ok=True)
+        # raw: no dbt artifacts where dbt-lineage looks for them.
+        artifacts = [(manifest, lineage_dir / "target" / "manifest.json"),
+                     (catalog, lineage_dir / "target" / "catalog.json")]
+        for _, dest in artifacts:
+            dest.unlink(missing_ok=True)
         raw = compare(ref, column_lineage(args.binary, lineage_dir))
-        target_manifest.parent.mkdir(exist_ok=True)
-        shutil.copy(manifest, target_manifest)
+        (lineage_dir / "target").mkdir(exist_ok=True)
+        for src, dest in artifacts:
+            shutil.copy(src, dest)
         compiled = compare(ref, column_lineage(args.binary, lineage_dir))
-        target_manifest.unlink()
+        for _, dest in artifacts:
+            dest.unlink()
 
         results[p["name"]] = {"raw": raw, "compiled": compiled}
         for mode, r in results[p["name"]].items():
@@ -121,7 +128,7 @@ def main():
                     regressions.append(f"{p['name']} {mode} {metric}: {r[metric]} < {base[metric]}")
 
     lines = [
-        "| Project | From SQL alone | Precision | With compiled SQL | Precision |",
+        "| Project | From SQL alone | Precision | With compiled SQL + catalog | Precision |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
     for name, r in results.items():

@@ -11,22 +11,22 @@
   },
   "Fivetran dbt_hubspot": {
     "raw": {
-      "recall": 14.8,
-      "precision": 27.0
+      "recall": 24.5,
+      "precision": 86.6
     },
     "compiled": {
       "recall": 100.0,
-      "precision": 96.2
+      "precision": 100.0
     }
   },
   "Fivetran dbt_jira": {
     "raw": {
-      "recall": 22.1,
-      "precision": 51.0
+      "recall": 29.1,
+      "precision": 92.5
     },
     "compiled": {
       "recall": 100.0,
-      "precision": 98.2
+      "precision": 99.2
     }
   }
 }

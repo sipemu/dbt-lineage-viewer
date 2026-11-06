@@ -129,28 +129,28 @@ DuckDB ([`scripts/accuracy-columns/`](scripts/accuracy-columns)). CI re-runs
 it alongside the model check and fails when a number drops below its
 baseline.
 
-| Project | From SQL alone | Precision | With compiled SQL | Precision |
+| Project | From SQL alone | Precision | With compiled SQL + catalog | Precision |
 | --- | ---: | ---: | ---: | ---: |
 | jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
-| Fivetran dbt_jira | 157 / 712 | 51% | 712 / 712 | 98% |
-| Fivetran dbt_hubspot | 186 / 1,259 | 27% | 1,259 / 1,259 | 96% |
+| Fivetran dbt_hubspot | 573 / 2,337 | 87% | 2,337 / 2,337 | 100% |
+| Fivetran dbt_jira | 283 / 971 | 92% | 971 / 971 | 99% |
 
 From SQL alone, columns of models written in SQL are traced completely,
 through CTEs, subqueries, joins, unions and `select *`. Fivetran's packages
-generate 99% of their SELECTs with Jinja loops and macros (column lists from
+generate most of their SELECTs with Jinja loops and macros (column lists from
 vars, whole queries from macros), and no SQL parser can see those columns
-without rendering Jinja. Most "imprecise" edges there come from models the
-test setup fills with `null` because its sources don't exist.
+without rendering Jinja.
 
-**With compiled SQL:** when `target/manifest.json` holds dbt's compiled SQL
+**With dbt artifacts:** when `target/manifest.json` holds dbt's compiled SQL
 (from `dbt compile` or `dbt run`), column lineage reads it for every model
 whose file still matches the checksum dbt recorded, so an outdated manifest
-never stands in for edited code. The remaining extra edges are
-dependencies in Jinja branches the current vars switch off, read from the raw
-SQL. For PR column impact, give `ci report` the base branch's manifest too
-(`--base-manifest`, e.g. the production manifest many teams keep for slim CI)
-and run `dbt compile` in the PR job; with compiled SQL on one side only,
-both sides use raw SQL so the before/after columns are inferred the same way.
+never stands in for edited code. `target/catalog.json` (from `dbt docs
+generate`) adds the warehouse's actual columns, so `select *` from a source
+expands to columns YAML doesn't declare. For PR column impact, give `ci
+report` the base branch's manifest too (`--base-manifest`, e.g. the
+production manifest many teams keep for slim CI) and run `dbt compile` in the
+PR job; with compiled SQL on one side only, both sides use raw SQL so the
+before/after columns are inferred the same way.
 
 Where Jinja decides lineage at render time, the PR comment says so: a
 **Lineage may be incomplete** section lists the affected models on the

@@ -31,7 +31,9 @@
       "commit": "5f0093547ded4c4a7d48ad6ceb32e94a641c1690",
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
-      "columns": {}
+      "columns": {
+        "vars": "{hubspot_schema: main}"
+      }
     },
     {
       "name": "Fivetran dbt_jira",
@@ -39,7 +41,9 @@
       "commit": "1a9f8b4a4fe76587679330e14fa0decab7fb551c",
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
-      "columns": {}
+      "columns": {
+        "vars": "{jira_schema: main}"
+      }
     }
   ]
 }
