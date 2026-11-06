@@ -1,5 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// A reference to another dbt model via ref()
@@ -64,11 +65,47 @@ fn strip_jinja_comments(sql: &str) -> String {
     JINJA_COMMENT.replace_all(sql, "").to_string()
 }
 
+static VAR_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\{\{-?\s*var\(\s*['"]([^'"]+)['"]\s*(?:,[^)]*)?\)\s*-?\}\}"#).unwrap()
+});
+static VAR_CALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\bvar\(\s*['"]([^'"]+)['"]\s*(?:,[^)]*)?\)"#).unwrap());
+
+/// Resolve `var()` the way dependencies need it: `{{ var('x') }}` whose
+/// value is Jinja (`"{{ ref('orders') }}"`) becomes that Jinja, and
+/// `var('x')` inside a Jinja expression becomes the value as a string
+/// literal, so `ref(var('orders_model'))` is a plain ref.
+pub fn expand_vars<'a>(sql: &'a str, vars: &HashMap<String, String>) -> std::borrow::Cow<'a, str> {
+    if vars.is_empty() || !sql.contains("var(") {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let whole = VAR_BLOCK.replace_all(sql, |c: &regex::Captures| match vars.get(&c[1]) {
+        Some(v) if v.contains("{{") => v.clone(),
+        _ => c[0].to_string(),
+    });
+    let mut out = String::with_capacity(whole.len());
+    let mut last = 0;
+    for block in JINJA_BLOCK.find_iter(&whole) {
+        out.push_str(&whole[last..block.start()]);
+        out.push_str(
+            &VAR_CALL.replace_all(block.as_str(), |c: &regex::Captures| {
+                match vars.get(&c[1]) {
+                    Some(v) if !v.contains("{{") && !v.contains('\'') => format!("'{v}'"),
+                    _ => c[0].to_string(),
+                }
+            }),
+        );
+        last = block.end();
+    }
+    out.push_str(&whole[last..]);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Extract all ref() calls from SQL content. Pipes through the SQL+Jinja
 /// lexer (#25) first to blank out string literals and comments, so the regex
 /// can't match `ref(` inside `'I prefer ref(x)'` or `-- ref(`.
 pub fn extract_refs(sql: &str) -> Vec<RefCall> {
-    let cleaned = super::lexer::strip_non_code(sql);
+    let cleaned = super::lexer::jinja_code(sql);
     let mut refs = Vec::new();
 
     for block in JINJA_BLOCK.find_iter(&cleaned) {
@@ -96,7 +133,7 @@ pub fn extract_refs(sql: &str) -> Vec<RefCall> {
 /// Extract all source() calls from SQL content. Routes through the lexer so
 /// false matches inside strings and comments are eliminated.
 pub fn extract_sources(sql: &str) -> Vec<SourceCall> {
-    let cleaned = super::lexer::strip_non_code(sql);
+    let cleaned = super::lexer::jinja_code(sql);
     let mut sources = Vec::new();
 
     for block in JINJA_BLOCK.find_iter(&cleaned) {
@@ -181,19 +218,36 @@ mod tests {
     }
 
     #[test]
-    fn test_lexer_blocks_ref_in_string_literal() {
-        // Without the lexer (#25), this regex matches the ref( inside the
-        // string. With the lexer, the string literal is blanked and only the
-        // real ref() at the end survives.
-        let sql = "select 'note: {{ ref(\"phantom\") }}' as msg from {{ ref('real') }}";
-        let refs = extract_refs(sql);
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].name, "real");
+    fn test_jinja_in_sql_strings_and_comments_counts_like_dbt() {
+        // dbt renders Jinja before SQL exists, so these are dependencies
+        // (verified with `dbt parse`); only Jinja comments are not.
+        let sql = "-- depends_on: {{ ref('a') }}\n\
+                   select '{{ ref(\"b\") }}' as s /* {{ ref('c') }} */ {# {{ ref('d') }} #}\n\
+                   from {{ ref('real') }}";
+        let names: Vec<_> = extract_refs(sql).into_iter().map(|r| r.name).collect();
+        assert_eq!(names, ["a", "b", "c", "real"]);
     }
 
     #[test]
-    fn test_lexer_blocks_ref_in_line_comment() {
-        let sql = "select 1 -- once we had {{ ref('legacy') }}\nfrom {{ ref('real') }}";
+    fn test_vars_resolve_to_refs() {
+        let vars: HashMap<String, String> = [
+            ("enc", "{{ ref('encounter') }}"),
+            ("orders_model", "stg_orders"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let sql = "select * from {{ var('enc') }} join {{ ref(var('orders_model', 'x')) }} join {{ var('unknown') }}";
+        let names: Vec<_> = extract_refs(&expand_vars(sql, &vars))
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(names, ["encounter", "stg_orders"]);
+    }
+
+    #[test]
+    fn test_ref_text_without_jinja_is_ignored() {
+        let sql = "select 1 -- TODO: ref('legacy')\nfrom {{ ref('real') }}";
         let refs = extract_refs(sql);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "real");

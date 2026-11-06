@@ -16,6 +16,60 @@ pub struct DiscoveredFiles {
 }
 
 /// Walk all configured paths and collect SQL/YAML files
+/// Like [`discover_files`], plus the models, seeds, snapshots and YAML of the
+/// packages installed in `project_dir/dbt_packages` (not their tests), so
+/// lineage continues into package models instead of stopping at a phantom
+/// node. A project model shadows a package model of the same name.
+pub fn discover_files_with_packages(
+    project_dir: &Path,
+    paths: &ResolvedPaths,
+) -> Result<DiscoveredFiles> {
+    let mut files = discover_files(paths)?;
+    let Ok(entries) = std::fs::read_dir(project_dir.join("dbt_packages")) else {
+        return Ok(files);
+    };
+    let own = project_dir.canonicalize().ok();
+    let mut packages: Vec<std::path::PathBuf> =
+        entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    packages.sort();
+    let stem = |p: &std::path::PathBuf| p.file_stem().map(|s| s.to_os_string());
+    for pkg in packages {
+        if pkg.canonicalize().ok() == own {
+            continue;
+        }
+        let Ok(project) = super::project::DbtProject::load(&pkg) else {
+            continue;
+        };
+        let mut pkg_paths = project.resolve_paths(&pkg);
+        pkg_paths.test_paths.clear();
+        let Ok(found) = discover_files(&pkg_paths) else {
+            continue;
+        };
+        let taken: std::collections::HashSet<_> = files
+            .model_sql_files
+            .iter()
+            .chain(&files.model_python_files)
+            .filter_map(stem)
+            .collect();
+        files.model_sql_files.extend(
+            found
+                .model_sql_files
+                .into_iter()
+                .filter(|p| stem(p).is_some_and(|s| !taken.contains(&s))),
+        );
+        files.model_python_files.extend(
+            found
+                .model_python_files
+                .into_iter()
+                .filter(|p| stem(p).is_some_and(|s| !taken.contains(&s))),
+        );
+        files.yaml_files.extend(found.yaml_files);
+        files.seed_files.extend(found.seed_files);
+        files.snapshot_sql_files.extend(found.snapshot_sql_files);
+    }
+    Ok(files)
+}
+
 pub fn discover_files(paths: &ResolvedPaths) -> Result<DiscoveredFiles> {
     let mut discovered = DiscoveredFiles::default();
 

@@ -73,6 +73,14 @@ pub struct NodeData {
 }
 
 impl NodeData {
+    /// Whether the node comes from an installed package (`dbt_packages/`),
+    /// not the project itself.
+    pub fn is_package(&self) -> bool {
+        self.file_path
+            .as_ref()
+            .is_some_and(|p| p.components().any(|c| c.as_os_str() == "dbt_packages"))
+    }
+
     /// Display name with type prefix for non-model nodes
     pub fn display_name(&self) -> String {
         let prefix = self.node_type.prefix();

@@ -1,0 +1,4 @@
+name: c
+profile: c
+vars:
+  enc: "{{ ref('a') }}"

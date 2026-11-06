@@ -62,6 +62,21 @@ impl Default for LintConfig {
 
 /// Run all configured rules over the lineage graph.
 pub fn lint(graph: &LineageGraph, config: &LintConfig) -> LintReport {
+    let mut report = lint_all(graph, config);
+    // Installed packages aren't the project's to fix.
+    let packages: std::collections::HashSet<&str> = graph
+        .node_indices()
+        .map(|i| &graph[i])
+        .filter(|n| n.is_package())
+        .map(|n| n.unique_id.as_str())
+        .collect();
+    report
+        .findings
+        .retain(|f| !packages.contains(f.unique_id.as_str()));
+    report
+}
+
+fn lint_all(graph: &LineageGraph, config: &LintConfig) -> LintReport {
     let mut findings: Vec<LintFinding> = Vec::new();
 
     // Whole-graph rules.

@@ -1,0 +1,132 @@
+{
+ "nodes": {
+  "model.c.v": {
+   "unique_id": "model.c.v",
+   "name": "v",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.c.a"
+    ]
+   },
+   "original_file_path": "models/v.sql",
+   "path": "v.sql",
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "03af6059fbf11e625ea992de4ad3fa7f070f29fe5cc6059bde4d10216defe55f"
+   },
+   "config": {
+    "materialized": "view",
+    "tags": []
+   }
+  },
+  "model.c.m": {
+   "unique_id": "model.c.m",
+   "name": "m",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.c.a",
+     "model.c.b",
+     "model.c.c2"
+    ]
+   },
+   "original_file_path": "models/m.sql",
+   "path": "m.sql",
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "d00f52306d3aaa939ac777ec1c26ff6b89921bc02ae0965990a9bc8a345d005d"
+   },
+   "config": {
+    "materialized": "view",
+    "tags": []
+   }
+  },
+  "model.c.d": {
+   "unique_id": "model.c.d",
+   "name": "d",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/d.sql",
+   "path": "d.sql",
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "ad2d9e2526a98881b646425628a6befacccfa674e6588a84224031ab1ffdee7b"
+   },
+   "config": {
+    "materialized": "view",
+    "tags": []
+   }
+  },
+  "model.c.c2": {
+   "unique_id": "model.c.c2",
+   "name": "c2",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/c2.sql",
+   "path": "c2.sql",
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "ad2d9e2526a98881b646425628a6befacccfa674e6588a84224031ab1ffdee7b"
+   },
+   "config": {
+    "materialized": "view",
+    "tags": []
+   }
+  },
+  "model.c.b": {
+   "unique_id": "model.c.b",
+   "name": "b",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/b.sql",
+   "path": "b.sql",
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "ad2d9e2526a98881b646425628a6befacccfa674e6588a84224031ab1ffdee7b"
+   },
+   "config": {
+    "materialized": "view",
+    "tags": []
+   }
+  },
+  "model.c.a": {
+   "unique_id": "model.c.a",
+   "name": "a",
+   "resource_type": "model",
+   "depends_on": {
+    "macros": [],
+    "nodes": []
+   },
+   "original_file_path": "models/a.sql",
+   "path": "a.sql",
+   "description": "",
+   "checksum": {
+    "name": "sha256",
+    "checksum": "ad2d9e2526a98881b646425628a6befacccfa674e6588a84224031ab1ffdee7b"
+   },
+   "config": {
+    "materialized": "view",
+    "tags": []
+   }
+  }
+ },
+ "sources": {},
+ "exposures": {}
+}

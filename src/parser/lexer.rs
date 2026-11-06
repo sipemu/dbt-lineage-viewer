@@ -192,6 +192,29 @@ pub fn strip_non_code(src: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
+/// The Jinja dbt executes: everything except `{# ... #}` comments, which are
+/// blanked (same length and line breaks). Unlike [`strip_non_code`], Jinja
+/// inside SQL comments and string literals is kept, because dbt renders it:
+/// `-- depends_on: {{ ref('x') }}` and `'{{ ref("x") }}'` both make `x` a
+/// dependency (checked against `dbt parse`).
+pub fn jinja_code(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut rest = src;
+    while let Some(start) = rest.find("{#") {
+        out.push_str(&rest[..start]);
+        let comment = &rest[start..];
+        let end = comment.find("#}").map_or(comment.len(), |e| e + 2);
+        out.extend(
+            comment[..end]
+                .chars()
+                .map(|c| if c == '\n' { '\n' } else { ' ' }),
+        );
+        rest = &comment[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

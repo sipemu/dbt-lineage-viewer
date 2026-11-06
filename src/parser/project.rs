@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::DbtLineageError;
@@ -23,6 +24,52 @@ pub struct DbtProject {
 
     #[serde(rename = "macro-paths", default = "default_macro_paths")]
     pub macro_paths: Vec<String>,
+
+    #[serde(default)]
+    pub vars: HashMap<String, serde_yaml::Value>,
+}
+
+/// String-valued vars for `var()` resolution: package defaults
+/// (`dbt_packages/*/dbt_project.yml`), overridden by the root project's vars,
+/// global or scoped to a package (`vars: {pkg: {name: value}}`).
+pub fn project_vars(project_dir: &Path) -> HashMap<String, String> {
+    fn flatten(vars: &HashMap<String, serde_yaml::Value>, out: &mut HashMap<String, String>) {
+        let mut scoped = Vec::new();
+        for (k, v) in vars {
+            match v {
+                serde_yaml::Value::String(s) => {
+                    out.insert(k.clone(), s.clone());
+                }
+                serde_yaml::Value::Number(n) => {
+                    out.insert(k.clone(), n.to_string());
+                }
+                serde_yaml::Value::Mapping(m) => scoped.push(m),
+                _ => {}
+            }
+        }
+        // Package-scoped values win over global ones, as in dbt.
+        for m in scoped {
+            for (k, v) in m {
+                if let (Some(k), Some(v)) = (k.as_str(), v.as_str()) {
+                    out.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(project_dir.join("dbt_packages")) {
+        let mut packages: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        packages.sort();
+        for pkg in packages {
+            if let Ok(p) = DbtProject::load(&pkg) {
+                flatten(&p.vars, &mut out);
+            }
+        }
+    }
+    if let Ok(p) = DbtProject::load(project_dir) {
+        flatten(&p.vars, &mut out);
+    }
+    out
 }
 
 fn default_model_paths() -> Vec<String> {

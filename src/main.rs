@@ -370,7 +370,7 @@ fn build_dag(
     } else {
         let project = parser::project::DbtProject::load(project_dir)?;
         let paths = project.resolve_paths(project_dir);
-        let files = parser::discovery::discover_files(&paths)?;
+        let files = parser::discovery::discover_files_with_packages(project_dir, &paths)?;
         if no_cache {
             graph::builder::build_graph_no_cache(project_dir, &files)
         } else {
@@ -424,7 +424,7 @@ fn run_impact_command(
     } else {
         let project = parser::project::DbtProject::load(&project_dir)?;
         let paths = project.resolve_paths(&project_dir);
-        let files = parser::discovery::discover_files(&paths)?;
+        let files = parser::discovery::discover_files_with_packages(&project_dir, &paths)?;
         graph::builder::build_graph(&project_dir, &files)?
     };
 
@@ -539,7 +539,7 @@ fn run_perf_command(
     } else {
         let project = parser::project::DbtProject::load(&project_dir)?;
         let paths = project.resolve_paths(&project_dir);
-        let files = parser::discovery::discover_files(&paths)?;
+        let files = parser::discovery::discover_files_with_packages(&project_dir, &paths)?;
         graph::builder::build_graph(&project_dir, &files)?
     };
 
@@ -777,7 +777,7 @@ fn run_mcp_command(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<()>
         } else {
             let project = parser::project::DbtProject::load(&project_dir)?;
             let paths = project.resolve_paths(&project_dir);
-            let files = parser::discovery::discover_files(&paths)?;
+            let files = parser::discovery::discover_files_with_packages(&project_dir, &paths)?;
             let g = graph::builder::build_graph(&project_dir, &files)?;
             (g, std::collections::HashMap::new())
         }

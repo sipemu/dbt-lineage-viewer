@@ -21,8 +21,21 @@ Notable changes per release. Full per-release notes live on the
   Fivetran packages: 83% → 87% (hubspot), 92% → 93% (jira); with compiled SQL
   96–98% → 99–100%.
 
+- Lineage continues into installed packages: models, seeds, snapshots and
+  sources under `dbt_packages/` are part of the graph (a project model
+  shadows a package model of the same name), so refs to package models are
+  no longer phantom nodes. Lint and summary leave package nodes out; the PR
+  diff stays project-only (the base checkout has no installed packages).
+- `var()` resolution for dependencies: `{{ var('x') }}` whose value is Jinja
+  (`"{{ ref('orders') }}"`, tuva's style) and `ref(var('model_name'))`, from
+  the project's and the installed packages' `vars`.
+
 ### Fixed
 
+- Refs inside SQL comments and string literals were ignored, but dbt
+  renders that Jinja: `-- depends_on: {{ ref('x') }}` (dbt's documented way
+  to force a dependency) and `'{{ ref("x") }}'` both make `x` a parent. Only
+  `{# #}` comments are now excluded, as in dbt (checked with `dbt parse`).
 - Versioned models (dbt 1.5+) were broken in every mode: manifest ids
   `model.proj.dim.v2` collapsed to `model.v2`, SQL-parse mode treated
   `dim_v1.sql` / `dim_v2.sql` as unrelated models so `ref('dim')` became a

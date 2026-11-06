@@ -166,6 +166,24 @@ mod cli {
     }
 
     #[test]
+    fn test_jinja_dependency_semantics_match_dbt() {
+        // dbt renders Jinja in SQL comments and strings (`-- depends_on:
+        // {{ ref('a') }}`), not in Jinja comments, and resolves refs held in
+        // vars. target/manifest.json is dbt-core 1.12's `dbt parse` output.
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/jinja_semantics_project");
+        let output = Command::new(binary_path())
+            .args(["verify", "--no-cache", "-p"])
+            .arg(dir)
+            .output()
+            .expect("Failed to run binary");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("dependencies found: 4/4"), "{stdout}");
+        assert!(stdout.contains("Lineage matches dbt exactly."), "{stdout}");
+    }
+
+    #[test]
     fn test_versioned_models_in_lineage_output() {
         let output = Command::new(binary_path())
             .args(["--no-cache", "-o", "json", "-p"])

@@ -112,7 +112,7 @@ impl Analysis {
     pub fn load(project_dir: &Path) -> Result<Self> {
         let project = crate::parser::project::DbtProject::load(project_dir)?;
         let paths = project.resolve_paths(project_dir);
-        let files = crate::parser::discovery::discover_files(&paths)?;
+        let files = crate::parser::discovery::discover_files_with_packages(project_dir, &paths)?;
         let graph = crate::graph::builder::build_graph(project_dir, &files)?;
         Ok(Self::from_graph(project_dir.to_path_buf(), graph))
     }

@@ -99,7 +99,7 @@ fn resolve(arg: &str, bound: &HashMap<&str, &str>) -> Option<String> {
 
 /// Refs and sources produced by for-loops over literal lists in `sql`.
 pub fn extract_loop_calls(sql: &str) -> (Vec<RefCall>, Vec<SourceCall>) {
-    let cleaned = super::lexer::strip_non_code(sql);
+    let cleaned = super::lexer::jinja_code(sql);
     let blocks: Vec<&str> = JINJA_BLOCK
         .find_iter(&cleaned)
         .map(|m| m.as_str())
@@ -278,7 +278,7 @@ static IDENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_]\w*$").u
 /// (`ref(var('model'))`, `source(src, table)`) and that no for-loop over a
 /// literal list resolves. Parsing can't know what they point to.
 pub fn unresolved_dynamic_calls(sql: &str) -> Vec<String> {
-    let cleaned = super::lexer::strip_non_code(sql);
+    let cleaned = super::lexer::jinja_code(sql);
     let blocks: Vec<&str> = JINJA_BLOCK
         .find_iter(&cleaned)
         .map(|m| m.as_str())
@@ -386,7 +386,9 @@ mod dynamic_tests {
     }
 
     #[test]
-    fn calls_in_comments_are_ignored() {
-        assert!(unresolved_dynamic_calls("-- {{ ref(x) }}\n{# ref(y) #}").is_empty());
+    fn calls_in_jinja_comments_are_ignored() {
+        assert!(unresolved_dynamic_calls("{# {{ ref(y) }} #}").is_empty());
+        // dbt renders Jinja in SQL comments: still a computed dependency.
+        assert_eq!(unresolved_dynamic_calls("-- {{ ref(x) }}"), ["ref(x)"]);
     }
 }

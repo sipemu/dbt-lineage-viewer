@@ -65,6 +65,9 @@ pub fn compute_summary(graph: &LineageGraph, project_name: Option<String>) -> Su
 
     for idx in graph.node_indices() {
         let node = &graph[idx];
+        if node.is_package() {
+            continue;
+        }
         *counts.entry(node.node_type).or_insert(0) += 1;
         for tag in &node.tags {
             *tag_counts.entry(tag.clone()).or_insert(0) += 1;

@@ -104,7 +104,7 @@ pub fn detect_wrappers_in(content: &str) -> Vec<WrapperMacro> {
                 defaults.push(default);
             }
         }
-        let body = super::lexer::strip_non_code(&cap["body"]);
+        let body = super::lexer::jinja_code(&cap["body"]);
         let mut deps = Vec::new();
         for block in JINJA_BLOCK.find_iter(&body) {
             for c in BODY_REF.captures_iter(block.as_str()) {
@@ -313,7 +313,7 @@ pub fn extract_wrapper_calls(
     }
     let by_name: HashMap<&str, &WrapperMacro> =
         wrappers.iter().map(|w| (w.name.as_str(), w)).collect();
-    let cleaned = super::lexer::strip_non_code(sql);
+    let cleaned = super::lexer::jinja_code(sql);
     for block in JINJA_BLOCK.find_iter(&cleaned) {
         let text = block.as_str();
         if text
@@ -488,11 +488,15 @@ mod tests {
     }
 
     #[test]
-    fn test_call_in_comment_ignored() {
+    fn test_call_in_jinja_comment_ignored() {
+        // dbt renders Jinja inside SQL comments, so `-- {{ smart_ref('a') }}`
+        // counts; a Jinja comment doesn't.
         let wrappers = detect_wrappers_in("{% macro smart_ref(n) %}{{ ref(n) }}{% endmacro %}");
-        let (refs, _) =
-            extract_wrapper_calls("-- {{ smart_ref('a') }}\n{# smart_ref('b') #}", &wrappers);
-        assert!(refs.is_empty());
+        let (refs, _) = extract_wrapper_calls(
+            "-- {{ smart_ref('a') }}\n{# {{ smart_ref('b') }} #}",
+            &wrappers,
+        );
+        assert_eq!(names(&refs), ["a"]);
     }
 
     #[test]

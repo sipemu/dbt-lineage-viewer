@@ -17,7 +17,13 @@ use super::types::*;
 
 /// Parse one SQL file completely. Used by both the parallel pipeline and the
 /// cache-miss path. Pure function of file contents + wrapper macro list.
-fn parse_sql_content(content: &str, wrappers: &[WrapperMacro]) -> ParsedSqlFile {
+fn parse_sql_content(
+    content: &str,
+    wrappers: &[WrapperMacro],
+    vars: &HashMap<String, String>,
+) -> ParsedSqlFile {
+    let expanded = crate::parser::sql::expand_vars(content, vars);
+    let content: &str = &expanded;
     let (mut wrapped_refs, mut wrapped_sources) = extract_wrapper_calls(content, wrappers);
     let (source_model_refs, source_model_sources) =
         crate::parser::macros::extract_source_model_refs(content);
@@ -47,13 +53,19 @@ fn parse_sql_content(content: &str, wrappers: &[WrapperMacro]) -> ParsedSqlFile 
 fn parse_files_in_parallel(
     paths: &[PathBuf],
     wrappers: &[WrapperMacro],
+    vars: &HashMap<String, String>,
     cache: &ParseCache,
 ) -> Result<Vec<ParsedSqlFile>> {
     // A file's parse also depends on the detected macros and on the parser
     // itself, so both are part of the cache key: editing a macro invalidates
     // the files that call it, and a new release re-parses everything.
     let macros_key = crate::parser::cache::hash_bytes(
-        format!("{}{wrappers:?}", env!("CARGO_PKG_VERSION")).as_bytes(),
+        format!("{}{wrappers:?}{:?}", env!("CARGO_PKG_VERSION"), {
+            let mut v: Vec<_> = vars.iter().collect();
+            v.sort();
+            v
+        })
+        .as_bytes(),
     );
     paths
         .par_iter()
@@ -71,7 +83,7 @@ fn parse_files_in_parallel(
                 Ok(s) => s.to_string(),
                 Err(_) => return Ok(ParsedSqlFile::default()),
             };
-            let parsed = parse_sql_content(&content, wrappers);
+            let parsed = parse_sql_content(&content, wrappers, vars);
             cache.put(path, hash, parsed.clone());
             Ok(parsed)
         })
@@ -360,11 +372,12 @@ fn process_model_files(
     project_dir: &Path,
     model_meta: &HashMap<String, YamlModelMeta>,
     wrappers: &[WrapperMacro],
+    vars: &HashMap<String, String>,
     cache: &ParseCache,
 ) -> Result<()> {
     let mut model_name_paths: HashMap<String, std::path::PathBuf> = HashMap::new();
 
-    let parsed = parse_files_in_parallel(&files.model_sql_files, wrappers, cache)?;
+    let parsed = parse_files_in_parallel(&files.model_sql_files, wrappers, vars, cache)?;
 
     for (sql_path, parsed_file) in files.model_sql_files.iter().zip(parsed.iter()) {
         let (unique_id, label, yaml_name) = gb.versions.node_for_file(&file_stem_str(sql_path));
@@ -532,6 +545,7 @@ fn process_sql_edges(
     files: &DiscoveredFiles,
     project_dir: &Path,
     wrappers: &[WrapperMacro],
+    vars: &HashMap<String, String>,
     cache: &ParseCache,
 ) -> Result<()> {
     let all_sql_files: Vec<(PathBuf, &str)> = files
@@ -548,7 +562,7 @@ fn process_sql_edges(
         .collect();
 
     let paths: Vec<PathBuf> = all_sql_files.iter().map(|(p, _)| p.clone()).collect();
-    let parsed = parse_files_in_parallel(&paths, wrappers, cache)?;
+    let parsed = parse_files_in_parallel(&paths, wrappers, vars, cache)?;
 
     for ((sql_path, file_type), parsed_file) in all_sql_files.iter().zip(parsed.iter()) {
         let node_name = file_stem_str(sql_path);
@@ -680,8 +694,17 @@ fn build_graph_with_cache(
     // `{{ smart_ref('orders') }}` calls without a dbt compile step.
     let macro_files = discover_lineage_macro_files(project_dir);
     let wrappers = detect_wrappers_in_files(&macro_files);
+    let vars = crate::parser::project::project_vars(project_dir);
 
-    process_model_files(&mut gb, files, project_dir, &model_meta, &wrappers, cache)?;
+    process_model_files(
+        &mut gb,
+        files,
+        project_dir,
+        &model_meta,
+        &wrappers,
+        &vars,
+        cache,
+    )?;
     process_simple_nodes(
         &mut gb,
         &files.seed_files,
@@ -697,7 +720,7 @@ fn build_graph_with_cache(
         NodeType::Snapshot,
     );
 
-    process_sql_edges(&mut gb, files, project_dir, &wrappers, cache)?;
+    process_sql_edges(&mut gb, files, project_dir, &wrappers, &vars, cache)?;
     process_python_edges(&mut gb, files)?;
     process_exposures(&mut gb, &exposures);
 
@@ -749,6 +772,70 @@ fn parse_exposure_ref(dep: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lineage_continues_into_installed_packages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let write = |rel: &str, text: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        write("dbt_project.yml", "name: app\n");
+        write(
+            "models/report.sql",
+            "select id from {{ ref('pkg_contacts') }}",
+        );
+        write("dbt_packages/pkg/dbt_project.yml", "name: pkg\n");
+        write(
+            "dbt_packages/pkg/models/pkg_contacts.sql",
+            "select id from {{ source('crm', 'contacts') }}",
+        );
+        write(
+            "dbt_packages/pkg/models/src.yml",
+            "sources:\n  - name: crm\n    tables:\n      - name: contacts\n",
+        );
+        // A package model the project shadows, and a package test that stays out.
+        write("dbt_packages/pkg/models/report.sql", "select 1 as other");
+        write("dbt_packages/pkg/tests/t.sql", "select 1");
+
+        let project = crate::parser::project::DbtProject::load(root).unwrap();
+        let files = crate::parser::discovery::discover_files_with_packages(
+            root,
+            &project.resolve_paths(root),
+        )
+        .unwrap();
+        let graph = build_graph_no_cache(root, &files).unwrap();
+        let node = |id: &str| {
+            graph
+                .node_indices()
+                .map(|i| &graph[i])
+                .find(|n| n.unique_id == id)
+                .cloned()
+        };
+        let pkg = node("model.pkg_contacts").expect("package model in the graph");
+        assert_eq!(pkg.node_type, NodeType::Model);
+        assert!(pkg.is_package());
+        assert!(node("source.crm.contacts").is_some());
+        let report = node("model.report").unwrap();
+        assert!(!report.is_package(), "the project's model wins");
+        assert!(graph
+            .node_indices()
+            .all(|i| graph[i].node_type != NodeType::Phantom));
+        assert!(graph
+            .node_indices()
+            .all(|i| graph[i].node_type != NodeType::Test));
+
+        // Lint and summary leave the package alone.
+        let lint = crate::graph::lint::lint(&graph, &crate::graph::lint::LintConfig::default());
+        assert!(lint
+            .findings
+            .iter()
+            .all(|f| !f.unique_id.contains("pkg_contacts")));
+        let summary = crate::graph::summary::compute_summary(&graph, None);
+        assert_eq!(summary.models, 1);
+    }
     use crate::parser::discovery::DiscoveredFiles;
     use std::fs;
     use std::path::PathBuf;
