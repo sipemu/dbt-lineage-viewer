@@ -68,6 +68,7 @@ fn run(cli: Cli) -> Result<()> {
                 manifest,
                 output,
             } => run_check_manifest_command(project_dir, manifest.as_ref(), output),
+            Command::ColumnLineage { project_dir } => run_column_lineage_command(project_dir),
             Command::Verify {
                 project_dir,
                 manifest,
@@ -827,6 +828,23 @@ fn run_check_manifest_command(
     if report.is_stale {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// Run the hidden `column-lineage` subcommand: all column edges as JSON, from
+/// the same analyzers the PR report uses.
+#[cfg(not(tarpaulin_include))]
+fn run_column_lineage_command(project_dir: &Path) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dag = build_dag(&project_dir, None, false)?;
+    let lineage = merge_column_lineage(
+        parser::ast_column_lineage::resolve_column_lineage_ast_in(&dag, &project_dir),
+        parser::column_lineage::resolve_column_lineage_in(&dag, &project_dir),
+    );
+    serde_json::to_writer(std::io::stdout().lock(), &lineage)?;
+    println!();
     Ok(())
 }
 

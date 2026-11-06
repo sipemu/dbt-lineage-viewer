@@ -294,6 +294,15 @@ pub enum Command {
         output: CheckManifestOutputFormat,
     },
 
+    /// Print the column lineage of every model as JSON (one edge per upstream
+    /// column). Used to measure column-lineage accuracy.
+    #[command(hide = true)]
+    ColumnLineage {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+    },
+
     /// Check how closely SQL-parse lineage matches dbt's own: compares the
     /// dependencies found by parsing with a manifest.json from `dbt parse`.
     /// Exits with code 1 when parsing missed a dependency dbt knows about.

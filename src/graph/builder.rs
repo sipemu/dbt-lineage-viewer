@@ -195,10 +195,32 @@ fn add_source_nodes(
                     .or_else(|| source_def.description.clone()),
                 materialization: None,
                 tags: vec![],
-                columns: vec![],
+                columns: table.columns.iter().map(|c| c.name.clone()).collect(),
             });
         }
     }
+}
+
+/// Column names of a seed: its CSV header.
+fn seed_columns(path: &Path) -> Vec<String> {
+    use std::io::BufRead;
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut header = String::new();
+    if std::io::BufReader::new(file)
+        .read_line(&mut header)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    header
+        .trim_start_matches('\u{feff}')
+        .trim_end()
+        .split(',')
+        .map(|c| c.trim().trim_matches('"').to_string())
+        .filter(|c| !c.is_empty())
+        .collect()
 }
 
 /// Metadata collected from YAML for a model
@@ -207,6 +229,7 @@ struct YamlModelMeta {
     description: Option<String>,
     materialization: Option<String>,
     tags: Vec<String>,
+    columns: Vec<String>,
 }
 
 /// Parse YAML schema files: create source nodes, collect model metadata and exposures
@@ -229,6 +252,7 @@ fn process_yaml_files(
         for model_def in &schema.models {
             let mut meta = YamlModelMeta {
                 description: model_def.description.clone(),
+                columns: model_def.columns.iter().map(|c| c.name.clone()).collect(),
                 ..Default::default()
             };
             // Merge tags from model-level and config-level
@@ -305,7 +329,13 @@ fn process_model_files(
             description: yaml_meta.and_then(|m| m.description.clone()),
             materialization,
             tags,
-            columns: parsed_file.columns.clone(),
+            // Columns read from the SQL; YAML-declared ones when the SQL has
+            // none to read (`select *`, macro-generated column lists).
+            columns: if parsed_file.columns.is_empty() {
+                yaml_meta.map(|m| m.columns.clone()).unwrap_or_default()
+            } else {
+                parsed_file.columns.clone()
+            },
         });
     }
 
@@ -397,6 +427,11 @@ fn process_simple_nodes(
         let unique_id = format!("{}.{}", prefix, name);
         let relative_path = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
 
+        let columns = if node_type == NodeType::Seed {
+            seed_columns(path)
+        } else {
+            vec![]
+        };
         gb.add_node(NodeData {
             unique_id,
             label: name,
@@ -405,7 +440,7 @@ fn process_simple_nodes(
             description: None,
             materialization: None,
             tags: vec![],
-            columns: vec![],
+            columns,
         });
     }
 }

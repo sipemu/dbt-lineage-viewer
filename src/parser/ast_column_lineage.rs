@@ -1,39 +1,49 @@
-//! AST-backed column lineage (#35). Uses `sqlparser` to parse model SQL into
-//! a proper AST and walks the `SELECT` projection + `FROM`/`JOIN` clauses to
-//! emit per-column lineage edges.
+//! AST-backed column lineage (#35). Parses each model's SQL with `sqlparser`
+//! and traces every output column to the upstream model / source / seed
+//! columns it reads.
 //!
-//! Returns the same `ColumnLineage` shape as the regex-based analyzer, so the
-//! existing MCP tools and renderers consume it interchangeably. Compared to
-//! the regex analyzer this handles: qualified column references (`t.col`),
-//! aliased projections (`col AS new_name`), function applications
-//! (`SUM(col) AS total`), CAST expressions, simple CTEs, and JOINs.
+//! Resolution is scope based, like a SQL engine's binder:
+//! - CTEs and subqueries are scopes of their own; a column read from one is
+//!   followed into its definition until it reaches a real relation.
+//! - `select *` / `t.*` pass columns through by name, and expand to concrete
+//!   columns when the relation's columns are known.
+//! - `UNION` combines its branches by position.
+//! - A projection depends on every column its expression reads (functions,
+//!   `CASE`, window `PARTITION BY` / `ORDER BY`); `WHERE`, `JOIN ON` and
+//!   `GROUP BY` are filters, not lineage.
 //!
-//! Falls back gracefully (returns an empty lineage) when sqlparser can't
-//! parse the SQL — the caller can then drop back to the regex analyzer.
+//! Models are analyzed in dependency order, so a model's output columns are
+//! known when a downstream model selects `*` from it. Source and seed columns
+//! come from YAML declarations and CSV headers.
+//!
+//! Jinja is neutralised before parsing: `ref()` / `source()` become relation
+//! placeholders, `dbt_utils.star()` becomes `*`, other `{{ … }}` expressions
+//! become a function of the column names they mention, and `{% if %}` keeps
+//! its first branch. A model whose SQL still does not parse yields no edges;
+//! the regex analyzer covers it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::ControlFlow;
+use std::rc::Rc;
+use std::sync::LazyLock;
 
+use petgraph::stable_graph::NodeIndex;
+use regex::Regex;
 use sqlparser::ast::{
-    Expr, Ident, ObjectName, Query, Select, SelectItem, SetExpr, Statement, TableFactor,
-    TableWithJoins,
+    Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Visit,
+    Visitor,
 };
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::{
+    BigQueryDialect, Dialect, DuckDbDialect, GenericDialect, PostgreSqlDialect, SnowflakeDialect,
+};
 use sqlparser::parser::Parser;
 
-use crate::graph::types::LineageGraph;
+use crate::graph::types::{LineageGraph, NodeType};
 
 use super::column_lineage::{ColumnConfidence, ColumnEdge, ColumnLineage};
 
-/// Resolve column lineage for the entire graph using the SQL AST. Models without
-/// readable SQL are silently skipped (caller can fall back to the regex analyzer).
-/// Relative node file paths are read relative to the current directory; see
-/// [`resolve_column_lineage_ast_in`].
-pub fn resolve_column_lineage_ast(graph: &LineageGraph) -> ColumnLineage {
-    resolve_column_lineage_ast_in(graph, std::path::Path::new(""))
-}
-
-/// Like [`resolve_column_lineage_ast`], reading relative node file paths under
-/// `root` (the dbt project directory).
+/// Resolve column lineage for the entire graph using the SQL AST. Relative
+/// node file paths are read relative to `root`.
 pub fn resolve_column_lineage_ast_in(
     graph: &LineageGraph,
     root: &std::path::Path,
@@ -41,498 +51,1008 @@ pub fn resolve_column_lineage_ast_in(
     resolve_column_lineage_ast_for(graph, root, None)
 }
 
-/// Like [`resolve_column_lineage_ast_in`], analyzing only the nodes in `only`
-/// (edges *into* those nodes); `None` analyzes every node.
+/// Like [`resolve_column_lineage_ast_in`], emitting edges only into the nodes
+/// in `only` (`None`: every node). Upstream models are still analyzed so
+/// their columns are known.
 pub fn resolve_column_lineage_ast_for(
     graph: &LineageGraph,
     root: &std::path::Path,
-    only: Option<&std::collections::HashSet<petgraph::stable_graph::NodeIndex>>,
+    only: Option<&HashSet<NodeIndex>>,
 ) -> ColumnLineage {
-    let mut edges: Vec<ColumnEdge> = Vec::new();
-    let label_to_id: HashMap<String, String> = graph
+    let relations = Relations::new(graph);
+    let mut schema: HashMap<String, Vec<String>> = graph
         .node_indices()
-        .map(|idx| {
-            let n = &graph[idx];
-            (n.label.clone(), n.unique_id.clone())
-        })
+        .map(|i| &graph[i])
+        .filter(|n| !n.columns.is_empty())
+        .map(|n| (n.unique_id.clone(), lower_all(&n.columns)))
         .collect();
 
-    use rayon::prelude::*;
-    let nodes: Vec<_> = graph
-        .node_indices()
-        .filter(|idx| only.is_none_or(|set| set.contains(idx)))
-        .collect();
-    edges.par_extend(nodes.par_iter().flat_map_iter(|&idx| {
+    let order =
+        petgraph::algo::toposort(graph, None).unwrap_or_else(|_| graph.node_indices().collect());
+    let mut edges = Vec::new();
+    for idx in order {
         let node = &graph[idx];
-        node.file_path
+        if !matches!(node.node_type, NodeType::Model | NodeType::Snapshot) {
+            continue;
+        }
+        let Some(sql) = node
+            .file_path
             .as_ref()
-            .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
-            .map(|sql| analyze_sql(&sql, &node.unique_id, &label_to_id))
-            .unwrap_or_default()
-    }));
-
+            .filter(|p| p.extension().is_some_and(|e| e == "sql"))
+            .and_then(|p| std::fs::read_to_string(root.join(p)).ok())
+        else {
+            continue;
+        };
+        let parents: Vec<String> = graph
+            .neighbors_directed(idx, petgraph::Direction::Incoming)
+            .map(|p| graph[p].unique_id.clone())
+            .collect();
+        let declared = lower_all(&node.columns);
+        let Some(model) = analyze_model(&sql, &relations, &schema, &parents, &declared) else {
+            continue;
+        };
+        if let Some(cols) = &model.columns {
+            schema.insert(node.unique_id.clone(), cols.clone());
+        }
+        if only.is_none_or(|set| set.contains(&idx)) {
+            edges.extend(
+                model
+                    .edges
+                    .into_iter()
+                    .map(|e| e.into_edge(&node.unique_id)),
+            );
+        }
+    }
     ColumnLineage { edges }
 }
 
-/// Analyze a single SQL string. Public for direct testing.
+/// Analyze one model's SQL. Public for direct testing: `schema` maps node ids
+/// to known column names, `labels` maps ref names to node ids.
 pub fn analyze_sql(
     sql: &str,
     target_node_id: &str,
-    label_to_id: &HashMap<String, String>,
+    labels: &HashMap<String, String>,
+    schema: &HashMap<String, Vec<String>>,
 ) -> Vec<ColumnEdge> {
-    // Strip Jinja first — sqlparser doesn't speak Jinja. We replace `{{ ref('x') }}`
-    // with `__jinja_x__` so the parser sees a bare table identifier that resolves
-    // back to the right node via label lookup.
-    let cleaned = preprocess_jinja(sql, label_to_id);
-    let dialect = GenericDialect {};
-    let statements = match Parser::parse_sql(&dialect, &cleaned) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
+    let relations = Relations {
+        by_ref: labels.clone(),
+        sources: schema
+            .keys()
+            .filter(|k| k.starts_with("source."))
+            .cloned()
+            .collect(),
     };
-
-    let mut edges: Vec<ColumnEdge> = Vec::new();
-    for stmt in statements {
-        if let Statement::Query(query) = stmt {
-            edges.extend(analyze_query(&query, target_node_id, label_to_id));
-        }
-    }
-    edges
+    analyze_model(sql, &relations, schema, &[], &[])
+        .map(|m| {
+            m.edges
+                .into_iter()
+                .map(|e| e.into_edge(target_node_id))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-/// Replace `{{ ref('name') }}` (and `source('s', 't')`) with synthetic table
-/// identifiers that match how we'd reference the corresponding graph node.
-fn preprocess_jinja(sql: &str, label_to_id: &HashMap<String, String>) -> String {
-    let _ = label_to_id;
-    let ref_re = regex::Regex::new(r#"\{\{\s*ref\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\}\}"#).unwrap();
-    let source_re = regex::Regex::new(
-        r#"\{\{\s*source\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)\s*\}\}"#,
+fn lower_all(cols: &[String]) -> Vec<String> {
+    cols.iter().map(|c| c.to_lowercase()).collect()
+}
+
+/// How ref() / source() names map to graph node ids.
+struct Relations {
+    /// ref name → node id (models, seeds, snapshots).
+    by_ref: HashMap<String, String>,
+    /// Known `source.<source>.<table>` ids.
+    sources: HashSet<String>,
+}
+
+impl Relations {
+    fn new(graph: &LineageGraph) -> Self {
+        let mut by_ref = HashMap::new();
+        let mut sources = HashSet::new();
+        // Models win over seeds and snapshots of the same name, like dbt.
+        let mut nodes: Vec<_> = graph.node_indices().map(|i| &graph[i]).collect();
+        nodes.sort_by_key(|n| match n.node_type {
+            NodeType::Model => 0,
+            NodeType::Seed => 1,
+            NodeType::Snapshot => 2,
+            _ => 3,
+        });
+        for n in nodes {
+            match n.node_type {
+                NodeType::Model | NodeType::Seed | NodeType::Snapshot => {
+                    by_ref
+                        .entry(n.label.clone())
+                        .or_insert_with(|| n.unique_id.clone());
+                }
+                NodeType::Source => {
+                    sources.insert(n.unique_id.clone());
+                }
+                _ => {}
+            }
+        }
+        Relations { by_ref, sources }
+    }
+
+    fn resolve_ref(&self, name: &str) -> String {
+        self.by_ref
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| format!("model.{name}"))
+    }
+}
+
+/// An edge into the model being analyzed.
+struct ModelEdge {
+    source_node: String,
+    source_column: String,
+    target_column: String,
+    confidence: ColumnConfidence,
+}
+
+impl ModelEdge {
+    fn into_edge(self, target: &str) -> ColumnEdge {
+        ColumnEdge {
+            source_node: self.source_node,
+            source_column: self.source_column,
+            target_node: target.to_string(),
+            target_column: self.target_column,
+            confidence: self.confidence,
+        }
+    }
+}
+
+struct ModelResult {
+    /// Output columns, when every `*` could be expanded.
+    columns: Option<Vec<String>>,
+    edges: Vec<ModelEdge>,
+}
+
+// ---------------------------------------------------------------------------
+// Jinja neutralisation
+
+static JINJA_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{#.*?#\}").unwrap());
+static JINJA_TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\{\{.*?\}\}|\{%.*?%\}").unwrap());
+static REF_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"^\{\{-?\s*ref\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*['"]([^'"]+)['"]\s*)?(?:,\s*(?:v|version)\s*=[^)]*)?\)\s*-?\}\}$"#,
     )
-    .unwrap();
-    let mut out = sql.to_string();
-    // ${1} (not $1) so the regex crate doesn't read the trailing underscore as
-    // part of the capture-group identifier.
-    out = ref_re.replace_all(&out, "__ref_${1}__").to_string();
-    out = source_re
-        .replace_all(&out, "__source_${1}_${2}__")
-        .to_string();
-    out
-}
+    .unwrap()
+});
+static SOURCE_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^\{\{-?\s*source\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)\s*-?\}\}$"#)
+        .unwrap()
+});
+static STRING_ARG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"['"]([A-Za-z_][A-Za-z0-9_]*)['"]"#).unwrap());
+static STATEMENT_KEYWORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\{%-?\s*(\w+)").unwrap());
+/// Text ending where a type is expected: `cast(x as ` or `x::`.
+static TYPE_POSITION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(\bas\s*|::\s*)$").unwrap());
 
-fn analyze_query(
-    query: &Query,
-    target_node_id: &str,
-    label_to_id: &HashMap<String, String>,
-) -> Vec<ColumnEdge> {
-    let mut edges: Vec<ColumnEdge> = Vec::new();
+/// String arguments of dbt's date macros (`date_trunc('day', col)`,
+/// `dateadd('month', 1, col)`) that name a date part, not a column.
+const DATE_PARTS: &[&str] = &[
+    "microsecond",
+    "millisecond",
+    "second",
+    "minute",
+    "hour",
+    "day",
+    "dayofweek",
+    "dayofyear",
+    "week",
+    "isoweek",
+    "month",
+    "quarter",
+    "year",
+];
 
-    // Resolve CTE definitions (WITH clause).
-    let mut cte_aliases: HashMap<String, String> = HashMap::new();
-    if let Some(with) = &query.with {
-        for cte in &with.cte_tables {
-            // CTE name → target_node_id; treated as if the CTE materializes within
-            // the same model. We don't emit edges from CTE name to outer query;
-            // we DO resolve `<cte_name>.col` references to come from this CTE.
-            cte_aliases.insert(cte.alias.name.value.clone(), target_node_id.to_string());
+/// Function name standing in for a Jinja expression.
+const JINJA_FN: &str = "__jinja__";
+
+/// Prefix of relation placeholders; the index points into the placeholder list.
+const REL_PREFIX: &str = "__dbtl_rel_";
+
+/// Turn dbt SQL into plain SQL. Returns the SQL and the node id behind each
+/// relation placeholder `__dbtl_rel_<i>__`.
+fn neutralize_jinja(sql: &str, relations: &Relations) -> (String, Vec<String>) {
+    let sql = JINJA_COMMENT.replace_all(sql, "");
+    let mut out = String::with_capacity(sql.len());
+    let mut placeholders: Vec<String> = Vec::new();
+    // One entry per open `{% if %}` / `{% set %}…{% endset %}`: is its
+    // current branch kept?
+    let mut frames: Vec<bool> = Vec::new();
+    let mut last = 0;
+    for m in JINJA_TAG.find_iter(&sql) {
+        let keeping = frames.iter().all(|&k| k);
+        if keeping {
+            out.push_str(&sql[last..m.start()]);
         }
-    }
-
-    if let SetExpr::Select(select) = query.body.as_ref() {
-        edges.extend(analyze_select(
-            select,
-            target_node_id,
-            label_to_id,
-            &cte_aliases,
-        ));
-    }
-    edges
-}
-
-fn analyze_select(
-    select: &Select,
-    target_node_id: &str,
-    label_to_id: &HashMap<String, String>,
-    cte_aliases: &HashMap<String, String>,
-) -> Vec<ColumnEdge> {
-    let from_aliases = build_from_aliases(&select.from, label_to_id, cte_aliases);
-
-    let mut edges: Vec<ColumnEdge> = Vec::new();
-    for item in &select.projection {
-        match item {
-            SelectItem::UnnamedExpr(expr) => {
-                if let Some(edge) = expr_to_edge(expr, None, target_node_id, &from_aliases) {
-                    edges.push(edge);
+        last = m.end();
+        let tag = m.as_str();
+        if tag.starts_with("{%") {
+            let keyword = STATEMENT_KEYWORD
+                .captures(tag)
+                .map(|c| c[1].to_string())
+                .unwrap_or_default();
+            match keyword.as_str() {
+                "if" => frames.push(true),
+                "elif" | "else" => {
+                    if let Some(top) = frames.last_mut() {
+                        *top = false;
+                    }
                 }
-            }
-            SelectItem::ExprWithAlias { expr, alias } => {
-                if let Some(edge) = expr_to_edge(
-                    expr,
-                    Some(alias.value.as_str()),
-                    target_node_id,
-                    &from_aliases,
-                ) {
-                    edges.push(edge);
+                "endif" | "endset" | "endcall" => {
+                    frames.pop();
                 }
+                // `{% set x %}…{% endset %}` captures text; `{% set x = … %}` doesn't.
+                "set" if !tag.contains('=') => frames.push(false),
+                "call" => frames.push(false),
+                _ => {}
             }
-            // Wildcards / qualified wildcards: emit no per-column edge here. The
-            // regex analyzer's existing "Star" handling covers the case from its
-            // own pass; we leave this hole intentionally.
-            SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {}
+            continue;
         }
+        if !keeping {
+            continue;
+        }
+        let replacement = if let Some(c) = REF_CALL.captures(tag) {
+            let name = c.get(2).unwrap_or_else(|| c.get(1).unwrap()).as_str();
+            placeholders.push(relations.resolve_ref(name));
+            format!("{REL_PREFIX}{}__", placeholders.len() - 1)
+        } else if let Some(c) = SOURCE_CALL.captures(tag) {
+            placeholders.push(format!("source.{}.{}", &c[1], &c[2]));
+            format!("{REL_PREFIX}{}__", placeholders.len() - 1)
+        } else if tag.contains("star(") {
+            "*".to_string()
+        } else if tag.contains("config(") {
+            String::new()
+        } else if TYPE_POSITION.is_match(&out) {
+            // `cast(x as {{ dbt.type_string() }})`: a type name.
+            JINJA_FN.to_string()
+        } else {
+            // Any other expression: a function of the column names it mentions.
+            let args: Vec<&str> = STRING_ARG
+                .captures_iter(tag)
+                .map(|c| c.get(1).unwrap().as_str())
+                .filter(|a| !DATE_PARTS.contains(&a.to_lowercase().as_str()))
+                .collect();
+            format!("{JINJA_FN}({})", args.join(", "))
+        };
+        out.push_str(&replacement);
     }
-    edges
+    if frames.iter().all(|&k| k) {
+        out.push_str(&sql[last..]);
+    }
+    let _ = &relations.sources;
+    (out, placeholders)
 }
 
-/// Map of `alias → source_node_id`. When a table has no alias, its name is used.
-fn build_from_aliases(
-    from: &[TableWithJoins],
-    label_to_id: &HashMap<String, String>,
-    cte_aliases: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut out: HashMap<String, String> = HashMap::new();
-    for twj in from {
-        collect_factor(&twj.relation, &mut out, label_to_id, cte_aliases);
-        for join in &twj.joins {
-            collect_factor(&join.relation, &mut out, label_to_id, cte_aliases);
-        }
-    }
-    out
+// ---------------------------------------------------------------------------
+// Scopes
+
+#[derive(Clone)]
+enum Rel {
+    /// A graph node.
+    Base(String),
+    /// A table dbt-lineage doesn't know (hard-coded name): columns resolve
+    /// but yield no edges.
+    Unknown,
+    /// A CTE or subquery.
+    Derived(Rc<Scope>),
 }
 
-fn collect_factor(
-    factor: &TableFactor,
-    out: &mut HashMap<String, String>,
-    label_to_id: &HashMap<String, String>,
-    cte_aliases: &HashMap<String, String>,
-) {
-    if let TableFactor::Table { name, alias, .. } = factor {
-        let table_name = object_name_to_string(name);
-        let resolved = resolve_table_to_node(&table_name, label_to_id, cte_aliases)
-            .unwrap_or_else(|| format!("model.{}", table_name));
-        let alias_name = alias
-            .as_ref()
-            .map(|a| a.name.value.clone())
-            .unwrap_or_else(|| table_name.clone());
-        out.insert(alias_name, resolved.clone());
-        // Also index by the bare table name so unqualified-but-implied references resolve.
-        out.entry(table_name).or_insert(resolved);
-    }
+#[derive(Clone)]
+struct Input {
+    rel: Rel,
+    col: String,
 }
 
-fn object_name_to_string(name: &ObjectName) -> String {
-    name.0
-        .iter()
-        .map(|p| p.value.clone())
-        .collect::<Vec<_>>()
-        .join(".")
+#[derive(Default)]
+struct Scope {
+    /// Named output columns with what each reads, in order.
+    cols: Vec<(String, Vec<Input>, bool)>,
+    /// Relations selected with `*`, passing their columns through by name.
+    stars: Vec<Rel>,
 }
 
-/// Translate `__ref_foo__` and `__source_raw_orders__` (our Jinja placeholders)
-/// or a raw table name back to the matching graph node's unique_id.
-fn resolve_table_to_node(
-    name: &str,
-    label_to_id: &HashMap<String, String>,
-    cte_aliases: &HashMap<String, String>,
-) -> Option<String> {
-    if let Some(stripped) = name
-        .strip_prefix("__ref_")
-        .and_then(|s| s.strip_suffix("__"))
-    {
-        return label_to_id.get(stripped).cloned();
-    }
-    if let Some(stripped) = name
-        .strip_prefix("__source_")
-        .and_then(|s| s.strip_suffix("__"))
-    {
-        // source_<source>_<table>
-        let parts: Vec<&str> = stripped.splitn(2, '_').collect();
-        if parts.len() == 2 {
-            return Some(format!("source.{}.{}", parts[0], parts[1]));
-        }
-    }
-    if let Some(node_id) = cte_aliases.get(name) {
-        return Some(node_id.clone());
-    }
-    label_to_id.get(name).cloned()
-}
-
-/// Convert a projection expression into a ColumnEdge (or None when we can't
-/// derive a source column — e.g. a literal). The `alias` is the projection's
-/// AS-name, defaulted to the column name itself when omitted.
-fn expr_to_edge(
-    expr: &Expr,
-    alias: Option<&str>,
-    target_node_id: &str,
-    from_aliases: &HashMap<String, String>,
-) -> Option<ColumnEdge> {
-    match expr {
-        Expr::Identifier(ident) => {
-            // Bare column. Source = the single FROM table (when there's one).
-            let target_col = alias.unwrap_or(ident.value.as_str()).to_string();
-            let source_node = resolve_single_source(from_aliases)?;
-            Some(ColumnEdge {
-                source_node,
-                source_column: ident.value.clone(),
-                target_node: target_node_id.to_string(),
-                target_column: target_col,
-                confidence: if alias.is_some() && alias != Some(ident.value.as_str()) {
-                    ColumnConfidence::Aliased
-                } else {
-                    ColumnConfidence::Direct
-                },
-            })
-        }
-        Expr::CompoundIdentifier(parts) => {
-            // `t.col` — qualified. Source = the table aliased as `t`.
-            if parts.len() < 2 {
-                return None;
-            }
-            let table_alias = parts[parts.len() - 2].value.as_str();
-            let col_name = parts[parts.len() - 1].value.clone();
-            let source_node = from_aliases.get(table_alias)?.clone();
-            let target_col = alias.unwrap_or(&col_name).to_string();
-            Some(ColumnEdge {
-                source_node,
-                source_column: col_name.clone(),
-                target_node: target_node_id.to_string(),
-                target_column: target_col.clone(),
-                confidence: if target_col == col_name {
-                    ColumnConfidence::Direct
-                } else {
-                    ColumnConfidence::Aliased
-                },
-            })
-        }
-        Expr::Function(_) | Expr::Case { .. } | Expr::Cast { .. } | Expr::BinaryOp { .. } => {
-            // Derived expression — pick the first column reference inside it as
-            // the "source." Best-effort; the analyzer's job is to mark this as
-            // Derived so downstream consumers know not to trust it as a 1:1.
-            let target_col = alias?.to_string();
-            let source_ident = first_identifier_in(expr)?;
-            let source_node = match &source_ident {
-                ColumnRef::Bare(_) => resolve_single_source(from_aliases)?,
-                ColumnRef::Qualified(alias, _) => from_aliases.get(alias)?.clone(),
-            };
-            let source_column = match source_ident {
-                ColumnRef::Bare(s) => s,
-                ColumnRef::Qualified(_, s) => s,
-            };
-            Some(ColumnEdge {
-                source_node,
-                source_column,
-                target_node: target_node_id.to_string(),
-                target_column: target_col,
-                confidence: ColumnConfidence::Derived,
-            })
-        }
-        _ => None,
-    }
-}
-
-enum ColumnRef {
-    Bare(String),
-    Qualified(String, String),
-}
-
-/// Walk an expression in pre-order, returning the first column reference found.
-/// Used as a best-effort source attribution for derived columns.
-fn first_identifier_in(expr: &Expr) -> Option<ColumnRef> {
-    match expr {
-        Expr::Identifier(i) => Some(ColumnRef::Bare(i.value.clone())),
-        Expr::CompoundIdentifier(parts) if parts.len() >= 2 => Some(ColumnRef::Qualified(
-            parts[parts.len() - 2].value.clone(),
-            parts[parts.len() - 1].value.clone(),
-        )),
-        Expr::BinaryOp { left, right, .. } => {
-            first_identifier_in(left).or_else(|| first_identifier_in(right))
-        }
-        Expr::UnaryOp { expr, .. } | Expr::Cast { expr, .. } | Expr::Nested(expr) => {
-            first_identifier_in(expr)
-        }
-        Expr::Function(f) => {
-            use sqlparser::ast::{FunctionArg, FunctionArgExpr, FunctionArguments};
-            let arg_list = match &f.args {
-                FunctionArguments::List(l) => &l.args,
-                _ => return None,
-            };
-            arg_list.iter().find_map(|a| {
-                let arg = match a {
-                    FunctionArg::Named { arg, .. } | FunctionArg::Unnamed(arg) => arg,
-                };
-                match arg {
-                    FunctionArgExpr::Expr(e) => first_identifier_in(e),
-                    _ => None,
-                }
-            })
-        }
-        Expr::Case {
-            conditions,
-            results,
-            else_result,
-            ..
-        } => conditions
+impl Scope {
+    fn lookup(&self, col: &str) -> Option<&Vec<Input>> {
+        self.cols
             .iter()
-            .chain(results.iter())
-            .chain(else_result.iter().map(|e| e.as_ref()))
-            .find_map(first_identifier_in),
+            .find(|(c, _, _)| c == col)
+            .map(|(_, i, _)| i)
+    }
+}
+
+struct Binder<'a> {
+    schema: &'a HashMap<String, Vec<String>>,
+    placeholders: &'a [String],
+}
+
+impl Binder<'_> {
+    /// Known columns of a relation; `None` when unknown.
+    fn columns(&self, rel: &Rel, depth: usize) -> Option<Vec<String>> {
+        if depth > 32 {
+            return None;
+        }
+        match rel {
+            Rel::Base(id) => self.schema.get(id).cloned(),
+            Rel::Unknown => None,
+            Rel::Derived(scope) => {
+                let mut cols: Vec<String> = scope.cols.iter().map(|(c, _, _)| c.clone()).collect();
+                for star in &scope.stars {
+                    for c in self.columns(star, depth + 1)? {
+                        if !cols.contains(&c) {
+                            cols.push(c);
+                        }
+                    }
+                }
+                Some(cols)
+            }
+        }
+    }
+
+    /// Could `rel` have column `col`? Unknown relations might.
+    fn may_have(&self, rel: &Rel, col: &str) -> bool {
+        self.columns(rel, 0)
+            .is_none_or(|cols| cols.iter().any(|c| c == col))
+    }
+
+    /// Follow a column to the graph-node columns it comes from.
+    fn flatten(&self, rel: &Rel, col: &str, out: &mut BTreeSet<(String, String)>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match rel {
+            Rel::Base(id) => {
+                out.insert((id.clone(), col.to_string()));
+            }
+            Rel::Unknown => {}
+            Rel::Derived(scope) => {
+                if let Some(inputs) = scope.lookup(col) {
+                    for i in inputs {
+                        self.flatten(&i.rel, &i.col, out, depth + 1);
+                    }
+                    return;
+                }
+                let candidates: Vec<&Rel> = scope
+                    .stars
+                    .iter()
+                    .filter(|s| scope.stars.len() == 1 || self.may_have(s, col))
+                    .collect();
+                for s in candidates {
+                    self.flatten(s, col, out, depth + 1);
+                }
+            }
+        }
+    }
+
+    /// Graph nodes behind a relation's unexpanded `*`.
+    fn star_bases(&self, rel: &Rel, out: &mut BTreeSet<String>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match rel {
+            Rel::Base(id) => {
+                out.insert(id.clone());
+            }
+            Rel::Unknown => {}
+            Rel::Derived(scope) => {
+                for s in &scope.stars {
+                    self.star_bases(s, out, depth + 1);
+                }
+            }
+        }
+    }
+
+    fn query(&self, q: &Query, ctes: &HashMap<String, Rel>) -> Scope {
+        let mut ctes = ctes.clone();
+        if let Some(with) = &q.with {
+            for cte in &with.cte_tables {
+                let mut scope = self.query(&cte.query, &ctes);
+                // `with x (a, b) as (...)` renames the outputs by position.
+                for (i, alias) in cte.alias.columns.iter().enumerate() {
+                    if let Some(col) = scope.cols.get_mut(i) {
+                        col.0 = alias.value.to_lowercase();
+                    }
+                }
+                ctes.insert(
+                    cte.alias.name.value.to_lowercase(),
+                    Rel::Derived(Rc::new(scope)),
+                );
+            }
+        }
+        self.set_expr(&q.body, &ctes)
+    }
+
+    fn set_expr(&self, body: &SetExpr, ctes: &HashMap<String, Rel>) -> Scope {
+        match body {
+            SetExpr::Select(s) => self.select(s, ctes),
+            SetExpr::Query(q) => self.query(q, ctes),
+            SetExpr::SetOperation { left, right, .. } => {
+                let mut l = self.set_expr(left, ctes);
+                let r = self.set_expr(right, ctes);
+                // Branches line up by position; the first branch names them.
+                for (i, (_, inputs, bare)) in l.cols.iter_mut().enumerate() {
+                    if let Some((_, r_inputs, r_bare)) = r.cols.get(i) {
+                        inputs.extend(r_inputs.iter().cloned());
+                        *bare &= *r_bare;
+                    }
+                }
+                l.stars.extend(r.stars);
+                l
+            }
+            _ => Scope::default(),
+        }
+    }
+
+    fn select(&self, s: &Select, ctes: &HashMap<String, Rel>) -> Scope {
+        let mut rels: Vec<(String, Rel)> = Vec::new();
+        for twj in &s.from {
+            self.table_with_joins(twj, ctes, &mut rels);
+        }
+        let mut scope = Scope::default();
+        for item in &s.projection {
+            match item {
+                // `select {{ fill_staging_columns(...) }} from base`: a macro
+                // that expands to a column list passes the FROM columns through.
+                SelectItem::UnnamedExpr(Expr::Function(f)) if is_jinja_fn(&f.name) => {
+                    scope.stars.extend(rels.iter().map(|(_, r)| r.clone()));
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    if let Some(name) = expr_name(expr) {
+                        let inputs = self.inputs(expr, &rels);
+                        scope.cols.push((name, inputs, true));
+                    }
+                }
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    let inputs = self.inputs(expr, &rels);
+                    let bare = matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_));
+                    scope.cols.push((alias.value.to_lowercase(), inputs, bare));
+                }
+                SelectItem::Wildcard(_) => scope.stars.extend(rels.iter().map(|(_, r)| r.clone())),
+                SelectItem::QualifiedWildcard(name, _) => {
+                    let alias = name.0.last().map(|i| i.value.to_lowercase());
+                    if let Some((_, rel)) = rels.iter().find(|(a, _)| Some(a) == alias.as_ref()) {
+                        scope.stars.push(rel.clone());
+                    }
+                }
+            }
+        }
+        scope
+    }
+
+    fn table_with_joins(
+        &self,
+        twj: &TableWithJoins,
+        ctes: &HashMap<String, Rel>,
+        rels: &mut Vec<(String, Rel)>,
+    ) {
+        self.table_factor(&twj.relation, ctes, rels);
+        for join in &twj.joins {
+            self.table_factor(&join.relation, ctes, rels);
+        }
+    }
+
+    fn table_factor(
+        &self,
+        factor: &TableFactor,
+        ctes: &HashMap<String, Rel>,
+        rels: &mut Vec<(String, Rel)>,
+    ) {
+        match factor {
+            TableFactor::Table { name, alias, .. } => {
+                let last = name
+                    .0
+                    .last()
+                    .map(|i| i.value.to_lowercase())
+                    .unwrap_or_default();
+                let rel = if name.0.len() == 1 && ctes.contains_key(&last) {
+                    ctes[&last].clone()
+                } else if let Some(i) = last
+                    .strip_prefix(REL_PREFIX)
+                    .and_then(|s| s.strip_suffix("__"))
+                    .and_then(|s| s.parse::<usize>().ok())
+                {
+                    self.placeholders
+                        .get(i)
+                        .map(|id| Rel::Base(id.clone()))
+                        .unwrap_or(Rel::Unknown)
+                } else {
+                    Rel::Unknown
+                };
+                let alias = alias
+                    .as_ref()
+                    .map(|a| a.name.value.to_lowercase())
+                    .unwrap_or(last);
+                rels.push((alias, rel));
+            }
+            TableFactor::Derived {
+                subquery, alias, ..
+            } => {
+                let scope = self.query(subquery, ctes);
+                let alias = alias
+                    .as_ref()
+                    .map(|a| a.name.value.to_lowercase())
+                    .unwrap_or_default();
+                rels.push((alias, Rel::Derived(Rc::new(scope))));
+            }
+            TableFactor::NestedJoin {
+                table_with_joins, ..
+            } => self.table_with_joins(table_with_joins, ctes, rels),
+            _ => {}
+        }
+    }
+
+    /// The columns an expression reads, bound to the FROM relations.
+    fn inputs(&self, expr: &Expr, rels: &[(String, Rel)]) -> Vec<Input> {
+        let mut refs = ColumnRefs::default();
+        let _ = expr.visit(&mut refs);
+        let mut out = Vec::new();
+        for (qualifier, col) in refs.found {
+            let rel = match qualifier {
+                Some(q) => rels.iter().find(|(a, _)| *a == q).map(|(_, r)| r.clone()),
+                None => self.bind_unqualified(&col, rels),
+            };
+            if let Some(rel) = rel {
+                out.push(Input { rel, col });
+            }
+        }
+        out
+    }
+
+    fn bind_unqualified(&self, col: &str, rels: &[(String, Rel)]) -> Option<Rel> {
+        if rels.len() == 1 {
+            // Bound unless the relation's columns are known and lack it (a
+            // macro argument such as the 'day' in date_trunc('day', col)).
+            return self.may_have(&rels[0].1, col).then(|| rels[0].1.clone());
+        }
+        let known: Vec<&Rel> = rels
+            .iter()
+            .filter(|(_, r)| {
+                self.columns(r, 0)
+                    .is_some_and(|cols| cols.iter().any(|c| c == col))
+            })
+            .map(|(_, r)| r)
+            .collect();
+        if known.len() == 1 {
+            return Some(known[0].clone());
+        }
+        let unknown: Vec<&Rel> = rels
+            .iter()
+            .filter(|(_, r)| self.columns(r, 0).is_none())
+            .map(|(_, r)| r)
+            .collect();
+        (known.is_empty() && unknown.len() == 1).then(|| unknown[0].clone())
+    }
+}
+
+fn is_jinja_fn(name: &sqlparser::ast::ObjectName) -> bool {
+    name.0.len() == 1 && name.0[0].value == JINJA_FN
+}
+
+/// Output name of an un-aliased projection: the column it reads.
+fn expr_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Identifier(i) => Some(i.value.to_lowercase()),
+        Expr::CompoundIdentifier(parts) => parts.last().map(|i| i.value.to_lowercase()),
+        Expr::Nested(e) => expr_name(e),
         _ => None,
     }
 }
 
-fn resolve_single_source(from_aliases: &HashMap<String, String>) -> Option<String> {
-    let unique: std::collections::HashSet<&String> = from_aliases.values().collect();
-    if unique.len() == 1 {
-        unique.into_iter().next().cloned()
-    } else {
-        None
+/// Words that parse as identifiers but are not columns.
+const NOT_COLUMNS: &[&str] = &[
+    "current_date",
+    "current_timestamp",
+    "current_time",
+    "true",
+    "false",
+    "null",
+];
+
+/// Column references in an expression, outside nested subqueries.
+#[derive(Default)]
+struct ColumnRefs {
+    found: Vec<(Option<String>, String)>,
+    subquery_depth: usize,
+}
+
+impl Visitor for ColumnRefs {
+    type Break = ();
+
+    fn pre_visit_query(&mut self, _: &Query) -> ControlFlow<()> {
+        self.subquery_depth += 1;
+        ControlFlow::Continue(())
+    }
+
+    fn post_visit_query(&mut self, _: &Query) -> ControlFlow<()> {
+        self.subquery_depth -= 1;
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()> {
+        if self.subquery_depth > 0 {
+            return ControlFlow::Continue(());
+        }
+        match expr {
+            Expr::Identifier(i) => {
+                let col = i.value.to_lowercase();
+                if !NOT_COLUMNS.contains(&col.as_str()) {
+                    self.found.push((None, col));
+                }
+            }
+            Expr::CompoundIdentifier(parts) if parts.len() >= 2 => {
+                let n = parts.len();
+                self.found.push((
+                    Some(parts[n - 2].value.to_lowercase()),
+                    parts[n - 1].value.to_lowercase(),
+                ));
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
     }
 }
 
-// Re-export the convenience trait for tests that want to write select-only SQL.
-#[allow(dead_code)]
-fn _silence_unused(_i: &Ident) {}
+fn parse(sql: &str) -> Option<Query> {
+    let dialects: [&dyn Dialect; 5] = [
+        &GenericDialect {},
+        &SnowflakeDialect {},
+        &BigQueryDialect {},
+        &DuckDbDialect {},
+        &PostgreSqlDialect {},
+    ];
+    for dialect in dialects {
+        if let Ok(statements) = Parser::parse_sql(dialect, sql) {
+            for stmt in statements {
+                if let Statement::Query(q) = stmt {
+                    return Some(*q);
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
+static ADJACENT_JINJA: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(__jinja__\([^()]*\))(\s+)(__jinja__\(|[A-Za-z_])").unwrap());
+static COMMA_BEFORE_FROM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i),(\s*)\bfrom\b").unwrap());
+
+/// Macros that each expand to part of a column list sit next to each other
+/// without commas (`select {{ a() }} {{ b() }} from t`): separate them.
+fn separate_jinja_items(sql: &str) -> String {
+    let mut out = sql.to_string();
+    loop {
+        let next = ADJACENT_JINJA.replace_all(&out, "$1,$2$3").to_string();
+        if next == out {
+            break;
+        }
+        out = next;
+    }
+    COMMA_BEFORE_FROM.replace_all(&out, "$1 from").to_string()
+}
+
+fn analyze_model(
+    sql: &str,
+    relations: &Relations,
+    schema: &HashMap<String, Vec<String>>,
+    parents: &[String],
+    declared: &[String],
+) -> Option<ModelResult> {
+    let (mut cleaned, mut placeholders) = neutralize_jinja(sql, relations);
+    // A model that is a single macro call reading one relation
+    // (`{{ union_connections(...) }}`) passes that relation through.
+    let whole_macro = cleaned.trim().strip_prefix(JINJA_FN).is_some_and(|rest| {
+        rest.starts_with('(') && rest.ends_with(')') && rest.matches('(').count() == 1
+    });
+    if whole_macro && parents.len() == 1 {
+        placeholders = vec![parents[0].clone()];
+        cleaned = format!("select * from {REL_PREFIX}0__");
+    }
+    let query = parse(&cleaned).or_else(|| parse(&separate_jinja_items(&cleaned)))?;
+    let binder = Binder {
+        schema,
+        placeholders: &placeholders,
+    };
+    let scope = binder.query(&query, &HashMap::new());
+
+    let mut edges = Vec::new();
+    let mut columns: Vec<String> = Vec::new();
+    for (name, inputs, bare) in &scope.cols {
+        columns.push(name.clone());
+        let mut sources = BTreeSet::new();
+        for i in inputs {
+            binder.flatten(&i.rel, &i.col, &mut sources, 0);
+        }
+        for (node, col) in sources {
+            let confidence = match (bare, &col == name) {
+                (true, true) => ColumnConfidence::Direct,
+                (true, false) => ColumnConfidence::Aliased,
+                _ => ColumnConfidence::Derived,
+            };
+            edges.push(ModelEdge {
+                source_node: node,
+                source_column: col,
+                target_column: name.clone(),
+                confidence,
+            });
+        }
+    }
+
+    // `*`: expand by name when the relation's columns are known, otherwise
+    // record a whole-relation edge.
+    let mut complete = true;
+    let unexpanded = scope
+        .stars
+        .iter()
+        .filter(|s| binder.columns(s, 0).is_none())
+        .count();
+    for star in &scope.stars {
+        match binder.columns(star, 0) {
+            Some(cols) => {
+                for col in cols {
+                    if columns.contains(&col) {
+                        continue;
+                    }
+                    let mut sources = BTreeSet::new();
+                    binder.flatten(star, &col, &mut sources, 0);
+                    for (node, src_col) in sources {
+                        edges.push(ModelEdge {
+                            source_node: node,
+                            confidence: if src_col == col {
+                                ColumnConfidence::Direct
+                            } else {
+                                ColumnConfidence::Aliased
+                            },
+                            source_column: src_col,
+                            target_column: col.clone(),
+                        });
+                    }
+                    columns.push(col);
+                }
+            }
+            None if unexpanded == 1 && !declared.is_empty() => {
+                // The model's declared columns name what the `*` yields.
+                for col in declared {
+                    if columns.contains(col) {
+                        continue;
+                    }
+                    let mut sources = BTreeSet::new();
+                    binder.flatten(star, col, &mut sources, 0);
+                    for (node, src_col) in sources {
+                        edges.push(ModelEdge {
+                            source_node: node,
+                            confidence: ColumnConfidence::Direct,
+                            source_column: src_col,
+                            target_column: col.clone(),
+                        });
+                    }
+                    columns.push(col.clone());
+                }
+            }
+            None => {
+                complete = false;
+                let mut bases = BTreeSet::new();
+                binder.star_bases(star, &mut bases, 0);
+                for node in bases {
+                    edges.push(ModelEdge {
+                        source_node: node,
+                        source_column: "*".into(),
+                        target_column: "*".into(),
+                        confidence: ColumnConfidence::Star,
+                    });
+                }
+            }
+        }
+    }
+    Some(ModelResult {
+        columns: complete.then_some(columns),
+        edges,
+    })
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::types::*;
 
-    fn make_node(unique_id: &str, label: &str, nt: NodeType) -> NodeData {
-        NodeData {
-            unique_id: unique_id.into(),
-            label: label.into(),
-            node_type: nt,
-            file_path: None,
-            description: None,
-            materialization: None,
-            tags: vec![],
-            columns: vec![],
-        }
-    }
-
-    fn label_map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs
+    fn labels() -> HashMap<String, String> {
+        ["stg_orders", "order_items", "stg_customers", "a", "b"]
             .iter()
-            .map(|(l, id)| (l.to_string(), id.to_string()))
+            .map(|l| (l.to_string(), format!("model.{l}")))
             .collect()
     }
 
-    #[test]
-    fn test_bare_column_direct() {
-        let sql = "SELECT order_id FROM stg_orders";
-        let map = label_map(&[("stg_orders", "model.stg_orders")]);
-        let edges = analyze_sql(sql, "model.orders", &map);
-        assert_eq!(edges.len(), 1);
-        let e = &edges[0];
-        assert_eq!(e.source_node, "model.stg_orders");
-        assert_eq!(e.source_column, "order_id");
-        assert_eq!(e.target_column, "order_id");
-        assert_eq!(e.confidence, ColumnConfidence::Direct);
-    }
-
-    #[test]
-    fn test_aliased_column() {
-        let sql = "SELECT order_id AS id FROM stg_orders";
-        let map = label_map(&[("stg_orders", "model.stg_orders")]);
-        let edges = analyze_sql(sql, "model.orders", &map);
-        assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].source_column, "order_id");
-        assert_eq!(edges[0].target_column, "id");
-        assert_eq!(edges[0].confidence, ColumnConfidence::Aliased);
-    }
-
-    #[test]
-    fn test_qualified_join() {
-        let sql = "SELECT o.order_id, c.email FROM stg_orders o JOIN stg_customers c ON o.customer_id = c.customer_id";
-        let map = label_map(&[
-            ("stg_orders", "model.stg_orders"),
-            ("stg_customers", "model.stg_customers"),
-        ]);
-        let edges = analyze_sql(sql, "model.orders", &map);
-        assert_eq!(edges.len(), 2);
-        let order_edge = edges
+    fn edges(sql: &str, schema: &[(&str, &[&str])]) -> Vec<(String, String, String)> {
+        let schema: HashMap<String, Vec<String>> = schema
             .iter()
-            .find(|e| e.target_column == "order_id")
-            .unwrap();
-        assert_eq!(order_edge.source_node, "model.stg_orders");
-        let email_edge = edges.iter().find(|e| e.target_column == "email").unwrap();
-        assert_eq!(email_edge.source_node, "model.stg_customers");
+            .map(|(id, cols)| (id.to_string(), cols.iter().map(|c| c.to_string()).collect()))
+            .collect();
+        let mut out: Vec<_> = analyze_sql(sql, "model.t", &labels(), &schema)
+            .into_iter()
+            .map(|e| {
+                (
+                    format!("{}.{}", e.source_node, e.source_column),
+                    e.target_column,
+                    e.confidence.label().to_string(),
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn pairs(sql: &str, schema: &[(&str, &[&str])]) -> Vec<(String, String)> {
+        edges(sql, schema)
+            .into_iter()
+            .map(|(s, t, _)| (s, t))
+            .collect()
+    }
+
+    fn p(s: &str, t: &str) -> (String, String) {
+        (s.to_string(), t.to_string())
     }
 
     #[test]
-    fn test_aggregation_marks_derived() {
-        let sql = "SELECT SUM(amount) AS total FROM stg_payments";
-        let map = label_map(&[("stg_payments", "model.stg_payments")]);
-        let edges = analyze_sql(sql, "model.orders", &map);
-        assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].source_column, "amount");
-        assert_eq!(edges[0].target_column, "total");
-        assert_eq!(edges[0].confidence, ColumnConfidence::Derived);
-    }
-
-    #[test]
-    fn test_jinja_ref_resolved() {
-        let sql = "SELECT order_id FROM {{ ref('stg_orders') }}";
-        let map = label_map(&[("stg_orders", "model.stg_orders")]);
-        let edges = analyze_sql(sql, "model.orders", &map);
-        assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].source_node, "model.stg_orders");
-    }
-
-    #[test]
-    fn test_jinja_source_resolved() {
-        let sql = "SELECT order_id FROM {{ source('raw', 'orders') }}";
-        let map = HashMap::new();
-        let edges = analyze_sql(sql, "model.stg_orders", &map);
-        assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].source_node, "source.raw.orders");
-    }
-
-    #[test]
-    fn test_unparseable_sql_returns_empty() {
-        let sql = "this is not valid sql";
-        let edges = analyze_sql(sql, "model.x", &HashMap::new());
-        assert!(edges.is_empty());
-    }
-
-    #[test]
-    fn test_resolve_column_lineage_ast_full_graph() {
-        // End-to-end: build a graph with file_paths pointing at real temp SQL,
-        // call the top-level analyzer, and confirm it emits real edges.
-        use std::io::Write;
-        let tmp = tempfile::tempdir().unwrap();
-        let stg_path = tmp.path().join("stg_orders.sql");
-        let mart_path = tmp.path().join("orders.sql");
-        writeln!(
-            std::fs::File::create(&stg_path).unwrap(),
-            "SELECT id FROM raw"
-        )
-        .unwrap();
-        writeln!(
-            std::fs::File::create(&mart_path).unwrap(),
-            "SELECT id AS order_id FROM stg_orders"
-        )
-        .unwrap();
-        let mut g = LineageGraph::new();
-        g.add_node(NodeData {
-            file_path: Some(stg_path),
-            ..make_node("model.stg_orders", "stg_orders", NodeType::Model)
-        });
-        g.add_node(NodeData {
-            file_path: Some(mart_path),
-            ..make_node("model.orders", "orders", NodeType::Model)
-        });
-
-        let lineage = resolve_column_lineage_ast(&g);
-        // Expect at least the order_id edge from stg_orders to orders.
-        assert!(
-            lineage
-                .edges
-                .iter()
-                .any(|e| e.source_node == "model.stg_orders"
-                    && e.target_node == "model.orders"
-                    && e.target_column == "order_id"),
-            "got: {:?}",
-            lineage.edges
+    fn direct_and_aliased_columns() {
+        let e = edges(
+            "select order_id, customer_id as cust from {{ ref('stg_orders') }}",
+            &[],
         );
+        assert_eq!(
+            e,
+            vec![
+                (
+                    "model.stg_orders.customer_id".into(),
+                    "cust".into(),
+                    "Aliased".into()
+                ),
+                (
+                    "model.stg_orders.order_id".into(),
+                    "order_id".into(),
+                    "Direct".into()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn traces_through_ctes_and_aggregates() {
+        // jaffle-shop's orders.sql shape.
+        let sql = "
+            with order_items as (select * from {{ ref('order_items') }}),
+            summary as (
+                select order_id, sum(supply_cost) as order_cost
+                from order_items group by 1
+            )
+            select summary.order_cost from summary";
+        assert_eq!(
+            pairs(sql, &[]),
+            vec![p("model.order_items.supply_cost", "order_cost")]
+        );
+    }
+
+    #[test]
+    fn join_resolves_qualified_and_known_columns() {
+        let sql = "
+            select o.order_id, c.name, amount
+            from {{ ref('stg_orders') }} o
+            join {{ ref('stg_customers') }} c on o.customer_id = c.id";
+        let schema: &[(&str, &[&str])] = &[
+            ("model.stg_orders", &["order_id", "customer_id", "amount"]),
+            ("model.stg_customers", &["id", "name"]),
+        ];
+        assert_eq!(
+            pairs(sql, schema),
+            vec![
+                p("model.stg_customers.name", "name"),
+                p("model.stg_orders.amount", "amount"),
+                p("model.stg_orders.order_id", "order_id"),
+            ]
+        );
+    }
+
+    #[test]
+    fn star_expands_with_known_columns() {
+        let sql = "with x as (select * from {{ ref('a') }}) select * from x";
+        assert_eq!(
+            pairs(sql, &[("model.a", &["id", "v"])]),
+            vec![p("model.a.id", "id"), p("model.a.v", "v")]
+        );
+        // Unknown columns: a whole-relation edge, as before.
+        assert_eq!(pairs(sql, &[]), vec![p("model.a.*", "*")]);
+    }
+
+    #[test]
+    fn named_column_from_star_cte_passes_through() {
+        let sql = "with x as (select * from {{ ref('a') }}) select v + 1 as w from x";
+        assert_eq!(pairs(sql, &[]), vec![p("model.a.v", "w")]);
+    }
+
+    #[test]
+    fn window_and_case_inputs() {
+        let sql = "select row_number() over (partition by customer_id order by ordered_at) as n,
+                          case when amount > 0 then 'paid' end as status
+                   from {{ ref('stg_orders') }}";
+        assert_eq!(
+            pairs(sql, &[]),
+            vec![
+                p("model.stg_orders.amount", "status"),
+                p("model.stg_orders.customer_id", "n"),
+                p("model.stg_orders.ordered_at", "n"),
+            ]
+        );
+    }
+
+    #[test]
+    fn union_combines_branches_by_position() {
+        let sql = "select id from {{ ref('a') }} union all select other_id from {{ ref('b') }}";
+        assert_eq!(
+            pairs(sql, &[]),
+            vec![p("model.a.id", "id"), p("model.b.other_id", "id")]
+        );
+    }
+
+    #[test]
+    fn subquery_in_from() {
+        let sql = "select s.total from (select sum(amount) as total from {{ ref('a') }}) s";
+        assert_eq!(pairs(sql, &[]), vec![p("model.a.amount", "total")]);
+    }
+
+    #[test]
+    fn jinja_macros_and_branches_are_neutralised() {
+        let sql = "
+            {{ config(materialized='table') }}
+            select
+                {{ cents_to_dollars('subtotal') }} as subtotal,
+                {{ dbt.date_trunc('day', 'ordered_at') }} as order_date
+            from {{ source('ecom', 'raw_orders') }}
+            {% if is_incremental() %}
+            where ordered_at > (select max(ordered_at) from {{ this }})
+            {% else %}
+            where 1 = 1
+            {% endif %}";
+        let schema: &[(&str, &[&str])] = &[("source.ecom.raw_orders", &["subtotal", "ordered_at"])];
+        let expected = vec![
+            p("source.ecom.raw_orders.ordered_at", "order_date"),
+            p("source.ecom.raw_orders.subtotal", "subtotal"),
+        ];
+        // Without known source columns, 'day' is still not taken for a column.
+        assert_eq!(pairs(sql, &[]), expected);
+        assert_eq!(
+            pairs(sql, schema),
+            vec![
+                p("source.ecom.raw_orders.ordered_at", "order_date"),
+                p("source.ecom.raw_orders.subtotal", "subtotal"),
+            ]
+        );
+    }
+
+    #[test]
+    fn dbt_utils_star_passes_columns_through() {
+        let sql = "select {{ dbt_utils.star(from=ref('a'), except=['x']) }} from {{ ref('a') }}";
+        assert_eq!(
+            pairs(sql, &[("model.a", &["id"])]),
+            vec![p("model.a.id", "id")]
+        );
+    }
+
+    #[test]
+    fn unknown_tables_yield_no_edges() {
+        assert!(pairs("select id from raw.hardcoded_table", &[]).is_empty());
+    }
+
+    #[test]
+    fn unparseable_sql_yields_nothing() {
+        assert!(pairs("this is not sql", &[]).is_empty());
+    }
+
+    #[test]
+    fn scalar_subquery_columns_are_not_bound_to_outer_tables() {
+        let sql = "select id, (select max(x) from other) as m from {{ ref('a') }}";
+        assert_eq!(pairs(sql, &[]), vec![p("model.a.id", "id")]);
     }
 }
