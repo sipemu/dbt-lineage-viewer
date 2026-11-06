@@ -11,6 +11,19 @@ use dbt_lineage::render;
 
 #[cfg(not(tarpaulin_include))]
 fn main() {
+    // Windows gives the main thread 1 MiB of stack, which the derive-based
+    // parser for this CLI outgrows in debug builds. Run on a thread with the
+    // 8 MiB other platforms give the main thread.
+    let worker = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(real_main)
+        .expect("failed to start main thread");
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn real_main() {
     let cli = Cli::parse();
     let error_format = cli.error_format;
 

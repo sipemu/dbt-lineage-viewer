@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -46,8 +47,17 @@ def checkout(repo, commit, dest):
         cwd=dest, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     ).stdout.strip()
     if head != commit:
-        run(["git", "fetch", "-q", "--depth", "1", "origin", commit], cwd=dest)
-        run(["git", "checkout", "-q", "--force", "FETCH_HEAD"], cwd=dest)
+        # Fetching one commit by SHA occasionally fails on GitHub ("not our
+        # ref"); retry, then fall back to fetching the branches.
+        for attempt in range(3):
+            try:
+                run(["git", "fetch", "-q", "--depth", "1", "origin", commit], cwd=dest)
+                run(["git", "checkout", "-q", "--force", "FETCH_HEAD"], cwd=dest)
+                return
+            except subprocess.CalledProcessError:
+                time.sleep(5 * (attempt + 1))
+        run(["git", "fetch", "-q", "origin"], cwd=dest)
+        run(["git", "checkout", "-q", "--force", commit], cwd=dest)
 
 
 def profile_name(project_dir):
