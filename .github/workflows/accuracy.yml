@@ -52,9 +52,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            target/accuracy/*/
-            !target/accuracy/*/**/target
-            !target/accuracy/*/**/.dbt-lineage
+            .accuracy/models/*/
+            !.accuracy/models/*/**/target
+            !.accuracy/models/*/**/.dbt-lineage
           key: accuracy-projects-${{ hashFiles('scripts/accuracy/projects.json') }}
       - run: cargo build --release --no-default-features
       - run: python3 scripts/accuracy/run.py

@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -37,7 +38,13 @@ def run(cmd, cwd=None):
 
 
 def checkout(repo, commit, dest):
-    """Shallow checkout of one commit; reuses an existing checkout."""
+    """Shallow checkout of one commit; reuses an existing checkout, and starts
+    over when it is broken."""
+    if dest.exists() and subprocess.run(
+        ["git", "fsck", "--connectivity-only", "-q"], cwd=dest,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode != 0:
+        shutil.rmtree(dest)
     if not dest.exists():
         dest.mkdir(parents=True)
         run(["git", "init", "-q"], cwd=dest)
@@ -89,7 +96,9 @@ def table(rows):
 def main():
     ap = argparse.ArgumentParser(description="Measure SQL-parse lineage accuracy.")
     ap.add_argument("--binary", default=str(ROOT / "target" / "release" / "dbt-lineage"))
-    ap.add_argument("--work-dir", default=str(ROOT / "target" / "accuracy"))
+    # Not under target/: build caches (Swatinem/rust-cache) save and prune
+    # target/, which would restore broken checkouts.
+    ap.add_argument("--work-dir", default=str(ROOT / ".accuracy" / "models"))
     ap.add_argument("--readme", action="store_true", help="rewrite the README accuracy table")
     args = ap.parse_args()
 

@@ -58,7 +58,7 @@ def column_lineage(binary, project_dir):
 def main():
     ap = argparse.ArgumentParser(description="Measure column-lineage accuracy.")
     ap.add_argument("--binary", default=str(ROOT / "target" / "release" / "dbt-lineage"))
-    ap.add_argument("--work-dir", default=str(ROOT / "target" / "accuracy-columns"))
+    ap.add_argument("--work-dir", default=str(ROOT / ".accuracy" / "columns"))
     ap.add_argument("--update-baseline", action="store_true")
     args = ap.parse_args()
 
