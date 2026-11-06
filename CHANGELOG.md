@@ -27,6 +27,14 @@ Notable changes per release. Full per-release notes live on the
   Fivetran's dbt_hubspot reaches 100% of column dependencies at 100%
   precision and dbt_jira 100% at 99%.
 
+- `ref()` / `source()` arguments may concatenate string literals with loop
+  variables or macro parameters (`ref('int_' ~ m ~ '_double_entry')`, `~` or
+  `+`), and a for-loop in a macro over a parameter whose default is a literal
+  list is expanded over that default. Fivetran's dbt_quickbooks
+  (`get_enabled_unioned_models`) goes from 200 to 210 of 210 model
+  dependencies; every pinned project in the model-accuracy corpus is now at
+  100%.
+
 ### Changed
 
 - The regex column analyzer now only fills in models the AST analyzer can't

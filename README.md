@@ -110,7 +110,7 @@ dependency:
 | [Fivetran dbt_hubspot](https://github.com/fivetran/dbt_hubspot) `5f00935` | 176 | 280 / 280 | 18 |
 | [Fivetran dbt_jira](https://github.com/fivetran/dbt_jira) `1a9f8b4` | 61 | 108 / 108 | 0 |
 | [Fivetran dbt_shopify](https://github.com/fivetran/dbt_shopify) `a033782` | 240 | 414 / 414 | 25 |
-| [Fivetran dbt_quickbooks](https://github.com/fivetran/dbt_quickbooks) `0b9da0d` | 114 | 200 / 210 | 35 |
+| [Fivetran dbt_quickbooks](https://github.com/fivetran/dbt_quickbooks) `0b9da0d` | 114 | 210 / 210 | 35 |
 | [Fivetran dbt_netsuite](https://github.com/fivetran/dbt_netsuite) `e3c026e` | 106 | 166 / 183 | 7 |
 | [Fivetran dbt_zendesk](https://github.com/fivetran/dbt_zendesk) `c5f2cfa` | 88 | 161 / 162 | 5 |
 | [Fivetran dbt_stripe](https://github.com/fivetran/dbt_stripe) `7f5d6ae` | 65 | 115 / 117 | 0 |

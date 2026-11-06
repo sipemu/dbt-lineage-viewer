@@ -8,6 +8,9 @@
 //! {% for model, event_type in models %} select * from {{ ref(model) }} {% endfor %}
 //! ```
 //!
+//! Arguments may concatenate literals and loop variables with `~` (or `+`):
+//! `ref('int_' ~ m ~ '_double_entry')`.
+//!
 //! Each list item yields one call. Conditional `append`s count as if enabled:
 //! for impact analysis, a dependency that is switched off by a var is still a
 //! dependency of the code.
@@ -19,7 +22,7 @@ use std::sync::LazyLock;
 use super::sql::{RefCall, SourceCall, JINJA_BLOCK};
 
 /// One list item: a string, or a tuple of strings.
-type Item = Vec<String>;
+pub(crate) type Item = Vec<String>;
 
 static STRING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"'([^']*)'|"([^"]*)""#).unwrap());
 
@@ -39,7 +42,9 @@ static FOR: LazyLock<Regex> = LazyLock::new(|| {
 
 static ENDFOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\{%-?\s*endfor\b").unwrap());
 
-const ARG: &str = r#"'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*"#;
+/// One argument: a string literal, an identifier, or a `~` / `+`
+/// concatenation of them.
+const ARG: &str = r#"(?:'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*[~+]\s*(?:'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*))*"#;
 
 static REF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
@@ -89,22 +94,78 @@ fn parse_items(list: &str) -> Option<Vec<Item>> {
     Some(items)
 }
 
-fn resolve(arg: &str, bound: &HashMap<&str, &str>) -> Option<String> {
-    let arg = arg.trim();
-    if arg.len() >= 2 && (arg.starts_with('\'') || arg.starts_with('"')) {
-        return Some(arg[1..arg.len() - 1].to_string());
+/// The terms of a `~` / `+` concatenation (a single term when there is
+/// none). `None` when a term is neither a string literal nor an identifier.
+pub(crate) fn concat_terms(expr: &str) -> Option<Vec<&str>> {
+    let mut terms = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut start = 0;
+    for (i, ch) in expr.char_indices() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => {}
+            None => match ch {
+                '\'' | '"' => quote = Some(ch),
+                '~' | '+' => {
+                    terms.push(expr[start..i].trim());
+                    start = i + 1;
+                }
+                _ => {}
+            },
+        }
     }
-    bound.get(arg).map(|s| s.to_string())
+    terms.push(expr[start..].trim());
+    terms
+        .iter()
+        .all(|t| is_literal(t) || IDENT.is_match(t))
+        .then_some(terms)
+}
+
+pub(crate) fn is_literal(t: &str) -> bool {
+    t.len() >= 2
+        && ((t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')))
+}
+
+/// Value of an argument whose terms are literals or bound loop variables.
+fn resolve(arg: &str, bound: &HashMap<&str, &str>) -> Option<String> {
+    let mut out = String::new();
+    for t in concat_terms(arg.trim())? {
+        if is_literal(t) {
+            out.push_str(&t[1..t.len() - 1]);
+        } else {
+            out.push_str(bound.get(t)?);
+        }
+    }
+    Some(out)
+}
+
+/// Whether an argument uses at least one bound loop variable.
+fn uses_bound(arg: &str, bound: &HashMap<&str, &str>) -> bool {
+    concat_terms(arg.trim()).is_some_and(|ts| ts.iter().any(|t| bound.contains_key(t)))
 }
 
 /// Refs and sources produced by for-loops over literal lists in `sql`.
 pub fn extract_loop_calls(sql: &str) -> (Vec<RefCall>, Vec<SourceCall>) {
+    extract_loop_calls_seeded(sql, HashMap::new())
+}
+
+/// The items of a literal list expression such as `['a', 'b']`.
+pub(crate) fn literal_list(expr: &str) -> Option<Vec<Item>> {
+    let list = expr.trim().strip_prefix('[')?.strip_suffix(']')?;
+    parse_items(list)
+}
+
+/// [`extract_loop_calls`] with names already bound to literal lists, such as
+/// macro parameters whose default is a literal list.
+pub(crate) fn extract_loop_calls_seeded(
+    sql: &str,
+    mut lists: HashMap<String, Vec<Item>>,
+) -> (Vec<RefCall>, Vec<SourceCall>) {
     let cleaned = super::lexer::jinja_code(sql);
     let blocks: Vec<&str> = JINJA_BLOCK
         .find_iter(&cleaned)
         .map(|m| m.as_str())
         .collect();
-    let mut lists: HashMap<String, Vec<Item>> = HashMap::new();
     let mut refs = Vec::new();
     let mut sources = Vec::new();
 
@@ -165,7 +226,7 @@ pub fn extract_loop_calls(sql: &str) -> (Vec<RefCall>, Vec<SourceCall>) {
                     // Only calls that use a loop variable; literal calls are
                     // found by the plain extractor already.
                     let uses_loop_var =
-                        |m: Option<regex::Match>| m.is_some_and(|m| bound.contains_key(m.as_str()));
+                        |m: Option<regex::Match>| m.is_some_and(|m| uses_bound(m.as_str(), &bound));
                     if !uses_loop_var(r.get(1)) && !uses_loop_var(r.get(2)) {
                         continue;
                     }
@@ -186,7 +247,7 @@ pub fn extract_loop_calls(sql: &str) -> (Vec<RefCall>, Vec<SourceCall>) {
                     }
                 }
                 for s in SOURCE.captures_iter(b) {
-                    if !bound.contains_key(s[1].trim()) && !bound.contains_key(s[2].trim()) {
+                    if !uses_bound(&s[1], &bound) && !uses_bound(&s[2], &bound) {
                         continue;
                     }
                     if let (Some(source_name), Some(table_name)) =
@@ -258,6 +319,42 @@ mod tests {
         assert!(ref_names(sql).is_empty());
         let sql = "{% set ms = get_models() %}{% for m in ms %}{{ ref(m) }}{% endfor %}";
         assert!(ref_names(sql).is_empty());
+    }
+
+    #[test]
+    fn concatenated_arguments_resolve() {
+        let sql = "{% for m in ['bill', 'invoice'] %}\
+                   {% if var('using_' ~ m, True) %}\
+                   {{ models.append(ref('int__' ~ m ~ '_double_entry')) }}\
+                   {% endif %}{% endfor %}";
+        assert_eq!(
+            ref_names(sql),
+            ["int__bill_double_entry", "int__invoice_double_entry"]
+        );
+        let sql = r#"{% for t in ['a'] %}{{ source("raw_" + t, t ~ "_v2") }}{% endfor %}"#;
+        let (_, sources) = extract_loop_calls(sql);
+        assert_eq!(
+            (
+                sources[0].source_name.as_str(),
+                sources[0].table_name.as_str()
+            ),
+            ("raw_a", "a_v2")
+        );
+    }
+
+    #[test]
+    fn concatenation_with_unbound_name_is_skipped() {
+        let sql = "{% for m in ['a'] %}{{ ref(prefix ~ m) }}{% endfor %}";
+        assert!(ref_names(sql).is_empty());
+    }
+
+    #[test]
+    fn seeded_list_drives_loop() {
+        let seed = HashMap::from([("ms".to_string(), literal_list("['x', 'y']").unwrap())]);
+        let (refs, _) =
+            extract_loop_calls_seeded("{% for m in ms %}{{ ref('s_' ~ m) }}{% endfor %}", seed);
+        let names: Vec<_> = refs.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["s_x", "s_y"]);
     }
 
     #[test]
@@ -342,9 +439,15 @@ pub fn unresolved_dynamic_calls(sql: &str) -> Vec<String> {
             if dynamic.is_empty() {
                 continue;
             }
-            let resolved = dynamic
-                .iter()
-                .all(|a| IDENT.is_match(a) && bound[i].iter().any(|v| v == a));
+            // Each dynamic argument concatenates literals and loop
+            // variables, using at least one of the latter.
+            let is_bound = |t: &str| bound[i].iter().any(|v| v == t);
+            let resolved = dynamic.iter().all(|a| {
+                concat_terms(a).is_some_and(|ts| {
+                    ts.iter().all(|t| is_literal(t) || is_bound(t))
+                        && ts.iter().any(|t| is_bound(t))
+                })
+            });
             if !resolved {
                 out.push(format!(
                     "{}({})",
@@ -383,6 +486,10 @@ mod dynamic_tests {
         assert!(unresolved_dynamic_calls(sql).is_empty());
         let sql = "{% for m in var('models') %}select * from {{ ref(m) }}{% endfor %}";
         assert_eq!(unresolved_dynamic_calls(sql), ["ref(m)"]);
+        let sql = "{% for m in ['a'] %}{{ ref('stg_' ~ m) }}{% endfor %}";
+        assert!(unresolved_dynamic_calls(sql).is_empty());
+        let sql = "{% for m in ['a'] %}{{ ref(p ~ m) }}{% endfor %}";
+        assert_eq!(unresolved_dynamic_calls(sql), ["ref(p ~ m)"]);
     }
 
     #[test]
