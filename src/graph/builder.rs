@@ -15,6 +15,12 @@ use crate::parser::yaml_schema::{parse_schema_file, ExposureDefinition};
 
 use super::types::*;
 
+/// Drop repeated items, keeping first occurrences in order.
+fn dedup<T: Clone + Eq + std::hash::Hash>(items: &mut Vec<T>) {
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|i| seen.insert(i.clone()));
+}
+
 /// Parse one SQL file completely. Used by both the parallel pipeline and the
 /// cache-miss path. Pure function of file contents + wrapper macro list.
 fn parse_sql_content(
@@ -24,18 +30,34 @@ fn parse_sql_content(
 ) -> ParsedSqlFile {
     let expanded = crate::parser::sql::expand_vars(content, vars);
     let content: &str = &expanded;
-    let (mut wrapped_refs, mut wrapped_sources) = extract_wrapper_calls(content, wrappers);
-    let (source_model_refs, source_model_sources) =
-        crate::parser::macros::extract_source_model_refs(content);
-    wrapped_refs.extend(source_model_refs);
-    wrapped_sources.extend(source_model_sources);
-    let (loop_refs, loop_sources) = crate::parser::loops::extract_loop_calls(content);
-    wrapped_refs.extend(loop_refs);
-    wrapped_sources.extend(loop_sources);
+    let variants = crate::parser::sql::literal_variants(content);
+    // Dependencies from every literal variant; config and columns from the
+    // file as written.
+    let mut refs = Vec::new();
+    let mut sources = Vec::new();
+    let mut wrapped_refs = Vec::new();
+    let mut wrapped_sources = Vec::new();
+    for variant in &variants {
+        let (r, s) = extract_wrapper_calls(variant, wrappers);
+        wrapped_refs.extend(r);
+        wrapped_sources.extend(s);
+        let (r, s) = crate::parser::macros::extract_source_model_refs(variant);
+        wrapped_refs.extend(r);
+        wrapped_sources.extend(s);
+        let (r, s) = crate::parser::loops::extract_loop_calls(variant);
+        wrapped_refs.extend(r);
+        wrapped_sources.extend(s);
+        refs.extend(extract_refs(variant));
+        sources.extend(extract_sources(variant));
+    }
+    dedup(&mut refs);
+    dedup(&mut sources);
+    dedup(&mut wrapped_refs);
+    dedup(&mut wrapped_sources);
     let config = extract_config(content);
     ParsedSqlFile {
-        refs: extract_refs(content),
-        sources: extract_sources(content),
+        refs,
+        sources,
         wrapped_refs,
         wrapped_sources,
         // `__jinja__` stands in for a `{{ … }}` select item; it is not a real column.

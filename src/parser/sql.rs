@@ -101,6 +101,61 @@ pub fn expand_vars<'a>(sql: &'a str, vars: &HashMap<String, String>) -> std::bor
     std::borrow::Cow::Owned(out)
 }
 
+static CONDITIONAL_LITERAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"('[^']*'|"[^"]*")\s+if\s+[^{}%]+?\s+else\s+('[^']*'|"[^"]*")"#).unwrap()
+});
+static SET_LITERAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\{%-?\s*set\s+([A-Za-z_]\w*)\s*=\s*('[^']*'|"[^"]*")\s*-?%\}"#).unwrap()
+});
+
+/// The SQL as dependency extraction should see it, once per branch of any
+/// inline conditional between two string literals: `ref('a' if x else 'b')`
+/// depends on both, like other switched-off branches. A variable set to a
+/// literal (`{% set t = 'subscription' %}`) is substituted into the Jinja
+/// expressions after it, so `macro(table=t)` binds the literal.
+pub fn literal_variants(sql: &str) -> Vec<String> {
+    let variants = if CONDITIONAL_LITERAL.is_match(sql) {
+        vec![
+            CONDITIONAL_LITERAL.replace_all(sql, "$1").into_owned(),
+            CONDITIONAL_LITERAL.replace_all(sql, "$2").into_owned(),
+        ]
+    } else {
+        vec![sql.to_string()]
+    };
+    variants
+        .into_iter()
+        .map(|v| inline_literal_sets(&v))
+        .collect()
+}
+
+fn inline_literal_sets(sql: &str) -> String {
+    let sets: Vec<(usize, String, String)> = SET_LITERAL
+        .captures_iter(sql)
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
+        .collect();
+    if sets.is_empty() {
+        return sql.to_string();
+    }
+    let mut out = String::with_capacity(sql.len());
+    let mut last = 0;
+    for block in JINJA_BLOCK.find_iter(sql) {
+        out.push_str(&sql[last..block.start()]);
+        let mut text = block.as_str().to_string();
+        if text.starts_with("{{") {
+            for (end, name, literal) in &sets {
+                if *end <= block.start() {
+                    let word = Regex::new(&format!(r"\b{}\b", regex::escape(name))).unwrap();
+                    text = word.replace_all(&text, literal.as_str()).into_owned();
+                }
+            }
+        }
+        out.push_str(&text);
+        last = block.end();
+    }
+    out.push_str(&sql[last..]);
+    out
+}
+
 /// Extract all ref() calls from SQL content. Pipes through the SQL+Jinja
 /// lexer (#25) first to blank out string literals and comments, so the regex
 /// can't match `ref(` inside `'I prefer ref(x)'` or `-- ref(`.
@@ -243,6 +298,28 @@ mod tests {
             .map(|r| r.name)
             .collect();
         assert_eq!(names, ["encounter", "stg_orders"]);
+    }
+
+    #[test]
+    fn test_conditional_literals_yield_both_refs() {
+        let sql = "select * from {{ ref('role_history' if using_roles else 'user_aggregates') }}";
+        let mut names: Vec<_> = literal_variants(sql)
+            .iter()
+            .flat_map(|v| extract_refs(v))
+            .map(|r| r.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, ["role_history", "user_aggregates"]);
+    }
+
+    #[test]
+    fn test_literal_set_is_inlined_into_later_expressions() {
+        let sql =
+            "{% set t = 'subscription_history' %}{{ union_connections(single_table_name=t) }}";
+        assert_eq!(
+            literal_variants(sql),
+            ["{% set t = 'subscription_history' %}{{ union_connections(single_table_name='subscription_history') }}"]
+        );
     }
 
     #[test]

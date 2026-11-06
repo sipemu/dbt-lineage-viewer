@@ -26,6 +26,16 @@ Notable changes per release. Full per-release notes live on the
   shadows a package model of the same name), so refs to package models are
   no longer phantom nodes. Lint and summary leave package nodes out; the PR
   diff stays project-only (the base checkout has no installed packages).
+- Inline conditionals between literals count both branches:
+  `ref('a' if x else 'b')`, and `{% set t = 'a' if x else 'b' %}` passed to a
+  macro; a variable set to a literal is substituted into later expressions.
+- The accuracy check covers six more Fivetran packages (shopify, quickbooks,
+  netsuite, zendesk, stripe, salesforce) and tuva's column lineage, with
+  per-project known misses in `scripts/accuracy/baseline.json`; only
+  quickbooks' refs built by string concatenation in a macro loop remain.
+- Large-project benchmark (`scripts/bench-scale/`, BENCHMARKS.md): projects
+  of 2k–20k models built from the real corpus; every operation scales
+  linearly; a weekly CI step fails on super-linear growth.
 - Cross-project refs: `ref('project', 'model')` resolves within the root
   project or an installed package; to any other project (dbt Mesh, not
   installed) it becomes an external node `project.model`, so it no longer
@@ -36,6 +46,9 @@ Notable changes per release. Full per-release notes live on the
 
 ### Fixed
 
+- Column lineage used ~100 MiB per worker thread on large projects
+  (2.1 GB at 2.2k models): the regex fallback's case-insensitive Unicode
+  patterns. Now 318 MiB and faster, with identical output.
 - Refs inside SQL comments and string literals were ignored, but dbt
   renders that Jinja: `-- depends_on: {{ ref('x') }}` (dbt's documented way
   to force a dependency) and `'{{ ref("x") }}'` both make `x` a parent. Only
