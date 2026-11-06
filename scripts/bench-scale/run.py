@@ -162,6 +162,8 @@ def main():
              "| --- |" + " ---: |" * len(sizes)]
     for key, label in LABELS.items():
         cells = []
+        if any(key not in results[s] for s in sizes):
+            continue
         for s in sizes:
             wall, rss, rc = results[s][key]
             cells.append(f"{wall:.2f} s · {rss:,.0f} MiB" + ("" if rc == 0 else " (exit %d)" % rc))
