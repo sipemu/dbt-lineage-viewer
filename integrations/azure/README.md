@@ -24,7 +24,7 @@ resources:
       type: github
       name: sipemu/dbt-lineage-viewer
       endpoint: my-github-connection   # your GitHub service connection
-      ref: refs/tags/v0.17.0
+      ref: refs/tags/v0.18.0
 
 steps:
   - checkout: self

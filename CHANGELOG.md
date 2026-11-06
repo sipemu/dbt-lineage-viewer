@@ -5,6 +5,8 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
+## [0.18.0] – 2026-11-06
+
 ### Added
 
 - Column lineage reads dbt-compiled SQL from `target/manifest.json` (after
@@ -22,6 +24,11 @@ Notable changes per release. Full per-release notes live on the
   (`scripts/accuracy-columns/run.py`: `dbt seed` + `dbt run` on DuckDB, raw
   and compiled) and fails when recall or precision drops below
   `baseline.json`.
+
+### Fixed
+
+- Debug builds overflowed Windows' 1 MiB main-thread stack on every
+  command; the CLI now runs on a thread with an 8 MiB stack.
 
 ## [0.17.0] – 2026-11-06
 
