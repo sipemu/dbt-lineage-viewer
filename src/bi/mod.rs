@@ -143,6 +143,10 @@ pub fn map_dashboards(graph: &LineageGraph, dashboards: &[Dashboard]) -> MappedE
     for d in dashboards {
         *used_names.entry(slugify(&d.name)).or_default() += 1;
     }
+    // Names already emitted: dbt rejects two exposures with one name, which
+    // dashboards sharing both name and id (the same workbook in two folders)
+    // would otherwise produce.
+    let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for d in dashboards {
         let mut deps = BTreeSet::new();
@@ -159,11 +163,19 @@ pub fn map_dashboards(graph: &LineageGraph, dashboards: &[Dashboard]) -> MappedE
             continue;
         }
         let base = slugify(&d.name);
-        let name = if used_names.get(&base).copied().unwrap_or(0) > 1 {
+        let mut name = if used_names.get(&base).copied().unwrap_or(0) > 1 {
             format!("{base}_{}", slugify(&d.id).trim_start_matches("dashboard_"))
         } else {
             base
         };
+        if emitted.contains(&name) {
+            let stem = name.clone();
+            name = (2..)
+                .map(|n| format!("{stem}_{n}"))
+                .find(|n| !emitted.contains(n))
+                .unwrap();
+        }
+        emitted.insert(name.clone());
         let owner = if d.owner_name.is_none() && d.owner_email.is_none() {
             // dbt requires an owner with a name or email.
             Owner {
@@ -295,6 +307,17 @@ mod tests {
         let names: Vec<_> = r.exposures.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["kpis_7", "kpis_9"]);
         assert_eq!(r.exposures[0].owner.name.as_deref(), Some("Metabase"));
+    }
+
+    #[test]
+    fn dashboards_sharing_name_and_id_get_unique_names() {
+        // The same Tableau workbook in two folders: same name, same id.
+        let a = dash("filtering: Dash", "filtering: Dash", &["orders"]);
+        let b = dash("filtering: Dash", "filtering: Dash", &["orders"]);
+        let r = map_dashboards(&graph(), &[a, b]);
+        let mut names: Vec<_> = r.exposures.iter().map(|e| e.name.clone()).collect();
+        names.dedup();
+        assert_eq!(names.len(), 2, "{names:?}");
     }
 
     #[test]

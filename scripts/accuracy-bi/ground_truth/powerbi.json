@@ -1,0 +1,28 @@
+{
+  "_comment": "Hand-derived from the TMDL partitions (scripts/accuracy-bi/dump_pbi.py). Tables a report's semantic model loads from a warehouse; DAX calculated tables, CSV, web and OData sources read no warehouse table. Native queries: region_NativeQuery runs 'select * from sf1.region'; Snowflake's orders_with_role reads ORDERS.",
+  "powerbi-databricks-accelerator/samples-pbip": {
+    "Databricks": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "HMS-incremental-refresh": ["customer", "nation", "orders", "region"],
+    "HMS": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "Redshift": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "Snowflake": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "SqlServer": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "Synapse": ["customer", "lineitem", "nation", "orders", "part", "region"]
+  },
+  "powerbi-databricks-accelerator/samples-pbit": {
+    "Databricks": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "HMS-incremental-refresh": ["customer", "nation", "orders", "region"],
+    "HMS": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "Redshift": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "Snowflake": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "SqlServer": ["customer", "lineitem", "nation", "orders", "part", "region"],
+    "Synapse": ["customer", "lineitem", "nation", "orders", "part", "region"]
+  },
+  "powerbi-pbip-demo/src": {
+    "Report01": [],
+    "Report02": [],
+    "Report03": [],
+    "Report04": [],
+    "Report05": []
+  }
+}

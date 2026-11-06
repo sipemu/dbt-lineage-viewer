@@ -220,7 +220,9 @@ impl LkmlParser<'_> {
         }
     }
 
-    /// SQL-ish value up to `;;`. `sql_table_name` may also end at the line end.
+    /// SQL-ish value up to `;;`. `sql_table_name` may also end at the line
+    /// end, unless it is still empty (the value starts on the next line) or a
+    /// Liquid block is open (`{% if %} a {% else %} b {% endif %};;`).
     fn sql_value(&mut self, line_ends: bool) -> String {
         let start = self.i;
         while let Some(c) = self.peek() {
@@ -230,7 +232,12 @@ impl LkmlParser<'_> {
                 return text;
             }
             if line_ends && c == b'\n' {
-                break;
+                let so_far = &self.src[start..self.i];
+                let liquid_open =
+                    LIQUID_OPEN.find_iter(so_far).count() > LIQUID_CLOSE.find_iter(so_far).count();
+                if !so_far.trim().is_empty() && !liquid_open {
+                    break;
+                }
             }
             self.i += 1;
         }
@@ -315,12 +322,26 @@ static FIELD_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$\{[^}]*\}").
 static CONSTANT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@\{\s*(\w+)\s*\}").unwrap());
 static LIQUID_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{%.*?%\}").unwrap());
 static LIQUID_OUT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{\{.*?\}\}").unwrap());
+static LIQUID_OPEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{%-?\s*(?:if|unless|case|for)\b").unwrap());
+static LIQUID_CLOSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{%-?\s*end").unwrap());
 
 fn list_items(text: &str) -> Vec<String> {
     text.trim_matches(|c| c == '[' || c == ']')
         .split(',')
         .map(|s| s.trim().trim_matches('"').to_string())
         .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// The tables a `sql_table_name` names: Liquid may choose between tables
+/// (`{% if … %} a {% else %} b {% endif %}`), and every alternative counts.
+fn table_alternatives(raw: &str) -> Vec<String> {
+    let raw = CONSTANT.replace_all(raw, "$1");
+    LIQUID_TAG
+        .split(&raw)
+        .map(clean_table)
+        .filter(|t| !t.is_empty())
         .collect()
 }
 
@@ -454,10 +475,7 @@ impl Project {
             if let Some(view) = VIEW_REF.captures(t) {
                 self.collect_view(&view[1], out, seen);
             } else {
-                let t = clean_table(t);
-                if !t.is_empty() {
-                    out.insert(t);
-                }
+                out.extend(table_alternatives(t));
             }
             return;
         }
@@ -642,6 +660,15 @@ view: customer_ltv {
 }
 
 view: base_template { extension: required  sql_table_name: stg_events ;; }
+view: storage_usage {
+  sql_table_name:
+  {% if database_name._in_query %}
+  SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
+  {% else %}
+  SNOWFLAKE.ACCOUNT_USAGE.STORAGE_USAGE
+  {% endif %};;
+  dimension: id { sql: ${TABLE}.ID ;; }
+}
 view: events { extends: [base_template] }
 view: +orders { dimension: extra { sql: 1 ;; } }
 "#;
@@ -698,6 +725,7 @@ explore: event_stream { from: events }
                 "customers",
                 "customer_ltv",
                 "base_template",
+                "storage_usage",
                 "events",
                 "+orders"
             ]
@@ -710,6 +738,18 @@ explore: event_stream { from: events }
         assert_eq!(
             nodes[1].child_text("sql_table_name"),
             Some("`@{PROJECT}.@{DATASET}.dim_customers`")
+        );
+        // A value on the following lines, choosing a table with Liquid.
+        let mut p = Project::default();
+        p.add_file(&nodes, "");
+        assert_eq!(
+            p.view_tables("storage_usage")
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                "snowflake.account_usage.database_storage_usage_history",
+                "snowflake.account_usage.storage_usage"
+            ]
         );
         let commented: Vec<_> = parse_lookml(MODEL)
             .into_iter()

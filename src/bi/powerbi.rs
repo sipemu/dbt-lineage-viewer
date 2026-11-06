@@ -696,14 +696,32 @@ static NATIVE_QUERY: LazyLock<Regex> =
 static ESCAPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\(([^)]*)\)").unwrap());
 static BRACKET_IDENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]\[]+)\]").unwrap());
 
+/// Power Query connectors whose navigation records name files, sheets,
+/// pages or feed entities rather than warehouse tables.
+const NON_WAREHOUSE: &[&str] = &[
+    "Excel.Workbook",
+    "OData.Feed",
+    "Web.Contents",
+    "Web.Page",
+    "SharePoint.",
+    "Csv.Document",
+    "Json.Document",
+    "Xml.Tables",
+    "Xml.Document",
+    "Folder.Files",
+    "File.Contents",
+    "Pdf.Tables",
+];
+
 /// Warehouse tables in one M expression (comments already stripped):
 /// navigation steps and native SQL. `params` resolves parameter names used
 /// as navigation values.
 pub fn m_tables(code: &str, params: &BTreeMap<&str, String>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    // Excel workbooks navigate with the same records (`Kind="Table"` for
-    // Excel tables); they are files, not warehouse tables.
-    if !code.contains("Excel.Workbook") {
+    // Files, web pages and feeds navigate with the same records
+    // (`Kind="Table"` for Excel tables, `{[Name="Orders"]}` for OData
+    // entities); they are not warehouse tables.
+    if !NON_WAREHOUSE.iter().any(|c| code.contains(c)) {
         // Steps navigated from (`Db{[…]}`): a `{[Name="x"]}` step without
         // `Kind` is a table only if nothing navigates further from it.
         let bases: HashSet<String> = NAV_RECORD
@@ -990,6 +1008,9 @@ in region"#;
     Sheet = Wb{[Item="Sheet1",Kind="Sheet"]}[Data]
 in Budget"#;
         assert!(tables(m).is_empty());
+        // OData feed entities navigate like Redshift tables but are not.
+        let odata = "let\n    Source = OData.Feed(Service),\n    Orders_table = Source{[Name=\"Orders\",Signature=\"table\"]}[Data]\nin\n    Orders_table";
+        assert!(m_tables(odata, &BTreeMap::new()).is_empty());
         let m = r#"SharePoint.Files("https://x.sharepoint.com"){[Name="a.csv"]}[Content]"#;
         assert!(tables(m).is_empty());
     }
