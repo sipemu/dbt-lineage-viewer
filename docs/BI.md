@@ -151,6 +151,35 @@ Tested on PBIP projects, `model.bim` files and `.pbit` templates from 13 public 
 - M is matched by pattern, not evaluated: SQL assembled from variables at refresh time (`"select * from " & Table`) and navigation by computed values are not resolved. Only the first literal of a concatenated `Query=` string is read.
 - Thin reports on a published semantic model (`byConnection`) can't be resolved offline; import the semantic model's own PBIP folder instead.
 
+## Accuracy
+
+Every importer is measured against public dashboards with a ground truth computed independently of dbt-lineage ([`scripts/accuracy-bi/`](../scripts/accuracy-bi)):
+
+- **Ground truth:** a separate parser per tool (PyYAML for Superset exports, ElementTree for Tableau workbooks, the `lkml` LookML parser, Metabase's API card definitions; [sqlglot](https://github.com/tobymao/sqlglot) for every SQL text). For Power BI, where no independent M evaluator exists offline, the ground truth is hand-derived from the TMDL partitions ([`ground_truth/powerbi.json`](../scripts/accuracy-bi/ground_truth/powerbi.json)).
+- **Scoring:** a fixture dbt project declares every ground-truth table as a source, and every third one also as a model. The importer runs on the artifacts and is scored on dashboards found, `(dashboard, table)` references found (recall) and correct (precision; tables the project lacks still count), references mapped to the right node (a model wins over a source), and whether the generated YAML passes `dbt parse` (dbt Core 1.12).
+
+| Artifacts (pinned commits in [`sources.json`](../scripts/accuracy-bi/sources.json)) | Dashboards found | Table references found | Precision | Mapped to the right node | dbt parse |
+| --- | ---: | ---: | ---: | ---: | :---: |
+| Superset examples (3.1.0) | 6 / 6 | 12 / 12 | 100% | 100% | ✓ |
+| Tableau: tableau/document-api-python samples | 18 / 18 | 5 / 5 | 100% | 100% | ✓ |
+| Tableau: 12 public workbooks (Snowflake custom SQL, Kylin, Impala, TDVT, …) | 13 / 13 | 16 / 16 | 100% | 100% | ✓ |
+| Looker: llooker/snowflake-usage-block | 1 / 1 | 8 / 8 | 100% | 100% | ✓ |
+| Looker: llooker/google_ga360 | 3 / 3 | 3 / 3 | 100% | 100% | ✓ |
+| Looker: llooker/blocks_redshift_admin | 3 / 3 | 20 / 20 | 100% | 100% | ✓ |
+| Power BI: PBIP (Databricks migration accelerator: Databricks, Snowflake, Redshift, SQL Server, Synapse, native query, incremental refresh) | 7 / 7 | 40 / 40 | 100% | 100% | ✓ |
+| Power BI: the same reports as `.pbit` | 7 / 7 | 40 / 40 | 100% | 100% | ✓ |
+| Power BI: CSV, web and OData reports (RuiRomano/pbip-demo; no warehouse tables) | 5 / 5 | 0 / 0 | – | – | ✓ |
+| anofox-visualization examples | 17 / 17 | 8 / 8 | 100% | 100% | ✓ |
+| Metabase v0.56 (Docker): example dashboard plus native SQL (template tag, optional clause, CTE), a GUI join and a question on a question | 3 / 3 | 11 / 11 | 100% | 100% | ✓ |
+
+Measuring found three bugs, fixed in the same change:
+
+- **Looker:** a `sql_table_name` written on the lines after the key, or choosing a table with Liquid (`{% if … %} A {% else %} B {% endif %}`), produced no table (snowflake-usage-block: 6 / 8 before). Every Liquid alternative now counts.
+- **Power BI:** OData feeds (and web, CSV, JSON, XML, folder and file sources) navigate with the same `{[Name="Orders"]}[Data]` steps as Redshift, so feed entities were reported as warehouse tables (pbip-demo: 5 false references). Navigation from those connectors is ignored now, as Excel already was.
+- **All tools:** two dashboards with the same name and id (the same Tableau workbook in two folders) produced two exposures with one name, which dbt rejects (`dbt parse` failed on the document-api samples). Repeated names now get `_2`, `_3`.
+
+Run it with `python3 scripts/accuracy-bi/fetch.py` and `uv run --no-project --with sqlglot --with pyyaml --with lkml python scripts/accuracy-bi/run.py` (exits 1 below [`thresholds.json`](../scripts/accuracy-bi/thresholds.json)); `scripts/accuracy-bi/metabase.py` measures Metabase against a local `docker run metabase/metabase:v0.56.4 -p 3999:3000`.
+
 ## Other tools
 
 Contributions welcome: a connector only needs to produce `bi::Dashboard` values (name, URL, owner, table names).

@@ -1,0 +1,109 @@
+[
+  {
+    "slug": "superset",
+    "tool": "superset",
+    "repo": "apache/superset",
+    "commit": "0cd2431989f2d0182c02f33c88a5dc9645403980",
+    "ref": "3.1.0",
+    "paths": ["superset/examples/configs"]
+  },
+  {
+    "slug": "tableau-document-api",
+    "tool": "tableau",
+    "repo": "tableau/document-api-python",
+    "commit": "447357fc1ad21945b31c0ed20d69593c13cc7921",
+    "paths": ["samples", "test/assets"]
+  },
+  {
+    "slug": "tableau-recfluence",
+    "tool": "tableau",
+    "repo": "markledwich2/Recfluence",
+    "commit": "d64c2790ebba8389a017b63fcdd139eba2a7a07b",
+    "files": [
+      "Analysis/QTerms.twb",
+      "Analysis/Public.twb",
+      "Analysis/TagRecs.twb",
+      "Analysis/Entities.twb",
+      "Analysis/Pendulum.twb",
+      "Analysis/UserScrape.twb",
+      "Analysis/Election Fraud.twb"
+    ]
+  },
+  {
+    "slug": "tableau-kylin",
+    "tool": "tableau",
+    "repo": "albertoRamon/Kylin",
+    "commit": "d4eeff02a15e6170a935b6b2884719986054e4e1",
+    "files": ["KylinWithTableau/Full.twb"]
+  },
+  {
+    "slug": "tableau-impala",
+    "tool": "tableau",
+    "repo": "mbalazin/cse599c-17sp-tutorials",
+    "commit": "8b1cdca84a6f407d3ce7e907cc307757c9f17873",
+    "files": ["impala/sample-workbook.twb"]
+  },
+  {
+    "slug": "tableau-palette",
+    "tool": "tableau",
+    "repo": "palette-software/tableau-js-api-modify-underlying-data",
+    "commit": "f5418eeb45e3693dccdc884aa6900ef36bbf8686",
+    "files": ["testworkbook.twb"]
+  },
+  {
+    "slug": "tableau-tdvt",
+    "tool": "tableau",
+    "repo": "tableau/connector-plugin-sdk",
+    "commit": "1f9571b2503c19e685b957da9b489d923c5fbb8a",
+    "files": ["tdvt/TDVT Results.twb"]
+  },
+  {
+    "slug": "tableau-bayareametro",
+    "tool": "tableau",
+    "repo": "BayAreaMetro/travel-model-one",
+    "commit": "69217ac37f4d59f2a70a699da2c1800daac249f6",
+    "files": ["utilities/prepare-validation-data/Roadways to Caltrans.twb"]
+  },
+  {
+    "slug": "anofox-visualization",
+    "tool": "anofox",
+    "repo": "DataZooDE/anofox-visualization",
+    "commit": "f6d272fb6b9a776856da298f7441a7bd1c744a69",
+    "paths": ["dashboards", "examples"]
+  },
+  {
+    "slug": "looker-snowflake-usage",
+    "tool": "looker",
+    "repo": "llooker/snowflake-usage-block",
+    "commit": "c9e4c51f55b993adf19b103094cc0b95f119683c",
+    "paths": [""]
+  },
+  {
+    "slug": "looker-ga360",
+    "tool": "looker",
+    "repo": "llooker/google_ga360",
+    "commit": "0bbbef5d8080e88ade2747230b7ed62418437c21",
+    "paths": [""]
+  },
+  {
+    "slug": "looker-redshift-admin",
+    "tool": "looker",
+    "repo": "llooker/blocks_redshift_admin",
+    "commit": "a46156b3d1628552cf42cc2b45c1e5cb505586ea",
+    "paths": [""]
+  },
+  {
+    "slug": "powerbi-databricks-accelerator",
+    "tool": "powerbi",
+    "repo": "databricks-solutions/powerbi-on-databricks-migration-accelerator",
+    "commit": "e0b6eab5ac99883225e325293d4623a6775951b8",
+    "paths": [""]
+  },
+  {
+    "slug": "powerbi-pbip-demo",
+    "tool": "powerbi",
+    "repo": "RuiRomano/pbip-demo",
+    "commit": "84351709a1d238ff0e1c4e961d584e8e5781c8fa",
+    "paths": ["src"]
+  }
+]

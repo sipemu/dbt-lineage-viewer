@@ -1,0 +1,48 @@
+{
+  "Superset examples (3.1.0)": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Tableau: document-api samples": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Tableau: public workbooks": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Looker: snowflake-usage-block": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Looker: google_ga360": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Looker: blocks_redshift_admin": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Power BI: PBIP (Databricks accelerator)": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Power BI: .pbit (Databricks accelerator)": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  },
+  "Power BI: CSV/OData reports (pbip-demo)": {},
+  "anofox-visualization examples": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
+  }
+}
