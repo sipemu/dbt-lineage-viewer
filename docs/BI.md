@@ -180,7 +180,7 @@ Measuring found three bugs, fixed in the same change:
 - **Power BI:** OData feeds (and web, CSV, JSON, XML, folder and file sources) navigate with the same `{[Name="Orders"]}[Data]` steps as Redshift, so feed entities were reported as warehouse tables (pbip-demo: 5 false references). Navigation from those connectors is ignored now, as Excel already was.
 - **All tools:** two dashboards with the same name and id (the same Tableau workbook in two folders) produced two exposures with one name, which dbt rejects (`dbt parse` failed on the document-api samples). Repeated names now get `_2`, `_3`.
 
-Run it with `python3 scripts/accuracy-bi/fetch.py` and `uv run --no-project --with sqlglot --with pyyaml --with lkml python scripts/accuracy-bi/run.py` (exits 1 below [`thresholds.json`](../scripts/accuracy-bi/thresholds.json)); `scripts/accuracy-bi/metabase.py` measures Metabase against a local `docker run metabase/metabase:v0.56.4 -p 3999:3000`.
+The check runs weekly and on demand in CI ([`accuracy.yml`](../.github/workflows/accuracy.yml), Metabase included via Docker), caches the downloaded artifacts keyed on `sources.json`, writes the table to the job summary and fails when any set drops below [`thresholds.json`](../scripts/accuracy-bi/thresholds.json). Locally: `python3 scripts/accuracy-bi/fetch.py`, then `uv run --no-project --with sqlglot --with pyyaml --with lkml python scripts/accuracy-bi/run.py` (exits 1 below the thresholds, 2 when the binary or artifacts are missing); add `scripts/accuracy-bi/metabase.py --docker` with the same `uv run` prefix to start a throwaway `metabase/metabase:v0.56.4` container and measure Metabase (or `--url` for a running instance).
 
 ## Other tools
 

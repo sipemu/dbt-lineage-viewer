@@ -44,5 +44,10 @@
     "recall": 100.0,
     "precision": 100.0,
     "mapping": 100.0
+  },
+  "Metabase v0.56 (Docker)": {
+    "recall": 100.0,
+    "precision": 100.0,
+    "mapping": 100.0
   }
 }
