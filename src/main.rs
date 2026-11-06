@@ -586,10 +586,7 @@ fn run_site_command(
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
     let dag = build_dag(&project_dir, manifest, false)?;
-    let column_lineage = merge_column_lineage(
-        parser::ast_column_lineage::resolve_column_lineage_ast_in(&dag, &project_dir),
-        parser::column_lineage::resolve_column_lineage_in(&dag, &project_dir),
-    );
+    let column_lineage = project_column_lineage(&dag, &project_dir);
     let title = title.map(String::from).unwrap_or_else(|| {
         parser::project::DbtProject::load(&project_dir)
             .map(|p| p.name)
@@ -751,6 +748,34 @@ fn merge_column_lineage(
     parser::column_lineage::ColumnLineage::with_fallback(primary, secondary)
 }
 
+/// Column lineage of a whole project: the AST analyzer's, plus the regex
+/// analyzer's for models the AST analyzer produced nothing for. The regex
+/// analyzer runs only on those models: its output for the others would be
+/// dropped by [`merge_column_lineage`] anyway, and on large projects it
+/// dominates time and memory (4 GB at 2,200 models when run on all).
+#[cfg(not(tarpaulin_include))]
+fn project_column_lineage(
+    graph: &graph::types::LineageGraph,
+    project_dir: &Path,
+) -> parser::column_lineage::ColumnLineage {
+    use std::collections::HashSet;
+    let ast = parser::ast_column_lineage::resolve_column_lineage_ast_in(graph, project_dir);
+    let analyzed: HashSet<&str> = ast.edges.iter().map(|e| e.target_node.as_str()).collect();
+    let rest: HashSet<_> = graph
+        .node_indices()
+        .filter(|&i| {
+            let n = &graph[i];
+            matches!(
+                n.node_type,
+                graph::types::NodeType::Model | graph::types::NodeType::Snapshot
+            ) && !analyzed.contains(n.unique_id.as_str())
+        })
+        .collect();
+    let fallback =
+        parser::column_lineage::resolve_column_lineage_for(graph, project_dir, Some(&rest));
+    merge_column_lineage(ast, fallback)
+}
+
 /// Run the `mcp` subcommand: load the graph (manifest preferred, SQL-parse fallback)
 /// and serve JSON-RPC over stdio.
 #[cfg(not(tarpaulin_include))]
@@ -786,10 +811,7 @@ fn run_mcp_command(project_dir: &Path, manifest: Option<&PathBuf>) -> Result<()>
     // Union the AST-backed analyzer (#35) and the regex-backed analyzer. The AST
     // path is accurate when it parses, the regex path provides coverage for SQL
     // dialects/shapes sqlparser can't yet handle. Duplicate edges are deduped.
-    let column_lineage = merge_column_lineage(
-        parser::ast_column_lineage::resolve_column_lineage_ast_in(&graph, &project_dir),
-        parser::column_lineage::resolve_column_lineage_in(&graph, &project_dir),
-    );
+    let column_lineage = project_column_lineage(&graph, &project_dir);
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -844,10 +866,7 @@ fn run_column_lineage_command(project_dir: &Path, no_cache: bool) -> Result<()> 
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
     let dag = build_dag(&project_dir, None, no_cache)?;
-    let lineage = merge_column_lineage(
-        parser::ast_column_lineage::resolve_column_lineage_ast_in(&dag, &project_dir),
-        parser::column_lineage::resolve_column_lineage_in(&dag, &project_dir),
-    );
+    let lineage = project_column_lineage(&dag, &project_dir);
     serde_json::to_writer(std::io::stdout().lock(), &lineage)?;
     println!();
     Ok(())
