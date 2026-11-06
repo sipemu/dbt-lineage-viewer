@@ -1,6 +1,7 @@
 name: Adoption metrics
 
-# Weekly snapshot of release downloads, crates.io downloads, stars and (with
+# Weekly snapshot of release downloads, crates.io, VS Code Marketplace, Open VSX,
+# PyPI, MCP Registry and Glama, stars and (with
 # a TRAFFIC_TOKEN secret: a token with push access) repo traffic, appended to
 # metrics.jsonl on the `metrics` branch. GitHub keeps traffic for 14 days only.
 on:
@@ -30,6 +31,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          GLAMA_API_KEY: ${{ secrets.GLAMA_API_KEY }}
         run: python3 scripts/collect_metrics.py metrics-branch/metrics.jsonl
       - name: Commit
         working-directory: metrics-branch
