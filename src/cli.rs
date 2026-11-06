@@ -567,6 +567,10 @@ pub enum CiAction {
         /// Skip the lint section
         #[arg(long)]
         no_lint: bool,
+        /// Compare SQL-parse lineage with manifest.json (run `dbt parse`
+        /// first) and report how much of dbt's lineage was found
+        #[arg(long)]
+        verify: bool,
     },
     /// Create or update one sticky comment on the current PR/MR. Token:
     /// `DBT_LINEAGE_TOKEN`, else GITHUB_TOKEN / GITLAB_TOKEN (project access

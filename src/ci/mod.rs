@@ -86,6 +86,8 @@ pub enum FailOn {
     /// A governed model (contract, public/protected access, versions) changed
     /// in a way that breaks its consumers.
     BreakingChanges,
+    /// `--verify` found a dependency in manifest.json that parsing missed.
+    VerifyMissed,
     /// Never fail (report only).
     Never,
 }
@@ -111,6 +113,8 @@ pub struct CiReport {
     pub impact_diagram: Option<String>,
     /// Models in the impact path whose lineage may be incomplete.
     pub lineage_gaps: Vec<crate::graph::gaps::LineageGap>,
+    /// Parsed lineage compared with manifest.json (`--verify`).
+    pub verify: Option<crate::graph::verify::VerifyReport>,
     pub errors: Vec<SectionError>,
 }
 
@@ -133,6 +137,15 @@ impl CiReport {
                         if plan.selectors.is_empty() {
                             out.push("rebuild plan is empty".to_string());
                         }
+                    }
+                }
+                FailOn::VerifyMissed => {
+                    if let Some(v) = self.verify.as_ref().filter(|v| !v.found_everything()) {
+                        out.push(format!(
+                            "parsing missed {} dependencies and {} models that dbt records",
+                            v.missing.len(),
+                            v.only_in_manifest.len()
+                        ));
                     }
                 }
                 FailOn::Never => {}
@@ -193,6 +206,9 @@ pub fn render_markdown(report: &CiReport) -> String {
         render_column_impact_section(&mut md, diff);
     }
     render_gaps_section(&mut md, &report.lineage_gaps);
+    if let Some(v) = &report.verify {
+        render_verify_section(&mut md, v);
+    }
     if let Some(diagram) = &report.impact_diagram {
         let _ = writeln!(md, "### Impact\n");
         let _ = writeln!(
@@ -321,6 +337,45 @@ fn render_gaps_section(md: &mut String, gaps: &[crate::graph::gaps::LineageGap])
     }
     if gaps.len() > MAX_ROWS {
         let _ = writeln!(md, "\n…and {} more.", gaps.len() - MAX_ROWS);
+    }
+    md.push('\n');
+}
+
+fn render_verify_section(md: &mut String, v: &crate::graph::verify::VerifyReport) {
+    let _ = writeln!(md, "### Lineage verified against dbt\n");
+    if v.found_everything() {
+        let _ = writeln!(
+            md,
+            "✅ All {} dependencies dbt records for {} models were found.",
+            v.manifest_edges, v.nodes_compared
+        );
+    } else {
+        let _ = writeln!(
+            md,
+            "⚠️ Found {} of {} dependencies dbt records ({:.1}%). Missed:\n",
+            v.matched_edges,
+            v.manifest_edges,
+            v.recall()
+        );
+        let _ = writeln!(md, "| Model | Upstream dbt records |");
+        let _ = writeln!(md, "| --- | --- |");
+        for e in v.missing.iter().take(MAX_ROWS) {
+            let _ = writeln!(md, "| `{}` | `{}` |", e.child, e.parent);
+        }
+        if v.missing.len() > MAX_ROWS {
+            let _ = writeln!(md, "\n…and {} more.", v.missing.len() - MAX_ROWS);
+        }
+        for id in v.only_in_manifest.iter().take(MAX_ROWS) {
+            let _ = writeln!(md, "| `{id}` | (model not found by parsing) |");
+        }
+    }
+    if !v.extra.is_empty() {
+        let _ = writeln!(
+            md,
+            "\n{} more dependencies sit in Jinja branches the current vars switch off; \
+             dbt-lineage keeps them so impact analysis doesn't miss them.",
+            v.extra.len()
+        );
     }
     md.push('\n');
 }

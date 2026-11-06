@@ -241,6 +241,7 @@ fn run(cli: Cli) -> Result<()> {
                     outputs,
                     fail_on,
                     no_lint,
+                    verify,
                 } => run_ci_report_command(&CiReportArgs {
                     base,
                     head: head.as_deref(),
@@ -250,6 +251,7 @@ fn run(cli: Cli) -> Result<()> {
                     outputs: outputs.as_ref(),
                     fail_on,
                     no_lint: *no_lint,
+                    verify: *verify,
                 }),
                 cli::CiAction::Comment { file } => run_ci_comment_command(file),
                 cli::CiAction::Annotations {
@@ -929,6 +931,7 @@ struct CiReportArgs<'a> {
     outputs: Option<&'a PathBuf>,
     fail_on: &'a [dbt_lineage::ci::FailOn],
     no_lint: bool,
+    verify: bool,
 }
 
 /// Run `ci report`: every analysis a PR/MR comment needs, rendered as one
@@ -1005,10 +1008,31 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
         Some(m) => resolve_manifest_path(m).ok(),
         None => Some(project_dir.join("target").join("manifest.json")).filter(|p| p.exists()),
     };
-    if let Some(path) = manifest_path {
-        match parser::manifest_check::check_manifest(&project_dir, &path) {
+    if let Some(path) = &manifest_path {
+        match parser::manifest_check::check_manifest(&project_dir, path) {
             Ok(check) => report.manifest_check = Some(check),
             Err(e) => record("manifest", e),
+        }
+    }
+
+    // Parsed lineage vs. dbt's, when asked and a manifest is available.
+    if args.verify {
+        let result = match &manifest_path {
+            Some(path) => build_dag(&project_dir, None, false).and_then(|parsed| {
+                let from_manifest = parser::manifest::build_graph_from_manifest(path)?;
+                Ok(graph::verify::verify(
+                    &parsed,
+                    &from_manifest,
+                    graph::verify::file_in_project(&project_dir),
+                ))
+            }),
+            None => Err(anyhow::anyhow!(
+                "no target/manifest.json: run `dbt parse` before dbt-lineage"
+            )),
+        };
+        match result {
+            Ok(v) => report.verify = Some(v),
+            Err(e) => record("verify", e),
         }
     }
 
