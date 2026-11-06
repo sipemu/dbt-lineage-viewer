@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use petgraph::stable_graph::NodeIndex;
@@ -36,10 +36,15 @@ pub struct ManifestSemanticModel {
     pub depends_on: DependsOn,
     pub description: Option<String>,
     pub path: Option<String>,
-    /// Path relative to the project root (`path` is relative to the
-    /// resource folder, e.g. `staging/x.sql` instead of `models/staging/x.sql`).
+    /// Path relative to the root of the node's package (`path` is relative
+    /// to the resource folder, e.g. `staging/x.sql` instead of
+    /// `models/staging/x.sql`).
     #[serde(default)]
     pub original_file_path: Option<String>,
+    /// The dbt project the node belongs to: the root project or an installed
+    /// package. `original_file_path` is relative to that project's root.
+    #[serde(default)]
+    pub package_name: Option<String>,
 }
 
 /// A metric node from `manifest.metrics.*`.
@@ -69,10 +74,15 @@ pub struct ManifestNode {
     pub config: ManifestConfig,
     pub description: Option<String>,
     pub path: Option<String>,
-    /// Path relative to the project root (`path` is relative to the
-    /// resource folder, e.g. `staging/x.sql` instead of `models/staging/x.sql`).
+    /// Path relative to the root of the node's package (`path` is relative
+    /// to the resource folder, e.g. `staging/x.sql` instead of
+    /// `models/staging/x.sql`).
     #[serde(default)]
     pub original_file_path: Option<String>,
+    /// The dbt project the node belongs to: the root project or an installed
+    /// package. `original_file_path` is relative to that project's root.
+    #[serde(default)]
+    pub package_name: Option<String>,
     /// Raw Jinja SQL as authored. Present on `dbt compile` output for models,
     /// snapshots, and singular tests. Absent on seeds and sources.
     #[serde(default)]
@@ -201,12 +211,32 @@ pub fn normalize_relation(name: &str) -> String {
         .to_lowercase()
 }
 
-/// Load compiled SQL from `manifest_path`, verifying each model's file under
-/// `project_dir` against dbt's recorded checksum so an outdated manifest
-/// never stands in for changed code. `None` without any usable compiled SQL.
+/// Root directory per dbt project name: `project_dir` for its own project,
+/// `dbt_packages/<dir>` for each installed package.
+fn package_roots(project_dir: &Path) -> HashMap<String, PathBuf> {
+    let mut roots = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(project_dir.join("dbt_packages")) {
+        for e in entries.filter_map(Result::ok) {
+            if let Ok(p) = super::project::DbtProject::load(&e.path()) {
+                roots.insert(p.name, e.path());
+            }
+        }
+    }
+    if let Ok(p) = super::project::DbtProject::load(project_dir) {
+        roots.insert(p.name, project_dir.to_path_buf());
+    }
+    roots
+}
+
+/// Load compiled SQL from `manifest_path`, verifying each model's file
+/// against dbt's recorded checksum so an outdated manifest never stands in
+/// for changed code. A file is looked up in its package's directory
+/// (`project_dir` or `project_dir/dbt_packages/<package>`), since dbt records
+/// paths relative to the package root. `None` without any usable compiled SQL.
 pub fn load_compiled_sql(manifest_path: &Path, project_dir: &Path) -> Option<CompiledSql> {
     let content = std::fs::read_to_string(manifest_path).ok()?;
     let manifest: Manifest = serde_json::from_str(&content).ok()?;
+    let roots = package_roots(project_dir);
     let mut compiled = CompiledSql::default();
     for (uid, node) in &manifest.nodes {
         let id = simplify_unique_id(uid, &node.resource_type);
@@ -225,8 +255,13 @@ pub fn load_compiled_sql(manifest_path: &Path, project_dir: &Path) -> Option<Com
         ) else {
             continue;
         };
+        let root = node
+            .package_name
+            .as_ref()
+            .and_then(|p| roots.get(p))
+            .map_or(project_dir, PathBuf::as_path);
         let unchanged = sum.name == "sha256"
-            && std::fs::read(project_dir.join(file)).is_ok_and(|bytes| {
+            && std::fs::read(root.join(file)).is_ok_and(|bytes| {
                 super::manifest_check::dbt_checksum_matches(&bytes, &sum.checksum)
             });
         if unchanged && !sql.trim().is_empty() {
@@ -677,6 +712,44 @@ mod tests {
     }
 
     #[test]
+    fn load_compiled_sql_checks_package_files_in_their_package() {
+        // dbt records a package model's path relative to the package root.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let write = |rel: &str, text: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        write("dbt_project.yml", "name: proj\n");
+        write("models/a.sql", "select 1 as x");
+        write("dbt_packages/pkg_dir/dbt_project.yml", "name: pkg\n");
+        write("dbt_packages/pkg_dir/models/a.sql", "select 2 as y");
+        let sum = |text: &str| crate::parser::manifest_check::sha256_for_test(text.as_bytes());
+        let manifest = serde_json::json!({
+            "nodes": {
+                "model.proj.a": {"unique_id": "model.proj.a", "name": "a",
+                    "resource_type": "model", "package_name": "proj",
+                    "original_file_path": "models/a.sql", "compiled_code": "select 1 as x",
+                    "checksum": {"name": "sha256", "checksum": sum("select 1 as x")}},
+                "model.pkg.b": {"unique_id": "model.pkg.b", "name": "b",
+                    "resource_type": "model", "package_name": "pkg",
+                    "original_file_path": "models/a.sql", "compiled_code": "select 2 as y",
+                    "checksum": {"name": "sha256", "checksum": sum("select 2 as y")}}
+            },
+            "sources": {}
+        });
+        let path = root.join("manifest.json");
+        std::fs::write(&path, manifest.to_string()).unwrap();
+        let compiled = load_compiled_sql(&path, root).unwrap();
+        assert!(compiled.sql.contains_key("model.a"));
+        assert!(
+            compiled.sql.contains_key("model.b"),
+            "found under dbt_packages"
+        );
+    }
+
+    #[test]
     fn file_path_prefers_original_file_path() {
         let manifest: Manifest = serde_json::from_str(
             r#"{
@@ -801,6 +874,7 @@ mod tests {
                     description: Some("Staged orders".to_string()),
                     path: Some("models/staging/stg_orders.sql".to_string()),
                     original_file_path: None,
+                    package_name: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -864,6 +938,7 @@ mod tests {
                     description: None,
                     path: None,
                     original_file_path: None,
+                    package_name: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -916,6 +991,7 @@ mod tests {
                         description: None,
                         path: Some("seeds/countries.csv".to_string()),
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -936,6 +1012,7 @@ mod tests {
                         description: None,
                         path: Some("snapshots/snap_orders.sql".to_string()),
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -980,6 +1057,7 @@ mod tests {
                         description: None,
                         path: None,
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -999,6 +1077,7 @@ mod tests {
                         description: None,
                         path: Some("tests/assert_positive.sql".to_string()),
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -1055,6 +1134,7 @@ mod tests {
                     description: None,
                     path: None,
                     original_file_path: None,
+                    package_name: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -1089,6 +1169,7 @@ mod tests {
                     description: None,
                     path: None,
                     original_file_path: None,
+                    package_name: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -1176,6 +1257,7 @@ mod tests {
                     description: None,
                     path: None,
                     original_file_path: None,
+                    package_name: None,
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
@@ -1214,6 +1296,7 @@ mod tests {
                         description: None,
                         path: None,
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -1233,6 +1316,7 @@ mod tests {
                         description: None,
                         path: None,
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
@@ -1258,6 +1342,7 @@ mod tests {
                         description: Some("Order fact table".to_string()),
                         path: None,
                         original_file_path: None,
+                        package_name: None,
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,

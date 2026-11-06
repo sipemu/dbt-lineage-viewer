@@ -600,12 +600,12 @@ impl Binder<'_> {
                 }
                 SelectItem::UnnamedExpr(expr) => {
                     if let Some(name) = expr_name(expr) {
-                        let inputs = self.inputs(expr, &rels);
+                        let inputs = self.inputs(expr, &rels, ctes);
                         scope.cols.push((name, inputs, true));
                     }
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    let inputs = self.inputs(expr, &rels);
+                    let inputs = self.inputs(expr, &rels, ctes);
                     let bare = matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_));
                     scope.cols.push((alias.value.to_lowercase(), inputs, bare));
                 }
@@ -694,11 +694,27 @@ impl Binder<'_> {
         }
     }
 
-    /// The columns an expression reads, bound to the FROM relations.
-    fn inputs(&self, expr: &Expr, rels: &[(String, Rel)]) -> Vec<Input> {
+    /// The columns an expression reads, bound to the FROM relations. A scalar
+    /// subquery (`(select name from measures where id = 'x')`) reads the
+    /// column it selects.
+    fn inputs(
+        &self,
+        expr: &Expr,
+        rels: &[(String, Rel)],
+        ctes: &HashMap<String, Rel>,
+    ) -> Vec<Input> {
         let mut refs = ColumnRefs::default();
         let _ = expr.visit(&mut refs);
         let mut out = Vec::new();
+        for q in &refs.subqueries {
+            let scope = self.query(q, ctes);
+            if let Some(col) = scope.cols.first().map(|(c, _, _)| c.clone()) {
+                out.push(Input {
+                    rel: Rel::Derived(Rc::new(scope)),
+                    col,
+                });
+            }
+        }
         for (qualifier, col) in refs.found {
             let rel = match qualifier {
                 Some(q) => rels.iter().find(|(a, _)| *a == q).map(|(_, r)| r.clone()),
@@ -761,10 +777,12 @@ const NOT_COLUMNS: &[&str] = &[
     "null",
 ];
 
-/// Column references in an expression, outside nested subqueries.
+/// Column references in an expression, outside nested subqueries, and the
+/// scalar subqueries it contains (not those nested in them).
 #[derive(Default)]
 struct ColumnRefs {
     found: Vec<(Option<String>, String)>,
+    subqueries: Vec<Query>,
     subquery_depth: usize,
 }
 
@@ -786,6 +804,7 @@ impl Visitor for ColumnRefs {
             return ControlFlow::Continue(());
         }
         match expr {
+            Expr::Subquery(q) => self.subqueries.push(q.as_ref().clone()),
             Expr::Identifier(i) => {
                 let col = i.value.to_lowercase();
                 if !NOT_COLUMNS.contains(&col.as_str()) {
@@ -1318,5 +1337,21 @@ mod tests {
     fn scalar_subquery_columns_are_not_bound_to_outer_tables() {
         let sql = "select id, (select max(x) from other) as m from {{ ref('a') }}";
         assert_eq!(pairs(sql, &[]), vec![p("model.a.id", "id")]);
+    }
+
+    #[test]
+    fn scalar_subquery_reads_the_column_it_selects() {
+        let sql = "select cast((select name from {{ ref('measures') }} where id = 'X') as text) \
+                   as measure_name, b from {{ ref('a') }}";
+        assert_eq!(
+            pairs(
+                sql,
+                &[("model.measures", &["id", "name"]), ("model.a", &["b"])]
+            ),
+            vec![
+                p("model.a.b", "b"),
+                p("model.measures.name", "measure_name")
+            ]
+        );
     }
 }
