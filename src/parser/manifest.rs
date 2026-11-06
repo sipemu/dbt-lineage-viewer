@@ -84,6 +84,10 @@ pub struct ManifestNode {
     /// versions emit `{"name": "sha256", "checksum": "<hex>"}`.
     #[serde(default)]
     pub checksum: Option<NodeChecksum>,
+    /// Fully qualified relation, e.g. `"db"."schema"."orders"`. Absent for
+    /// ephemeral models.
+    #[serde(default)]
+    pub relation_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +102,8 @@ pub struct ManifestSource {
     pub unique_id: String,
     pub name: String,
     pub source_name: String,
+    #[serde(default)]
+    pub relation_name: Option<String>,
     #[serde(default)]
     pub resource_type: String,
     pub description: Option<String>,
@@ -170,6 +176,69 @@ fn simplify_unique_id(unique_id: &str, resource_type: &str) -> String {
             }
         }
     }
+}
+
+/// Compiled SQL from a `manifest.json` written by `dbt compile` / `dbt run`,
+/// for column lineage of models whose SQL Jinja generates.
+#[derive(Debug, Default, Clone)]
+pub struct CompiledSql {
+    /// Node id (`model.x`) → compiled SQL, only for models whose source file
+    /// still matches the checksum dbt recorded.
+    pub sql: HashMap<String, String>,
+    /// Normalized relation name (`db.schema.orders`) → node id.
+    pub relations: HashMap<String, String>,
+}
+
+/// Lowercase a relation name and drop identifier quoting:
+/// `"DB"."Schema"."Orders"` → `db.schema.orders`.
+pub fn normalize_relation(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, '"' | '`' | '[' | ']'))
+        .collect::<String>()
+        .trim()
+        .to_lowercase()
+}
+
+/// Load compiled SQL from `manifest_path`, verifying each model's file under
+/// `project_dir` against dbt's recorded checksum so an outdated manifest
+/// never stands in for changed code. `None` without any usable compiled SQL.
+pub fn load_compiled_sql(manifest_path: &Path, project_dir: &Path) -> Option<CompiledSql> {
+    let content = std::fs::read_to_string(manifest_path).ok()?;
+    let manifest: Manifest = serde_json::from_str(&content).ok()?;
+    let mut compiled = CompiledSql::default();
+    for (uid, node) in &manifest.nodes {
+        let id = simplify_unique_id(uid, &node.resource_type);
+        if let Some(rel) = &node.relation_name {
+            compiled
+                .relations
+                .insert(normalize_relation(rel), id.clone());
+        }
+        if !matches!(node.resource_type.as_str(), "model" | "snapshot") {
+            continue;
+        }
+        let (Some(sql), Some(file), Some(sum)) = (
+            &node.compiled_code,
+            &node.original_file_path,
+            &node.checksum,
+        ) else {
+            continue;
+        };
+        let unchanged = sum.name == "sha256"
+            && std::fs::read(project_dir.join(file)).is_ok_and(|bytes| {
+                super::manifest_check::dbt_checksum_matches(&bytes, &sum.checksum)
+            });
+        if unchanged && !sql.trim().is_empty() {
+            compiled.sql.insert(id, sql.clone());
+        }
+    }
+    for (uid, source) in &manifest.sources {
+        if let Some(rel) = &source.relation_name {
+            compiled
+                .relations
+                .insert(normalize_relation(rel), simplify_unique_id(uid, "source"));
+        }
+    }
+    (!compiled.sql.is_empty()).then_some(compiled)
 }
 
 /// Build a LineageGraph from a parsed manifest.json file.
@@ -501,6 +570,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn load_compiled_sql_skips_changed_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("models")).unwrap();
+        std::fs::write(root.join("models/a.sql"), "select 1 as x").unwrap();
+        std::fs::write(root.join("models/b.sql"), "select 2 as y -- edited").unwrap();
+        let sum = |text: &str| crate::parser::manifest_check::sha256_for_test(text.as_bytes());
+        let manifest = serde_json::json!({
+            "nodes": {
+                "model.p.a": {"unique_id": "model.p.a", "name": "a", "resource_type": "model",
+                    "original_file_path": "models/a.sql", "compiled_code": "select 1 as x",
+                    "relation_name": "\"db\".\"main\".\"a\"",
+                    "checksum": {"name": "sha256", "checksum": sum("select 1 as x")}},
+                "model.p.b": {"unique_id": "model.p.b", "name": "b", "resource_type": "model",
+                    "original_file_path": "models/b.sql", "compiled_code": "select 2 as y",
+                    "checksum": {"name": "sha256", "checksum": sum("select 2 as y")}}
+            },
+            "sources": {}
+        });
+        let path = root.join("manifest.json");
+        std::fs::write(&path, manifest.to_string()).unwrap();
+        let compiled = load_compiled_sql(&path, root).unwrap();
+        assert!(compiled.sql.contains_key("model.a"));
+        assert!(
+            !compiled.sql.contains_key("model.b"),
+            "b changed since compile"
+        );
+        assert_eq!(
+            compiled.relations.get("db.main.a").map(String::as_str),
+            Some("model.a")
+        );
+    }
+
+    #[test]
     fn file_path_prefers_original_file_path() {
         let manifest: Manifest = serde_json::from_str(
             r#"{
@@ -628,6 +731,7 @@ mod tests {
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
+                    relation_name: None,
                 },
             )]),
             sources: HashMap::from([(
@@ -636,6 +740,7 @@ mod tests {
                     unique_id: "source.proj.raw.orders".to_string(),
                     name: "orders".to_string(),
                     source_name: "raw".to_string(),
+                    relation_name: None,
                     resource_type: "source".to_string(),
                     description: Some("Raw orders table".to_string()),
                     path: Some("models/staging/schema.yml".to_string()),
@@ -689,6 +794,7 @@ mod tests {
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
+                    relation_name: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -740,6 +846,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
                 (
@@ -759,6 +866,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
             ]),
@@ -802,6 +910,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
                 (
@@ -820,6 +929,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
             ]),
@@ -875,6 +985,7 @@ mod tests {
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
+                    relation_name: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -908,6 +1019,7 @@ mod tests {
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
+                    relation_name: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -994,6 +1106,7 @@ mod tests {
                     raw_code: None,
                     compiled_code: None,
                     checksum: None,
+                    relation_name: None,
                 },
             )]),
             sources: HashMap::new(),
@@ -1031,6 +1144,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
                 (
@@ -1049,6 +1163,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
                 (
@@ -1073,6 +1188,7 @@ mod tests {
                         raw_code: None,
                         compiled_code: None,
                         checksum: None,
+                        relation_name: None,
                     },
                 ),
             ]),
@@ -1083,6 +1199,7 @@ mod tests {
                         unique_id: "source.proj.raw.orders".to_string(),
                         name: "orders".to_string(),
                         source_name: "raw".to_string(),
+                        relation_name: None,
                         resource_type: "source".to_string(),
                         description: None,
                         path: None,
@@ -1095,6 +1212,7 @@ mod tests {
                         unique_id: "source.proj.raw.payments".to_string(),
                         name: "payments".to_string(),
                         source_name: "raw".to_string(),
+                        relation_name: None,
                         resource_type: "source".to_string(),
                         description: None,
                         path: None,

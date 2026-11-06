@@ -571,6 +571,11 @@ pub enum CiAction {
         /// first) and report how much of dbt's lineage was found
         #[arg(long)]
         verify: bool,
+        /// manifest.json compiled from the base branch (e.g. production's).
+        /// With a compiled `target/manifest.json` in the head too, column
+        /// impact reads dbt-compiled SQL instead of parsing Jinja
+        #[arg(long)]
+        base_manifest: Option<PathBuf>,
     },
     /// Create or update one sticky comment on the current PR/MR. Token:
     /// `DBT_LINEAGE_TOKEN`, else GITHUB_TOKEN / GITLAB_TOKEN (project access

@@ -242,6 +242,7 @@ fn run(cli: Cli) -> Result<()> {
                     fail_on,
                     no_lint,
                     verify,
+                    base_manifest,
                 } => run_ci_report_command(&CiReportArgs {
                     base,
                     head: head.as_deref(),
@@ -252,6 +253,7 @@ fn run(cli: Cli) -> Result<()> {
                     fail_on,
                     no_lint: *no_lint,
                     verify: *verify,
+                    base_manifest: base_manifest.as_ref(),
                 }),
                 cli::CiAction::Comment { file } => run_ci_comment_command(file),
                 cli::CiAction::Annotations {
@@ -932,6 +934,7 @@ struct CiReportArgs<'a> {
     fail_on: &'a [dbt_lineage::ci::FailOn],
     no_lint: bool,
     verify: bool,
+    base_manifest: Option<&'a PathBuf>,
 }
 
 /// Run `ci report`: every analysis a PR/MR comment needs, rendered as one
@@ -981,7 +984,7 @@ fn run_ci_report_command(args: &CiReportArgs) -> Result<()> {
         b => Some(b.to_string()),
     };
     if let Some(base) = base {
-        match ci_diff(&project_dir, &base, args.head) {
+        match ci_diff(&project_dir, &base, args.head, args.base_manifest) {
             Ok((diff, head_graph)) => {
                 report.impact_diagram = ci::impact_mermaid(&diff, &head_graph);
                 // Head files are only on disk when head is the working tree.
@@ -1369,6 +1372,7 @@ fn ci_diff(
     project_dir: &Path,
     base: &str,
     head: Option<&str>,
+    base_manifest: Option<&PathBuf>,
 ) -> Result<(graph::diff::LineageDiff, graph::types::LineageGraph)> {
     if !dbt_lineage::git::is_git_repo(project_dir) {
         anyhow::bail!("Not a git repository: {}", project_dir.display());
@@ -1377,7 +1381,7 @@ fn ci_diff(
     if let Some(head_ref) = head {
         dbt_lineage::git::validate_ref(project_dir, head_ref)?;
     }
-    graph::diff::diff_git_with_head(project_dir, &base, head)
+    graph::diff::diff_git_with_head(project_dir, &base, head, base_manifest.map(|p| p.as_path()))
 }
 
 /// File locations relative to the repository root, for inline CI annotations.

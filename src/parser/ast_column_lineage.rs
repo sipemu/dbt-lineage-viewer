@@ -41,9 +41,12 @@ use sqlparser::parser::Parser;
 use crate::graph::types::{LineageGraph, NodeType};
 
 use super::column_lineage::{ColumnConfidence, ColumnEdge, ColumnLineage};
+use super::manifest::{normalize_relation, CompiledSql};
 
 /// Resolve column lineage for the entire graph using the SQL AST. Relative
-/// node file paths are read relative to `root`.
+/// node file paths are read relative to `root`. Models whose compiled SQL is
+/// in `root/target/manifest.json` (and whose file is unchanged since) are
+/// analyzed from that SQL instead.
 pub fn resolve_column_lineage_ast_in(
     graph: &LineageGraph,
     root: &std::path::Path,
@@ -59,9 +62,26 @@ pub fn resolve_column_lineage_ast_for(
     root: &std::path::Path,
     only: Option<&HashSet<NodeIndex>>,
 ) -> ColumnLineage {
+    let compiled = compiled_sql_in(root);
+    resolve_column_lineage_ast_with(graph, root, only, compiled.as_ref())
+}
+
+/// Like [`resolve_column_lineage_ast_for`] with explicit compiled SQL (`None`:
+/// raw SQL only).
+pub fn resolve_column_lineage_ast_with(
+    graph: &LineageGraph,
+    root: &std::path::Path,
+    only: Option<&HashSet<NodeIndex>>,
+    compiled: Option<&CompiledSql>,
+) -> ColumnLineage {
     ColumnLineage {
-        edges: analyze_graph(graph, root, only).0,
+        edges: analyze_graph(graph, root, only, compiled).0,
     }
+}
+
+/// Compiled SQL from `root/target/manifest.json`, when it has any.
+pub fn compiled_sql_in(root: &std::path::Path) -> Option<CompiledSql> {
+    super::manifest::load_compiled_sql(&root.join("target").join("manifest.json"), root)
 }
 
 /// Output columns (lowercase) of every model and snapshot whose columns are
@@ -69,6 +89,7 @@ pub fn resolve_column_lineage_ast_for(
 pub fn model_output_columns(
     graph: &LineageGraph,
     root: &std::path::Path,
+    compiled: Option<&CompiledSql>,
 ) -> HashMap<String, Vec<String>> {
     let models: HashSet<&str> = graph
         .node_indices()
@@ -76,7 +97,7 @@ pub fn model_output_columns(
         .filter(|n| matches!(n.node_type, NodeType::Model | NodeType::Snapshot))
         .map(|n| n.unique_id.as_str())
         .collect();
-    analyze_graph(graph, root, Some(&HashSet::new()))
+    analyze_graph(graph, root, Some(&HashSet::new()), compiled)
         .1
         .into_iter()
         .filter(|(id, _)| models.contains(id.as_str()))
@@ -89,6 +110,7 @@ fn analyze_graph(
     graph: &LineageGraph,
     root: &std::path::Path,
     only: Option<&HashSet<NodeIndex>>,
+    compiled: Option<&CompiledSql>,
 ) -> (Vec<ColumnEdge>, HashMap<String, Vec<String>>) {
     let relations = Relations::new(graph);
     let mut schema: HashMap<String, Vec<String>> = graph
@@ -119,7 +141,14 @@ fn analyze_graph(
             .map(|p| graph[p].unique_id.clone())
             .collect();
         let declared = lower_all(&node.columns);
-        let Some(model) = analyze_model(&sql, &relations, &schema, &parents, &declared) else {
+        let model = match compiled.and_then(|c| c.sql.get(&node.unique_id).map(|sql| (c, sql))) {
+            Some((c, compiled_sql)) => {
+                analyze_compiled(compiled_sql, &c.relations, &schema, &declared)
+                    .or_else(|| analyze_model(&sql, &relations, &schema, &parents, &declared))
+            }
+            None => analyze_model(&sql, &relations, &schema, &parents, &declared),
+        };
+        let Some(model) = model else {
             continue;
         };
         if let Some(cols) = &model.columns {
@@ -399,7 +428,12 @@ impl Scope {
 struct Binder<'a> {
     schema: &'a HashMap<String, Vec<String>>,
     placeholders: &'a [String],
+    /// Compiled SQL: normalized relation name → node id.
+    relations: Option<&'a HashMap<String, String>>,
 }
+
+/// dbt inlines ephemeral models into compiled SQL as CTEs with this prefix.
+const EPHEMERAL_CTE: &str = "__dbt__cte__";
 
 impl Binder<'_> {
     /// Known columns of a relation; `None` when unknown.
@@ -579,8 +613,19 @@ impl Binder<'_> {
                     .last()
                     .map(|i| i.value.to_lowercase())
                     .unwrap_or_default();
-                let rel = if name.0.len() == 1 && ctes.contains_key(&last) {
+                let rel = if let Some(model) = last
+                    .strip_prefix(EPHEMERAL_CTE)
+                    .filter(|_| self.relations.is_some())
+                {
+                    // An inlined ephemeral model: lineage stops at the model.
+                    Rel::Base(format!("model.{model}"))
+                } else if name.0.len() == 1 && ctes.contains_key(&last) {
                     ctes[&last].clone()
+                } else if let Some(id) = self.relations.and_then(|r| {
+                    let full: Vec<&str> = name.0.iter().map(|i| i.value.as_str()).collect();
+                    r.get(&normalize_relation(&full.join(".")))
+                }) {
+                    Rel::Base(id.clone())
                 } else if let Some(i) = last
                     .strip_prefix(REL_PREFIX)
                     .and_then(|s| s.strip_suffix("__"))
@@ -788,8 +833,30 @@ fn analyze_model(
     let binder = Binder {
         schema,
         placeholders: &placeholders,
+        relations: None,
     };
-    let scope = binder.query(&query, &HashMap::new());
+    Some(model_result(&binder, &query, declared))
+}
+
+/// Analyze SQL dbt compiled (no Jinja), resolving relation names through the
+/// manifest.
+fn analyze_compiled(
+    sql: &str,
+    relations: &HashMap<String, String>,
+    schema: &HashMap<String, Vec<String>>,
+    declared: &[String],
+) -> Option<ModelResult> {
+    let query = parse(sql)?;
+    let binder = Binder {
+        schema,
+        placeholders: &[],
+        relations: Some(relations),
+    };
+    Some(model_result(&binder, &query, declared))
+}
+
+fn model_result(binder: &Binder, query: &Query, declared: &[String]) -> ModelResult {
+    let scope = binder.query(query, &HashMap::new());
 
     let mut edges = Vec::new();
     let mut columns: Vec<String> = Vec::new();
@@ -880,10 +947,10 @@ fn analyze_model(
             }
         }
     }
-    Some(ModelResult {
+    ModelResult {
         columns: complete.then_some(columns),
         edges,
-    })
+    }
 }
 
 static FOR_LOOP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{%-?\s*for\s").unwrap());
@@ -1130,6 +1197,53 @@ mod tests {
             "with b as (select {{ fill_staging_columns(a, b) }} from {{ ref('a') }}) select * from b"
         ));
         assert!(sql_generated_by_jinja("{{ union_connections('x', 'y') }}"));
+    }
+
+    #[test]
+    fn compiled_sql_resolves_relations_and_ephemeral_models() {
+        let relations: HashMap<String, String> = [
+            (
+                "db.main.stg_orders".to_string(),
+                "model.stg_orders".to_string(),
+            ),
+            (
+                "db.raw.customers".to_string(),
+                "source.raw.customers".to_string(),
+            ),
+        ]
+        .into();
+        let sql = r#"
+            with __dbt__cte__int_orders as (select order_id, amount from "db"."main"."stg_orders"),
+            joined as (
+                select o.order_id, o.amount, c.name
+                from __dbt__cte__int_orders o
+                join "DB"."RAW"."CUSTOMERS" c on c.id = o.order_id
+            )
+            select * from joined"#;
+        let schema = HashMap::from([(
+            "source.raw.customers".to_string(),
+            vec!["id".to_string(), "name".to_string()],
+        )]);
+        let mut got: Vec<(String, String, String)> =
+            analyze_compiled(sql, &relations, &schema, &[])
+                .unwrap()
+                .edges
+                .into_iter()
+                .map(|e| (e.source_node, e.source_column, e.target_column))
+                .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("model.int_orders".into(), "amount".into(), "amount".into()),
+                (
+                    "model.int_orders".into(),
+                    "order_id".into(),
+                    "order_id".into()
+                ),
+                ("source.raw.customers".into(), "name".into(), "name".into()),
+            ]
+        );
     }
 
     #[test]

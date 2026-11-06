@@ -147,7 +147,12 @@ fn collect_checksums(manifest: &Manifest) -> HashMap<String, String> {
 /// hashes SQL/YAML with all whitespace runs collapsed to one space
 /// (`" ".join(contents.split())`); seeds and older versions hash the
 /// contents with leading/trailing whitespace stripped.
-fn dbt_checksum_matches(bytes: &[u8], expected: &str) -> bool {
+#[cfg(test)]
+pub(crate) fn sha256_for_test(bytes: &[u8]) -> String {
+    sha256_hex(bytes)
+}
+
+pub(crate) fn dbt_checksum_matches(bytes: &[u8], expected: &str) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return sha256_hex(bytes) == expected;
     };

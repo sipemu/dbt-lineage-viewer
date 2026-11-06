@@ -5,6 +5,18 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Column lineage reads dbt-compiled SQL from `target/manifest.json` (after
+  `dbt compile` / `dbt run`) for every model whose file still matches the
+  checksum dbt recorded; relation names and inlined ephemeral models map back
+  to graph nodes. Measured against sqlglot, Fivetran's dbt_jira goes from 22%
+  to 100% of column dependencies and dbt_hubspot from 15% to 100%.
+- `ci report --base-manifest` (Action: `base-manifest`): the base branch's
+  compiled manifest, so PR column impact uses compiled SQL on both sides.
+  Per model, both sides use the same method (compiled only when both have it
+  for that model), so an edited file never shows spurious removed columns.
+
 ## [0.17.0] – 2026-11-06
 
 ### Added

@@ -127,18 +127,28 @@ is measured the same way against a reference: [sqlglot](https://github.com/tobym
 column lineage over the SQL dbt compiled after `dbt seed` and `dbt run` on
 DuckDB ([`scripts/accuracy-columns/`](scripts/accuracy-columns)).
 
-| Project | Column dependencies found | Precision | In plain-SQL models |
-| --- | ---: | ---: | ---: |
-| jaffle-shop | 87 / 87 | 100% | 100% |
-| Fivetran dbt_jira | 157 / 712 | 51% | 100% (8 / 8) |
-| Fivetran dbt_hubspot | 186 / 1,259 | 27% | 100% (56 / 56) |
+| Project | From SQL alone | Precision | With compiled SQL | Precision |
+| --- | ---: | ---: | ---: | ---: |
+| jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
+| Fivetran dbt_jira | 157 / 712 | 51% | 712 / 712 | 98% |
+| Fivetran dbt_hubspot | 186 / 1,259 | 27% | 1,259 / 1,259 | 96% |
 
-Columns of models written in SQL are traced completely, through CTEs,
-subqueries, joins, unions and `select *`. Fivetran's packages generate 99% of
-their SELECTs with Jinja loops and macros (column lists from vars, whole
-queries from macros). No SQL parser can see those columns without rendering
-Jinja, and most of the "imprecise" edges there come from models the test
-setup fills with `null` because its sources don't exist.
+From SQL alone, columns of models written in SQL are traced completely,
+through CTEs, subqueries, joins, unions and `select *`. Fivetran's packages
+generate 99% of their SELECTs with Jinja loops and macros (column lists from
+vars, whole queries from macros), and no SQL parser can see those columns
+without rendering Jinja. Most "imprecise" edges there come from models the
+test setup fills with `null` because its sources don't exist.
+
+**With compiled SQL:** when `target/manifest.json` holds dbt's compiled SQL
+(from `dbt compile` or `dbt run`), column lineage reads it for every model
+whose file still matches the checksum dbt recorded, so an outdated manifest
+never stands in for edited code. The remaining extra edges are
+dependencies in Jinja branches the current vars switch off, read from the raw
+SQL. For PR column impact, give `ci report` the base branch's manifest too
+(`--base-manifest`, e.g. the production manifest many teams keep for slim CI)
+and run `dbt compile` in the PR job; with compiled SQL on one side only,
+both sides use raw SQL so the before/after columns are inferred the same way.
 
 Where Jinja decides lineage at render time, the PR comment says so: a
 **Lineage may be incomplete** section lists the affected models on the

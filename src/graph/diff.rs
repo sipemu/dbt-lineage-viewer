@@ -344,15 +344,21 @@ pub fn build_graph_from_ref(project_dir: &Path, git_ref: &str) -> Result<Lineage
 /// structural diff, nodes whose SQL/Python/seed file content changed are
 /// marked modified, so `plan` rebuilds them.
 pub fn diff_git(project_dir: &Path, base: &str, head: Option<&str>) -> Result<LineageDiff> {
-    diff_git_with_head(project_dir, base, head).map(|(diff, _)| diff)
+    diff_git_with_head(project_dir, base, head, None).map(|(diff, _)| diff)
 }
 
 /// Like [`diff_git`], also returning the head graph (e.g. to draw the
 /// downstream impact of the changed nodes).
+///
+/// Column impact reads dbt-compiled SQL when both sides have it: the head's
+/// `target/manifest.json`, and `base_manifest` (e.g. production's manifest)
+/// or the base tree's own. With one side only, both use raw SQL, so the two
+/// column sets are always inferred the same way.
 pub fn diff_git_with_head(
     project_dir: &Path,
     base: &str,
     head: Option<&str>,
+    base_manifest: Option<&Path>,
 ) -> Result<(LineageDiff, LineageGraph)> {
     let base_tree = checkout_tree(project_dir, base)?;
     let head_tree = head.map(|h| checkout_tree(project_dir, h)).transpose()?;
@@ -379,8 +385,18 @@ pub fn diff_git_with_head(
 
     let mut diff = compute_diff(&base_graph, &head_graph, base, &head_label);
     mark_file_changes(&mut diff, &head_graph, base_tree.path(), head_root);
-    diff.column_impacts =
-        removed_column_impacts(&base_graph, &head_graph, base_tree.path(), head_root);
+    let base_compiled = match base_manifest {
+        Some(m) => crate::parser::manifest::load_compiled_sql(m, base_tree.path()),
+        None => crate::parser::ast_column_lineage::compiled_sql_in(base_tree.path()),
+    };
+    let head_compiled = crate::parser::ast_column_lineage::compiled_sql_in(head_root);
+    let compiled = base_compiled.zip(head_compiled);
+    diff.column_impacts = removed_column_impacts(
+        &base_graph,
+        &head_graph,
+        (base_tree.path(), compiled.as_ref().map(|c| &c.0)),
+        (head_root, compiled.as_ref().map(|c| &c.1)),
+    );
     diff.breaking_changes = crate::graph::governance::breaking_changes(
         &crate::graph::governance::load_governance(base_tree.path()),
         &crate::graph::governance::load_governance(head_root),
@@ -395,17 +411,39 @@ pub fn diff_git_with_head(
 pub fn removed_column_impacts(
     base_graph: &LineageGraph,
     head_graph: &LineageGraph,
-    base_root: &Path,
-    head_root: &Path,
+    (base_root, base_compiled): (&Path, Option<&crate::parser::manifest::CompiledSql>),
+    (head_root, head_compiled): (&Path, Option<&crate::parser::manifest::CompiledSql>),
 ) -> Vec<ColumnImpact> {
     let head_nodes = collect_node_map(head_graph);
     // Output columns as the SQL analyzer infers them (through CTEs and `*`),
-    // else the columns read from the outermost SELECT or YAML.
-    let base_cols = crate::parser::ast_column_lineage::model_output_columns(base_graph, base_root);
-    let head_cols = crate::parser::ast_column_lineage::model_output_columns(head_graph, head_root);
-    let columns_of = |inferred: &HashMap<String, Vec<String>>, n: &NodeData| -> Vec<String> {
+    // else the columns read from the outermost SELECT or YAML. A model's two
+    // column sets always come from the same method: dbt-compiled SQL when
+    // both sides have it for that model, raw SQL otherwise. (An edited file
+    // no longer matches the manifest's checksum, so mixing methods would
+    // report every difference between them as a removal.)
+    use crate::parser::ast_column_lineage::model_output_columns;
+    let raw = (
+        model_output_columns(base_graph, base_root, None),
+        model_output_columns(head_graph, head_root, None),
+    );
+    let compiled = base_compiled.zip(head_compiled).map(|(b, h)| {
+        (
+            model_output_columns(base_graph, base_root, Some(b)),
+            model_output_columns(head_graph, head_root, Some(h)),
+            b,
+            h,
+        )
+    });
+    let inferred = |id: &str| -> (Option<&Vec<String>>, Option<&Vec<String>>) {
+        match &compiled {
+            Some((bc, hc, b, h)) if b.sql.contains_key(id) && h.sql.contains_key(id) => {
+                (bc.get(id), hc.get(id))
+            }
+            _ => (raw.0.get(id), raw.1.get(id)),
+        }
+    };
+    let columns_of = |inferred: Option<&Vec<String>>, n: &NodeData| -> Vec<String> {
         inferred
-            .get(&n.unique_id)
             .cloned()
             .unwrap_or_else(|| n.columns.iter().map(|c| c.to_lowercase()).collect())
     };
@@ -414,10 +452,11 @@ pub fn removed_column_impacts(
         .map(|i| &base_graph[i])
         .filter(|n| n.node_type == NodeType::Model)
         .flat_map(|n| {
+            let (base_inferred, head_inferred) = inferred(&n.unique_id);
             let head = head_nodes
                 .get(&n.unique_id)
-                .map(|h| columns_of(&head_cols, h));
-            columns_of(&base_cols, n)
+                .map(|h| columns_of(head_inferred, h));
+            columns_of(base_inferred, n)
                 .into_iter()
                 .filter(move |c| head.as_ref().is_none_or(|hc| !hc.contains(c)))
                 .map(move |c| (n, c))
@@ -446,10 +485,11 @@ pub fn removed_column_impacts(
         }
     }
     let lineage = {
-        let mut edges = crate::parser::ast_column_lineage::resolve_column_lineage_ast_for(
+        let mut edges = crate::parser::ast_column_lineage::resolve_column_lineage_ast_with(
             base_graph,
             base_root,
             Some(&scope),
+            base_compiled,
         )
         .edges;
         edges.extend(
@@ -660,6 +700,67 @@ fn parse_models_from_git(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A project with `a` and `b` (`b` reads `a`), written to a temp dir.
+    fn project(a_sql: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dbt_project.yml"), "name: p\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/a.sql"), a_sql).unwrap();
+        std::fs::write(
+            dir.path().join("models/b.sql"),
+            "select x, y from {{ ref('a') }}",
+        )
+        .unwrap();
+        dir
+    }
+
+    fn compiled(sql: &[(&str, &str)]) -> crate::parser::manifest::CompiledSql {
+        crate::parser::manifest::CompiledSql {
+            sql: sql
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            relations: HashMap::from([("db.main.a".to_string(), "model.a".to_string())]),
+        }
+    }
+
+    #[test]
+    fn removed_columns_use_one_method_per_model() {
+        let base = project("select 1 as x, 2 as y");
+        // Head edits `a` (adds z): its file no longer matches the manifest.
+        let head = project("select 1 as x, 2 as y, 3 as z");
+        let g = |d: &tempfile::TempDir| {
+            graph_from_dir(d.path(), GraphSource::Sql, false, None).unwrap()
+        };
+        let (base_g, head_g) = (g(&base), g(&head));
+        // Compiled `a` on the base yields an extra column `w` that `b` reads;
+        // the head has compiled SQL for `b` only.
+        let base_c = compiled(&[
+            ("model.a", "select 1 as x, 2 as y, 9 as w"),
+            ("model.b", "select x, y, w from db.main.a"),
+        ]);
+        let head_c = compiled(&[("model.b", "select x, y from db.main.a")]);
+        let impacts = removed_column_impacts(
+            &base_g,
+            &head_g,
+            (base.path(), Some(&base_c)),
+            (head.path(), Some(&head_c)),
+        );
+        // `a` is compared raw on both sides: nothing was removed.
+        assert!(impacts.is_empty(), "{impacts:?}");
+
+        // A real removal is still found.
+        let head = project("select 1 as x");
+        let impacts =
+            removed_column_impacts(&base_g, &g(&head), (base.path(), None), (head.path(), None));
+        assert_eq!(impacts.len(), 1);
+        assert_eq!(
+            (impacts[0].model.as_str(), impacts[0].column.as_str()),
+            ("a", "y")
+        );
+        assert_eq!(impacts[0].downstream, vec!["b.y".to_string()]);
+    }
 
     fn make_node(
         unique_id: &str,

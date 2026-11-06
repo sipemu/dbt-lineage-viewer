@@ -51,6 +51,14 @@ inputs:
       fail when parsing missed a dependency.
     required: false
     default: "false"
+  base-manifest:
+    description: >
+      Path to the base branch's manifest.json from `dbt compile` (e.g. the
+      production manifest). With a compiled target/manifest.json in the PR
+      checkout too, column impact reads dbt-compiled SQL, which covers
+      columns that Jinja loops and macros generate.
+    required: false
+    default: ""
 
 outputs:
   selector:
@@ -107,12 +115,14 @@ runs:
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_VERIFY: ${{ inputs.verify }}
+        INPUT_BASE_MANIFEST: ${{ inputs.base-manifest }}
       run: |
         set -uo pipefail
         summary_md="$RUNNER_TEMP/dbt-lineage-report.md"
         manifest_args=()
         [ -n "$INPUT_MANIFEST" ] && manifest_args=(--manifest "$INPUT_MANIFEST")
         [ "$INPUT_VERIFY" = "true" ] && manifest_args+=(--verify)
+        [ -n "$INPUT_BASE_MANIFEST" ] && manifest_args+=(--base-manifest "$INPUT_BASE_MANIFEST")
 
         rc=0
         dbt-lineage ci report -p "$INPUT_PROJECT_DIR" --base "$INPUT_BASE" ${manifest_args[@]+"${manifest_args[@]}"} \
