@@ -294,6 +294,23 @@ pub enum Command {
         output: CheckManifestOutputFormat,
     },
 
+    /// Check how closely SQL-parse lineage matches dbt's own: compares the
+    /// dependencies found by parsing with a manifest.json from `dbt parse`.
+    /// Exits with code 1 when parsing missed a dependency dbt knows about.
+    Verify {
+        /// Path to dbt project directory
+        #[arg(short = 'p', long = "project-dir", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Use manifest.json instead of the default `<project>/target/manifest.json`
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// Output format: text (default) or json
+        #[arg(short = 'o', long, default_value = "text")]
+        output: VerifyOutputFormat,
+    },
+
     /// Emit a dbt selector expression covering models added or modified since
     /// `--base`. Designed to pipe into `dbt run -s "$(dbt-lineage plan --base main)"`.
     Plan {
@@ -602,6 +619,12 @@ pub enum SummaryOutputFormat {
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum CheckManifestOutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum VerifyOutputFormat {
     Text,
     Json,
 }

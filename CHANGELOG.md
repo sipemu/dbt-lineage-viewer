@@ -7,6 +7,14 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- `dbt-lineage verify` compares SQL-parse lineage with a `manifest.json`
+  from `dbt parse`: dependencies dbt has that parsing missed, dependencies
+  parsing found that dbt doesn't record, and models only one side knows. Text
+  or JSON (with recall/precision); exits 1 when a dependency was missed.
+- README: an Accuracy section with `verify` results on five public dbt
+  projects, and a comparison with dbt v2 / the dbt VS Code extension / dbt
+  platform Advanced CI.
+
 - VS Code extension 0.2.0 (`editors/vscode`): **Show impact of my changes**
   runs `ci report` against the base branch and renders it in a panel (tables,
   offline Mermaid impact graph, status-bar item, optional refresh on save).
@@ -14,6 +22,32 @@ Notable changes per release. Full per-release notes live on the
   extension needs no separate install; a universal package falls back to
   `dbt-lineage` on `PATH`. The publish workflow builds and publishes all
   targets to the VS Code Marketplace and Open VSX.
+
+### Changed
+
+- SQL-parse lineage now finds 100% of dbt's dependencies on the five
+  projects in the README, up from 78% overall (tuva 91%, cal-itp 73%,
+  dbt_hubspot 56%, dbt_jira 83%):
+  - `ref()` / `source()` count anywhere inside `{{ }}` / `{% %}`, not only as
+    the whole expression: `{% set x = ref('a') %}`,
+    `dbt_utils.star(from=ref('a'))`, `union_relations([ref('a'), ...])`, and
+    versioned `ref('m', v=2)`.
+  - Macros that reference models are followed, with fixed refs in the body
+    or refs built from literal arguments (positional, keyword or default).
+    Macros come from the project's `macro-paths` and from installed packages
+    in `dbt_packages/`; a macro dispatching through `adapter.dispatch`
+    inherits its `default__` implementation (Fivetran's `union_connections`).
+  - Loops over literal lists, including lists built with `set` and
+    `.append()`, yield one ref/source per item.
+
+### Fixed
+
+- The lexer ended a Jinja block at a `}}` or `%}` inside a string in it
+  (`post_hook="{{ grant() }}"`), and the leftover quote then hid every ref
+  after it in the file.
+- The parse cache didn't notice edited macros or a new dbt-lineage version, so
+  results could stay stale until `--no-cache`. Both are now part of the cache
+  key.
 
 ## [0.15.0] – 2026-11-05
 

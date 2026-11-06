@@ -22,36 +22,34 @@ pub struct SourceCall {
 
 static JINJA_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{#[\s\S]*?#\}").unwrap());
 
-// Matches ref('name'), ref("name"), ref('pkg', 'name'), ref("pkg", "name")
-// Handles {{ ref(...) }} and {{- ref(...) -}} whitespace control
+/// A Jinja expression `{{ ... }}` or statement `{% ... %}`. ref() and
+/// source() count anywhere inside one, not only as the whole expression:
+/// `{% set x = ref('a') %}`, `{{ dbt_utils.star(from=ref('a')) }}`,
+/// `{{ union_relations([ref('a'), ref('b')]) }}`.
+pub(crate) static JINJA_BLOCK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}").unwrap());
+
+// ref('name'), ref('pkg', 'name'), ref('name', v=2), ref('name', version='2')
 static REF_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?x)
-        \{\{-?\s*
-        ref\s*\(\s*
-        (?:
-            # Two-argument form: ref('pkg', 'name') or ref("pkg", "name")
-            (?:['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"])
-            |
-            # Single-argument form: ref('name') or ref("name")
-            ['"]([^'"]+)['"]
-        )
-        \s*\)\s*
-        -?\}\}
+        \bref\s*\(\s*
+        ['"]([^'"]+)['"]\s*
+        (?:,\s*['"]([^'"]+)['"]\s*)?
+        (?:,\s*(?:v|version)\s*=\s*[^)]*)?
+        \)
     "#,
     )
     .unwrap()
 });
 
-// Matches source('src_name', 'table_name')
+// source('src_name', 'table_name')
 static SOURCE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?x)
-        \{\{-?\s*
-        source\s*\(\s*
+        \bsource\s*\(\s*
         ['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]
-        \s*\)\s*
-        -?\}\}
+        \s*\)
     "#,
     )
     .unwrap()
@@ -70,18 +68,18 @@ pub fn extract_refs(sql: &str) -> Vec<RefCall> {
     let cleaned = super::lexer::strip_non_code(sql);
     let mut refs = Vec::new();
 
-    for cap in REF_PATTERN.captures_iter(&cleaned) {
-        if let (Some(pkg), Some(name)) = (cap.get(1), cap.get(2)) {
-            // Two-argument form
-            refs.push(RefCall {
-                package: Some(pkg.as_str().to_string()),
-                name: name.as_str().to_string(),
-            });
-        } else if let Some(name) = cap.get(3) {
-            // Single-argument form
-            refs.push(RefCall {
-                package: None,
-                name: name.as_str().to_string(),
+    for block in JINJA_BLOCK.find_iter(&cleaned) {
+        for cap in REF_PATTERN.captures_iter(block.as_str()) {
+            refs.push(match cap.get(2) {
+                // Two positional arguments: ref('package', 'model')
+                Some(name) => RefCall {
+                    package: Some(cap[1].to_string()),
+                    name: name.as_str().to_string(),
+                },
+                None => RefCall {
+                    package: None,
+                    name: cap[1].to_string(),
+                },
             });
         }
     }
@@ -95,11 +93,13 @@ pub fn extract_sources(sql: &str) -> Vec<SourceCall> {
     let cleaned = super::lexer::strip_non_code(sql);
     let mut sources = Vec::new();
 
-    for cap in SOURCE_PATTERN.captures_iter(&cleaned) {
-        sources.push(SourceCall {
-            source_name: cap[1].to_string(),
-            table_name: cap[2].to_string(),
-        });
+    for block in JINJA_BLOCK.find_iter(&cleaned) {
+        for cap in SOURCE_PATTERN.captures_iter(block.as_str()) {
+            sources.push(SourceCall {
+                source_name: cap[1].to_string(),
+                table_name: cap[2].to_string(),
+            });
+        }
     }
 
     sources
@@ -272,6 +272,36 @@ mod tests {
         let sources = extract_sources(sql);
         assert_eq!(refs.len(), 1);
         assert_eq!(sources.len(), 1);
+    }
+
+    #[test]
+    fn test_ref_inside_larger_jinja() {
+        let sql = r#"
+            {% set orders = ref('stg_orders') %}
+            select {{ dbt_utils.star(from=ref('stg_payments'), except=['x']) }}
+            from {{ dbt_utils.union_relations([ref('a'), ref("b")]) }}
+            join {{ source('raw', 'customers') }}
+        "#;
+        let names: Vec<_> = extract_refs(sql).into_iter().map(|r| r.name).collect();
+        assert_eq!(names, ["stg_orders", "stg_payments", "a", "b"]);
+        assert_eq!(extract_sources(sql)[0].table_name, "customers");
+    }
+
+    #[test]
+    fn test_versioned_ref() {
+        let refs = extract_refs("select * from {{ ref('dim_customers', v=2) }}");
+        assert_eq!(refs[0].name, "dim_customers");
+        assert_eq!(refs[0].package, None);
+        let refs = extract_refs("select * from {{ ref('pkg', 'm', version='3') }}");
+        assert_eq!(refs[0].package.as_deref(), Some("pkg"));
+        assert_eq!(refs[0].name, "m");
+    }
+
+    #[test]
+    fn test_ref_outside_jinja_ignored() {
+        // Plain SQL that happens to call a function named ref.
+        assert!(extract_refs("select ref('x') from t").is_empty());
+        assert!(extract_refs("select * from {{ xref('x') }}").is_empty());
     }
 
     #[test]

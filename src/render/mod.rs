@@ -17,3 +17,4 @@ pub mod plan;
 pub mod site;
 pub mod summary;
 pub mod svg;
+pub mod verify;

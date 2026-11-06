@@ -34,7 +34,7 @@
 
 - **Direct SQL parsing** — extracts `ref()` and `source()` via a Jinja-aware lexer, no `dbt compile` needed
 - **Manifest support** — optionally read `manifest.json` for column metadata, materializations, and full graph fidelity
-- **Macro-aware ref()** — SQL-parse mode follows simple `{% macro smart_ref(name) %}{{ ref(name) }}{% endmacro %}` wrappers automatically
+- **Jinja-aware dependencies** — finds `ref()`/`source()` anywhere in Jinja (`{% set x = ref('a') %}`, `dbt_utils.star(from=ref('a'))`, versioned refs), follows macros that reference models (project and installed packages, including `adapter.dispatch`), and expands loops over literal lists. Check it on your project with [`verify`](#verify-lineage-against-dbt); see [Accuracy](#accuracy)
 - **Parallel parsing + on-disk cache** — [`rayon`](https://crates.io/crates/rayon)-parallelized parsing and a content-hash cache at `.dbt-lineage/cache.bin`; warm runs are near-instant on large monorepos. Bypass with `--no-cache`. See [`docs/CACHE.md`](docs/CACHE.md)
 
 ### Analysis subcommands
@@ -48,6 +48,7 @@
 - **`site`** — static lineage site (search, per-node pages with lineage diagram, column-level lineage, SQL) for GitHub/GitLab Pages
 - **`docs`** — generates per-model Markdown with description, upstream / downstream, columns, embedded Mermaid lineage
 - **`perf`** — joins `run_results.json` with the DAG: slowest models, critical paths
+- **`verify`** — compares parsed lineage with dbt's `manifest.json` and lists every dependency that differs; exits non-zero when parsing missed one
 - **`check-manifest`** — flags drift between `manifest.json` and current SQL files using dbt's recorded SHA-256 (mtime fallback); exits non-zero for CI gating
 
 ### Column-level lineage
@@ -87,6 +88,56 @@
 - **Selector expressions** — `-s tag:finance,path:marts` filters by tag, path, or model name (comma-separated)
 - **Node-type filters** — `--include-tests`, `--include-seeds`, `--include-snapshots`, `--include-exposures`
 - **Node-type support** — models, sources, seeds, snapshots, tests, exposures
+
+## Accuracy
+
+dbt-lineage reads dependencies from your SQL without running dbt, so it can
+miss dependencies that only exist once Jinja is rendered. `dbt-lineage verify`
+measures that on your own project against a `manifest.json` from `dbt parse`.
+
+Results on public dbt projects (manifests from `dbt parse`, dbt Core 1.12 with
+the DuckDB adapter; packages measured through their `integration_tests`
+project):
+
+| Project | Models compared | Dependencies found | Extra, not in manifest |
+| --- | ---: | ---: | ---: |
+| [jaffle-shop](https://github.com/dbt-labs/jaffle-shop) `5beb145` | 13 | 17 / 17 | 0 |
+| [tuva](https://github.com/tuva-health/tuva) `465927a` | 293 | 916 / 916 | 3 |
+| [cal-itp data-infra](https://github.com/cal-itp/data-infra) `3801da6` | 625 | 1,192 / 1,192 | 0 |
+| [Fivetran dbt_hubspot](https://github.com/fivetran/dbt_hubspot) `5f00935` | 176 | 280 / 280 | 18 |
+| [Fivetran dbt_jira](https://github.com/fivetran/dbt_jira) `1a9f8b4` | 61 | 108 / 108 | 0 |
+
+Every extra dependency sits in a Jinja branch switched off by the project's
+current vars (`{% if var('hubspot_property_enabled') %}`). dbt records only the
+branches it renders; dbt-lineage keeps them so impact analysis doesn't miss a
+dependency that a var can switch on.
+
+What parsing can't follow: refs whose names are computed at render time from
+variables or macro return values. `verify` lists those, and any command reads
+`--manifest` for exact lineage when you need it.
+
+## Compared with dbt's own tools
+
+dbt Labs' new engine (dbt v2, formerly "Fusion", [GA since September
+2026](https://docs.getdbt.com/blog/dbt-v2-is-ga)) also understands SQL
+statically, and its [VS Code extension](https://docs.getdbt.com/docs/about-dbt-extension)
+shows table-level lineage while you edit, and column-level lineage in strict
+mode. They solve different parts of the problem; as of November 2026:
+
+| | dbt-lineage | dbt v2 + VS Code extension | dbt platform Advanced CI |
+| --- | --- | --- | --- |
+| Downstream impact as a PR/MR comment | GitHub, GitLab, Bitbucket, Azure DevOps | – | PR comment summarising a **data** diff; Enterprise plans |
+| Needs warehouse access | no | not for parsing; column lineage needs `static_analysis: strict` and upstream schemas | yes, builds the PR in the warehouse |
+| Projects | dbt Core 1.x and v2 projects, any adapter | projects migrated to v2 (deprecations fixed); BigQuery, Databricks, Redshift, Snowflake, DuckDB and Spark on the CLI | BigQuery, Databricks, Postgres, Redshift, Snowflake |
+| License | MIT | dbt OSS is Apache 2.0; the full engine, LSP and extension are proprietary (free, no login) | commercial |
+
+Sources: [supported features](https://docs.getdbt.com/docs/dbt/supported-features),
+[new concepts](https://docs.getdbt.com/docs/fusion/new-concepts),
+[Advanced CI](https://docs.getdbt.com/docs/deploy/advanced-ci),
+[licensing FAQ](https://www.getdbt.com/licenses-faq).
+
+The two combine well: dbt's extension for type checking while you write SQL,
+dbt-lineage for reviewing what a pull request breaks downstream, on any CI.
 
 ## Installation
 
@@ -345,6 +396,18 @@ dbt-lineage ci report --fail-on lint-errors,plan-empty --outputs "$GITHUB_OUTPUT
 
 `--base auto` (default) reads the target branch from GitHub Actions, GitLab CI, Bitbucket Pipelines or Azure Pipelines, and resolves it as `origin/<branch>` (fetching it if the checkout is shallow). `--outputs` appends `selector=…` and `failed=…` lines, usable as `$GITHUB_OUTPUT` or a GitLab dotenv report. `dbt-lineage ci comment --file report.md` posts it as one sticky PR/MR comment, and `dbt-lineage ci annotations --format sarif|codeclimate|bitbucket|azure` turns lint findings into inline annotations (Bitbucket Code Insights with `--post`). The GitHub Action, the GitLab component, the Bitbucket Pipe and the Azure Pipelines template are thin wrappers around these commands; see [`docs/CI.md`](docs/CI.md).
 
+### Verify lineage against dbt
+
+Measure how closely parsed lineage matches dbt's own on your project:
+
+```sh
+dbt parse                                   # writes target/manifest.json, no warehouse queries
+dbt-lineage verify -p path/to/project       # text; exit 1 if a dependency was missed
+dbt-lineage verify -o json                  # every mismatch, plus recall/precision
+```
+
+`verify` compares the upstream models, seeds, snapshots and sources of every model in both graphs and lists dependencies dbt has that parsing missed, dependencies parsing found that dbt doesn't record (usually Jinja branches switched off by vars), and models only one side knows. Run it in CI next to `dbt parse` to keep SQL-parse mode honest on your project.
+
 ### Manifest freshness
 
 CI-friendly drift check between a distributed `manifest.json` and current SQL files:
@@ -549,7 +612,7 @@ Run menu / context menu options:
 
 1. **Parse** `dbt_project.yml` to find model/seed/snapshot paths (or read `manifest.json`)
 2. **Walk** those directories, collecting `.sql` and `.yml` files
-3. **Extract** `ref('model')` and `source('schema', 'table')` from SQL via regex
+3. **Extract** `ref('model')` and `source('schema', 'table')` from the Jinja in each SQL file (after a lexer blanks out comments and string literals), including calls inside macros the model uses and loops over literal lists
 4. **Parse** YAML schema files for sources, model descriptions, and exposures
 5. **Build** a directed acyclic graph (petgraph) where edges flow from dependency to dependent
 6. **Resolve** column-level lineage by tracing SELECT/FROM/JOIN through the graph

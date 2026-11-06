@@ -11,3 +11,4 @@ pub mod perf;
 pub mod plan;
 pub mod summary;
 pub mod types;
+pub mod verify;

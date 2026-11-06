@@ -1,29 +1,44 @@
-//! Detection of dbt Jinja macros that simply wrap `ref()` or `source()`. Detected
-//! wrappers are added to the graph builder's call recognition list so SQL-parse mode
-//! follows `{{ smart_ref('orders') }}` etc. without requiring `dbt compile`.
+//! Detection of dbt Jinja macros that call `ref()` or `source()`. A model that
+//! calls such a macro depends on what the macro references, so SQL-parse mode
+//! follows these calls without requiring `dbt compile`:
+//!
+//! - wrappers whose argument becomes the ref: `{% macro smart_ref(name) %}{{ ref(name) }}`
+//!   makes `{{ smart_ref('orders') }}` depend on `orders`;
+//! - macros with fixed refs: a macro body selecting from `{{ ref('dim_feeds') }}`
+//!   makes every model calling it depend on `dim_feeds`.
+//!
+//! Arguments are resolved when they are string literals (positional, keyword or
+//! the parameter's default). Anything computed at render time is skipped.
 
 use regex::Regex;
-use std::collections::HashSet;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use super::sql::{RefCall, SourceCall};
+use super::sql::{RefCall, SourceCall, JINJA_BLOCK};
 
-/// One detected wrapper macro.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One macro whose body references models or sources.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WrapperMacro {
     pub name: String,
-    pub kind: WrapperKind,
-    /// Which positional parameter contains the model/table name (0-indexed).
-    pub model_arg_index: usize,
+    pub params: Vec<String>,
+    /// String-literal default per parameter, if any.
+    pub defaults: Vec<Option<String>>,
+    pub deps: Vec<MacroDep>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WrapperKind {
-    /// Returns `ref(...)` — argument is treated as a model name.
-    Ref,
-    /// Returns `source(...)` — first arg is source_name, second is table_name.
-    Source,
+/// A `ref()` / `source()` argument inside a macro body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MacroArg {
+    Literal(String),
+    /// The macro parameter at this index.
+    Param(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MacroDep {
+    Ref(MacroArg),
+    Source(MacroArg, MacroArg),
 }
 
 static MACRO_DEF: LazyLock<Regex> = LazyLock::new(|| {
@@ -41,66 +56,107 @@ static MACRO_DEF: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Scan macro source content and detect simple `ref()` / `source()` wrappers.
-/// Conservative: only detects wrappers whose body contains a direct call.
+const ARG: &str = r#"'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*"#;
+
+static BODY_REF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"\bref\s*\(\s*({ARG})\s*(?:,\s*({ARG})\s*)?(?:,\s*(?:v|version)\s*=[^)]*)?\)"
+    ))
+    .unwrap()
+});
+
+static BODY_SOURCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"\bsource\s*\(\s*({ARG})\s*,\s*({ARG})\s*\)")).unwrap());
+
+/// A call to some function or macro, optionally package-qualified.
+static CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap()
+});
+
+/// Macro names that are dbt builtins, never treated as user macros.
+const BUILTINS: &[&str] = &["ref", "source", "config", "var", "env_var", "return"];
+
+fn macro_arg(raw: &str, params: &[String]) -> Option<MacroArg> {
+    if let Some(lit) = strip_quotes(raw) {
+        return Some(MacroArg::Literal(lit.to_string()));
+    }
+    params.iter().position(|p| p == raw).map(MacroArg::Param)
+}
+
+/// Scan macro source content for macros whose body calls `ref()` or `source()`
+/// with literal or parameter arguments.
 pub fn detect_wrappers_in(content: &str) -> Vec<WrapperMacro> {
     let mut found = Vec::new();
     for cap in MACRO_DEF.captures_iter(content) {
-        let name = cap.name("name").unwrap().as_str().to_string();
-        let args_raw = cap.name("args").unwrap().as_str();
-        let body = cap.name("body").unwrap().as_str();
-        let arg_names: Vec<String> = args_raw
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            // Strip default values: `arg=default` → `arg`.
-            .map(|s| s.split('=').next().unwrap_or(s).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if arg_names.is_empty() {
+        let name = cap["name"].to_string();
+        if BUILTINS.contains(&name.as_str()) {
             continue;
         }
-        // ref(arg_name) — match the first argument that appears in a ref call.
-        if let Some(idx) = find_call_arg_index(body, "ref", &arg_names) {
-            found.push(WrapperMacro {
-                name: name.clone(),
-                kind: WrapperKind::Ref,
-                model_arg_index: idx,
-            });
-            continue;
+        let mut params = Vec::new();
+        let mut defaults = Vec::new();
+        for raw in split_args(&cap["args"]) {
+            let (param, default) = match raw.split_once('=') {
+                Some((p, d)) => (p.trim(), strip_quotes(d).map(str::to_string)),
+                None => (raw.trim(), None),
+            };
+            if !param.is_empty() {
+                params.push(param.to_string());
+                defaults.push(default);
+            }
         }
-        if let Some(idx) = find_call_arg_index(body, "source", &arg_names) {
+        let body = super::lexer::strip_non_code(&cap["body"]);
+        let mut deps = Vec::new();
+        for block in JINJA_BLOCK.find_iter(&body) {
+            for c in BODY_REF.captures_iter(block.as_str()) {
+                // ref('pkg', 'name'): the model is the last positional argument.
+                let raw = c.get(2).unwrap_or_else(|| c.get(1).unwrap()).as_str();
+                if let Some(arg) = macro_arg(raw, &params) {
+                    deps.push(MacroDep::Ref(arg));
+                }
+            }
+            for c in BODY_SOURCE.captures_iter(block.as_str()) {
+                if let (Some(s), Some(t)) = (macro_arg(&c[1], &params), macro_arg(&c[2], &params)) {
+                    deps.push(MacroDep::Source(s, t));
+                }
+            }
+        }
+        if !deps.is_empty() {
             found.push(WrapperMacro {
                 name,
-                kind: WrapperKind::Source,
-                model_arg_index: idx,
+                params,
+                defaults,
+                deps,
             });
         }
     }
     found
 }
 
-fn find_call_arg_index(body: &str, fn_name: &str, arg_names: &[String]) -> Option<usize> {
-    // Look for `fn_name(...)`; check if any arg_name appears inside the parens.
-    let pat = format!(r"{}\s*\(([^)]*)\)", regex::escape(fn_name));
-    let re = Regex::new(&pat).ok()?;
-    for cap in re.captures_iter(body) {
-        let inside = cap.get(1)?.as_str();
-        for (i, name) in arg_names.iter().enumerate() {
-            // Word-boundary match.
-            let arg_re = Regex::new(&format!(r"\b{}\b", regex::escape(name))).ok()?;
-            if arg_re.is_match(inside) {
-                return Some(i);
-            }
-        }
-    }
-    None
+static DISPATCH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"adapter\.dispatch\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]"#).unwrap()
+});
+
+/// Macros that only forward to an adapter-specific implementation:
+/// `{% macro m(...) %}{{ adapter.dispatch('m', 'pkg')(...) }}{% endmacro %}`.
+/// Returns (macro name, dispatched name) pairs.
+fn detect_dispatchers_in(content: &str) -> Vec<(String, String)> {
+    MACRO_DEF
+        .captures_iter(content)
+        .filter_map(|cap| {
+            let target = DISPATCH.captures(&cap["body"])?;
+            Some((cap["name"].to_string(), target[1].to_string()))
+        })
+        .collect()
 }
 
-/// Detect all wrappers across multiple macro `.sql` files. Names are deduplicated.
-pub fn detect_wrappers_in_files(paths: &[std::path::PathBuf]) -> Vec<WrapperMacro> {
+/// Detect macros across multiple `.sql` files. The first definition of a name
+/// wins, so project macros shadow package macros when listed first. A macro
+/// that dispatches to `default__<name>` inherits that implementation's
+/// references, which is what dbt runs on adapters without an override.
+pub fn detect_wrappers_in_files(paths: &[PathBuf]) -> Vec<WrapperMacro> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<WrapperMacro> = Vec::new();
+    let mut dispatchers: Vec<(String, String)> = Vec::new();
     for p in paths {
         let content = match std::fs::read_to_string(p) {
             Ok(c) => c,
@@ -111,17 +167,28 @@ pub fn detect_wrappers_in_files(paths: &[std::path::PathBuf]) -> Vec<WrapperMacr
                 out.push(w);
             }
         }
+        dispatchers.extend(detect_dispatchers_in(&content));
+    }
+    for (name, target) in dispatchers {
+        if seen.contains(&name) {
+            continue;
+        }
+        let default_impl = format!("default__{target}");
+        if let Some(w) = out.iter().find(|w| w.name == default_impl) {
+            let mut alias = w.clone();
+            alias.name = name.clone();
+            seen.insert(name);
+            out.push(alias);
+        }
     }
     out
 }
 
-/// Discover macro `.sql` files under a project's `macros/` directory.
-pub fn discover_macro_files(project_dir: &Path) -> Vec<std::path::PathBuf> {
-    let macros_dir = project_dir.join("macros");
-    if !macros_dir.exists() {
+fn sql_files_under(dir: &Path) -> Vec<PathBuf> {
+    if !dir.is_dir() {
         return Vec::new();
     }
-    walkdir::WalkDir::new(&macros_dir)
+    let mut files: Vec<PathBuf> = walkdir::WalkDir::new(dir)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.path().is_file())
@@ -132,53 +199,158 @@ pub fn discover_macro_files(project_dir: &Path) -> Vec<std::path::PathBuf> {
                 .is_some_and(|s| s.eq_ignore_ascii_case("sql"))
         })
         .map(|e| e.path().to_path_buf())
+        .collect();
+    files.sort();
+    files
+}
+
+fn macro_dirs(project_dir: &Path) -> Vec<PathBuf> {
+    let paths = super::project::DbtProject::load(project_dir)
+        .map(|p| p.macro_paths)
+        .unwrap_or_else(|_| vec!["macros".to_string()]);
+    paths.iter().map(|p| project_dir.join(p)).collect()
+}
+
+/// Discover the project's own macro `.sql` files (its `macro-paths`).
+pub fn discover_macro_files(project_dir: &Path) -> Vec<PathBuf> {
+    macro_dirs(project_dir)
+        .iter()
+        .flat_map(|d| sql_files_under(d))
         .collect()
 }
 
-/// Extract calls to known wrapper macros from a SQL string. Yields `RefCall` for
-/// ref-wrappers and `SourceCall` for source-wrappers, following the wrapper's
-/// declared `model_arg_index`.
+/// Macro files relevant for lineage: the project's own, then those of
+/// installed packages (`dbt_packages/*`), so project macros take precedence.
+pub fn discover_lineage_macro_files(project_dir: &Path) -> Vec<PathBuf> {
+    let mut files = discover_macro_files(project_dir);
+    if let Ok(entries) = std::fs::read_dir(project_dir.join("dbt_packages")) {
+        let mut packages: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+        packages.sort();
+        for pkg in packages {
+            for dir in macro_dirs(&pkg) {
+                files.extend(sql_files_under(&dir));
+            }
+        }
+    }
+    files
+}
+
+/// Split a call's argument list at top-level commas, respecting quotes and
+/// nested brackets.
+fn split_args(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut cur = String::new();
+    for ch in raw.chars() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '\'' | '"' => quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    out.push(cur.trim().to_string());
+                    cur.clear();
+                    continue;
+                }
+                _ => {}
+            },
+        }
+        cur.push(ch);
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+/// The argument text of a call whose opening parenthesis ends at `open_end`,
+/// up to the matching closing parenthesis.
+fn call_args(text: &str, open_end: usize) -> Option<&str> {
+    let mut depth = 1i32;
+    let mut quote: Option<char> = None;
+    for (i, ch) in text[open_end..].char_indices() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '\'' | '"' => quote = Some(ch),
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&text[open_end..open_end + i]);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+static KWARG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=([^=][\s\S]*)$").unwrap());
+
+/// Extract the refs and sources contributed by calls to known macros in a
+/// SQL string.
 pub fn extract_wrapper_calls(
     sql: &str,
     wrappers: &[WrapperMacro],
 ) -> (Vec<RefCall>, Vec<SourceCall>) {
     let mut refs: Vec<RefCall> = Vec::new();
     let mut sources: Vec<SourceCall> = Vec::new();
-    for w in wrappers {
-        // Build a regex that matches `{{ NAME(args) }}` and captures the argument list.
-        let pat = format!(
-            r"\{{\{{-?\s*{}\s*\(([^)]*)\)\s*-?\}}\}}",
-            regex::escape(&w.name)
-        );
-        let re = match Regex::new(&pat) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        for cap in re.captures_iter(sql) {
-            let args_raw = match cap.get(1) {
-                Some(m) => m.as_str(),
-                None => continue,
+    if wrappers.is_empty() {
+        return (refs, sources);
+    }
+    let by_name: HashMap<&str, &WrapperMacro> =
+        wrappers.iter().map(|w| (w.name.as_str(), w)).collect();
+    let cleaned = super::lexer::strip_non_code(sql);
+    for block in JINJA_BLOCK.find_iter(&cleaned) {
+        let text = block.as_str();
+        if text
+            .trim_start_matches(['{', '%', '-', ' '])
+            .starts_with("macro ")
+        {
+            continue;
+        }
+        for cap in CALL.captures_iter(text) {
+            let Some(w) = by_name.get(&cap[1]) else {
+                continue;
             };
-            let args: Vec<String> = split_args(args_raw);
-            match w.kind {
-                WrapperKind::Ref => {
-                    if let Some(name) = args.get(w.model_arg_index) {
-                        if let Some(stripped) = strip_quotes(name) {
+            let Some(args) = call_args(text, cap.get(0).unwrap().end()) else {
+                continue;
+            };
+            let bound = bind_args(w, args);
+            let resolve = |a: &MacroArg| match a {
+                MacroArg::Literal(s) => Some(s.clone()),
+                MacroArg::Param(i) => bound[*i].clone(),
+            };
+            for dep in &w.deps {
+                match dep {
+                    MacroDep::Ref(a) => {
+                        if let Some(name) = resolve(a) {
                             refs.push(RefCall {
                                 package: None,
-                                name: stripped.to_string(),
+                                name,
                             });
                         }
                     }
-                }
-                WrapperKind::Source => {
-                    let first = args.first().and_then(|s| strip_quotes(s));
-                    let second = args.get(1).and_then(|s| strip_quotes(s));
-                    if let (Some(sn), Some(tn)) = (first, second) {
-                        sources.push(SourceCall {
-                            source_name: sn.to_string(),
-                            table_name: tn.to_string(),
-                        });
+                    MacroDep::Source(s, t) => {
+                        if let (Some(source_name), Some(table_name)) = (resolve(s), resolve(t)) {
+                            sources.push(SourceCall {
+                                source_name,
+                                table_name,
+                            });
+                        }
                     }
                 }
             }
@@ -187,8 +359,23 @@ pub fn extract_wrapper_calls(
     (refs, sources)
 }
 
-fn split_args(raw: &str) -> Vec<String> {
-    raw.split(',').map(|s| s.trim().to_string()).collect()
+/// String-literal value of each macro parameter at one call site.
+fn bind_args(w: &WrapperMacro, args: &str) -> Vec<Option<String>> {
+    let mut bound = w.defaults.clone();
+    let mut positional = 0;
+    for arg in split_args(args) {
+        if let Some(kw) = KWARG.captures(&arg) {
+            if let Some(i) = w.params.iter().position(|p| *p == kw[1]) {
+                bound[i] = strip_quotes(&kw[2]).map(str::to_string);
+            }
+        } else {
+            if positional < bound.len() {
+                bound[positional] = strip_quotes(&arg).map(str::to_string);
+            }
+            positional += 1;
+        }
+    }
+    bound
 }
 
 fn strip_quotes(s: &str) -> Option<&str> {
@@ -206,22 +393,27 @@ fn strip_quotes(s: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
+    fn names(refs: &[RefCall]) -> Vec<&str> {
+        refs.iter().map(|r| r.name.as_str()).collect()
+    }
+
     #[test]
     fn test_detect_simple_ref_wrapper() {
         let content = r"{% macro smart_ref(name) %}{{ ref(name) }}{% endmacro %}";
         let wrappers = detect_wrappers_in(content);
         assert_eq!(wrappers.len(), 1);
         assert_eq!(wrappers[0].name, "smart_ref");
-        assert_eq!(wrappers[0].kind, WrapperKind::Ref);
-        assert_eq!(wrappers[0].model_arg_index, 0);
+        assert_eq!(wrappers[0].deps, vec![MacroDep::Ref(MacroArg::Param(0))]);
     }
 
     #[test]
     fn test_detect_simple_source_wrapper() {
         let content = r"{% macro audited_source(s, t) %}{{ source(s, t) }}{% endmacro %}";
         let wrappers = detect_wrappers_in(content);
-        assert_eq!(wrappers.len(), 1);
-        assert_eq!(wrappers[0].kind, WrapperKind::Source);
+        assert_eq!(
+            wrappers[0].deps,
+            vec![MacroDep::Source(MacroArg::Param(0), MacroArg::Param(1))]
+        );
     }
 
     #[test]
@@ -229,35 +421,77 @@ mod tests {
         let content =
             r"{% macro project_ref(name, project='default') %}{{ ref(name) }}{% endmacro %}";
         let wrappers = detect_wrappers_in(content);
-        assert_eq!(wrappers.len(), 1);
-        assert_eq!(wrappers[0].model_arg_index, 0);
+        assert_eq!(wrappers[0].params, vec!["name", "project"]);
+        assert_eq!(wrappers[0].defaults, vec![None, Some("default".into())]);
     }
 
     #[test]
     fn test_wrapper_call_emits_ref() {
-        let wrappers = vec![WrapperMacro {
-            name: "smart_ref".into(),
-            kind: WrapperKind::Ref,
-            model_arg_index: 0,
-        }];
-        let sql = "select * from {{ smart_ref('orders') }}";
-        let (refs, _) = extract_wrapper_calls(sql, &wrappers);
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].name, "orders");
+        let wrappers = detect_wrappers_in("{% macro smart_ref(n) %}{{ ref(n) }}{% endmacro %}");
+        let (refs, _) = extract_wrapper_calls("select * from {{ smart_ref('orders') }}", &wrappers);
+        assert_eq!(names(&refs), ["orders"]);
     }
 
     #[test]
     fn test_wrapper_call_emits_source() {
-        let wrappers = vec![WrapperMacro {
-            name: "audited_source".into(),
-            kind: WrapperKind::Source,
-            model_arg_index: 0,
-        }];
+        let wrappers =
+            detect_wrappers_in("{% macro audited_source(s, t) %}{{ source(s, t) }}{% endmacro %}");
         let sql = r#"select * from {{ audited_source("raw", "orders") }}"#;
         let (_, sources) = extract_wrapper_calls(sql, &wrappers);
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].source_name, "raw");
         assert_eq!(sources[0].table_name, "orders");
+    }
+
+    #[test]
+    fn test_macro_with_fixed_ref_adds_dependency() {
+        // The model passes a relation; the macro also reads a fixed model.
+        let wrappers = detect_wrappers_in(
+            r"{% macro latest(table_name, clean_name) %}
+              select * from {{ table_name }} t
+              where exists (select 1 from {{ ref('dim_feeds') }} s)
+              {% endmacro %}",
+        );
+        let sql = "{{ latest(table_name=ref('stops'), clean_name='stops') }}";
+        let (refs, _) = extract_wrapper_calls(sql, &wrappers);
+        assert_eq!(names(&refs), ["dim_feeds"]);
+    }
+
+    #[test]
+    fn test_keyword_and_default_arguments() {
+        let wrappers = detect_wrappers_in(
+            r"{% macro staged(table, schema='raw') %}{{ source(schema, table) }}{% endmacro %}",
+        );
+        let (_, s) = extract_wrapper_calls("{{ staged(table='orders') }}", &wrappers);
+        assert_eq!(
+            (s[0].source_name.as_str(), s[0].table_name.as_str()),
+            ("raw", "orders")
+        );
+        let (_, s) = extract_wrapper_calls("{{ staged('orders', schema='erp') }}", &wrappers);
+        assert_eq!(s[0].source_name, "erp");
+    }
+
+    #[test]
+    fn test_package_qualified_and_nested_calls() {
+        let wrappers = detect_wrappers_in("{% macro smart_ref(n) %}{{ ref(n) }}{% endmacro %}");
+        let sql = "{% set rel = my_pkg.smart_ref('a') %}{{ dbt_utils.star(from=smart_ref('b')) }}";
+        let (refs, _) = extract_wrapper_calls(sql, &wrappers);
+        assert_eq!(names(&refs), ["a", "b"]);
+    }
+
+    #[test]
+    fn test_computed_argument_is_skipped() {
+        let wrappers = detect_wrappers_in("{% macro smart_ref(n) %}{{ ref(n) }}{% endmacro %}");
+        let (refs, _) = extract_wrapper_calls("{{ smart_ref(var('model')) }}", &wrappers);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_call_in_comment_ignored() {
+        let wrappers = detect_wrappers_in("{% macro smart_ref(n) %}{{ ref(n) }}{% endmacro %}");
+        let (refs, _) =
+            extract_wrapper_calls("-- {{ smart_ref('a') }}\n{# smart_ref('b') #}", &wrappers);
+        assert!(refs.is_empty());
     }
 
     #[test]
@@ -277,6 +511,48 @@ mod tests {
         std::fs::write(&b, "{% macro w(x) %}{{ ref(x) }}{% endmacro %}").unwrap();
         let wrappers = detect_wrappers_in_files(&[a, b]);
         assert_eq!(wrappers.len(), 1);
+    }
+
+    #[test]
+    fn test_dispatched_macro_inherits_default_implementation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("union.sql");
+        std::fs::write(
+            &f,
+            r"{% macro union_connections(dict, single_source_name, single_table_name) %}
+              {{ adapter.dispatch('union_connections', 'fivetran_utils')(dict, single_source_name, single_table_name) }}
+              {% endmacro %}
+              {% macro default__union_connections(dict, single_source_name, single_table_name) %}
+              select * from {{ source(single_source_name, single_table_name) }}
+              {% endmacro %}",
+        )
+        .unwrap();
+        let wrappers = detect_wrappers_in_files(&[f]);
+        let sql = "{{ fivetran_utils.union_connections(connection_dictionary='x', \
+                   single_source_name='hubspot', single_table_name='company') }}";
+        let (_, sources) = extract_wrapper_calls(sql, &wrappers);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].source_name, "hubspot");
+        assert_eq!(sources[0].table_name, "company");
+    }
+
+    #[test]
+    fn test_discover_lineage_macro_files_includes_packages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("dbt_project.yml"),
+            "name: p\nmacro-paths: ['mac']\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("mac")).unwrap();
+        std::fs::write(root.join("mac/a.sql"), "").unwrap();
+        std::fs::create_dir_all(root.join("dbt_packages/utils/macros")).unwrap();
+        std::fs::write(root.join("dbt_packages/utils/macros/b.sql"), "").unwrap();
+        let files = discover_lineage_macro_files(root);
+        assert_eq!(files.len(), 2);
+        assert!(files[0].ends_with("mac/a.sql"));
+        assert_eq!(discover_macro_files(root).len(), 1);
     }
 }
 

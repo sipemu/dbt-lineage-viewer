@@ -68,6 +68,11 @@ fn run(cli: Cli) -> Result<()> {
                 manifest,
                 output,
             } => run_check_manifest_command(project_dir, manifest.as_ref(), output),
+            Command::Verify {
+                project_dir,
+                manifest,
+                output,
+            } => run_verify_command(project_dir, manifest.as_ref(), output),
             Command::Mcp {
                 project_dir,
                 manifest,
@@ -820,6 +825,48 @@ fn run_check_manifest_command(
     }
 
     if report.is_stale {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Run the `verify` subcommand. Exits the process with code 1 when parsing
+/// missed a dependency or model that the manifest has.
+#[cfg(not(tarpaulin_include))]
+fn run_verify_command(
+    project_dir: &Path,
+    manifest: Option<&PathBuf>,
+    output: &cli::VerifyOutputFormat,
+) -> Result<()> {
+    let project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+
+    let manifest_path = match manifest {
+        Some(p) => resolve_manifest_path(p)?,
+        None => project_dir.join("target").join("manifest.json"),
+    };
+    if !manifest_path.exists() {
+        anyhow::bail!(
+            "Manifest path does not exist: {} (run `dbt parse` first, or pass --manifest)",
+            manifest_path.display()
+        );
+    }
+
+    let parsed = build_dag(&project_dir, None, false)?;
+    let from_manifest = parser::manifest::build_graph_from_manifest(&manifest_path)?;
+    let report = graph::verify::verify(
+        &parsed,
+        &from_manifest,
+        graph::verify::file_in_project(&project_dir),
+    );
+
+    match output {
+        cli::VerifyOutputFormat::Text => render::verify::render_verify_text(&report),
+        cli::VerifyOutputFormat::Json => render::verify::render_verify_json(&report),
+    }
+
+    if !report.found_everything() {
         std::process::exit(1);
     }
     Ok(())

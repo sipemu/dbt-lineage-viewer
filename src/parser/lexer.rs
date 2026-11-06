@@ -28,6 +28,9 @@ pub fn strip_non_code(src: &str) -> String {
     let bytes = src.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut state = State::Code;
+    // Open string literal inside a Jinja block: `}}` / `%}` inside it does
+    // not close the block (`post_hook="{{ grant() }}"`).
+    let mut jinja_quote: Option<u8> = None;
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
@@ -141,6 +144,24 @@ pub fn strip_non_code(src: &str) -> String {
                 out.push(if b == b'\n' { b'\n' } else { b' ' });
                 i += 1;
             }
+            State::JinjaExpr | State::JinjaStmt if jinja_quote.is_some() => {
+                if b == b'\\' && i + 1 < bytes.len() {
+                    out.push(b);
+                    out.push(bytes[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if Some(b) == jinja_quote {
+                    jinja_quote = None;
+                }
+                out.push(b);
+                i += 1;
+            }
+            State::JinjaExpr | State::JinjaStmt if b == b'\'' || b == b'"' => {
+                jinja_quote = Some(b);
+                out.push(b);
+                i += 1;
+            }
             State::JinjaExpr => {
                 // }} closes the expression. Pass everything through unchanged
                 // so ref('name') keeps its quoted argument intact.
@@ -189,6 +210,20 @@ mod tests {
         // Length and line break preserved.
         assert_eq!(cleaned.len(), sql.len());
         assert!(cleaned.contains('\n'));
+    }
+
+    #[test]
+    fn test_closer_inside_jinja_string_does_not_close_block() {
+        let sql = "{{ config(post_hook=\"{{ grant() }}\") }}\nselect * from {{ ref('orders') }}";
+        let cleaned = strip_non_code(sql);
+        assert!(cleaned.contains("ref('orders')"));
+        assert_eq!(cleaned.len(), sql.len());
+    }
+
+    #[test]
+    fn test_escaped_quote_inside_jinja_string() {
+        let sql = r"{% set x = 'it\'s %}' %}select * from {{ ref('a') }}";
+        assert!(strip_non_code(sql).contains("ref('a')"));
     }
 
     #[test]

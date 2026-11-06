@@ -8,7 +8,7 @@ use crate::parser::cache::{hash_bytes, ParseCache, ParsedSqlFile, SqlConfigSerde
 use crate::parser::columns::extract_select_columns;
 use crate::parser::discovery::DiscoveredFiles;
 use crate::parser::macros::{
-    detect_wrappers_in_files, discover_macro_files, extract_wrapper_calls, WrapperMacro,
+    detect_wrappers_in_files, discover_lineage_macro_files, extract_wrapper_calls, WrapperMacro,
 };
 use crate::parser::sql::{extract_config, extract_refs, extract_sources, SqlConfig};
 use crate::parser::yaml_schema::{parse_schema_file, ExposureDefinition};
@@ -23,6 +23,9 @@ fn parse_sql_content(content: &str, wrappers: &[WrapperMacro]) -> ParsedSqlFile 
         crate::parser::macros::extract_source_model_refs(content);
     wrapped_refs.extend(source_model_refs);
     wrapped_sources.extend(source_model_sources);
+    let (loop_refs, loop_sources) = crate::parser::loops::extract_loop_calls(content);
+    wrapped_refs.extend(loop_refs);
+    wrapped_sources.extend(loop_sources);
     let config = extract_config(content);
     ParsedSqlFile {
         refs: extract_refs(content),
@@ -46,6 +49,12 @@ fn parse_files_in_parallel(
     wrappers: &[WrapperMacro],
     cache: &ParseCache,
 ) -> Result<Vec<ParsedSqlFile>> {
+    // A file's parse also depends on the detected macros and on the parser
+    // itself, so both are part of the cache key: editing a macro invalidates
+    // the files that call it, and a new release re-parses everything.
+    let macros_key = crate::parser::cache::hash_bytes(
+        format!("{}{wrappers:?}", env!("CARGO_PKG_VERSION")).as_bytes(),
+    );
     paths
         .par_iter()
         .map(|path| {
@@ -54,7 +63,7 @@ fn parse_files_in_parallel(
                     path: path.clone(),
                     source: e,
                 })?;
-            let hash = hash_bytes(&bytes);
+            let hash = hash_bytes(&[&bytes[..], &macros_key[..]].concat());
             if let Some(hit) = cache.get(path, &hash) {
                 return Ok(hit);
             }
@@ -547,7 +556,7 @@ fn build_graph_with_cache(
 
     // Detect simple ref/source wrapper macros so SQL-parse mode follows
     // `{{ smart_ref('orders') }}` calls without a dbt compile step.
-    let macro_files = discover_macro_files(project_dir);
+    let macro_files = discover_lineage_macro_files(project_dir);
     let wrappers = detect_wrappers_in_files(&macro_files);
 
     process_model_files(&mut gb, files, project_dir, &model_meta, &wrappers, cache)?;

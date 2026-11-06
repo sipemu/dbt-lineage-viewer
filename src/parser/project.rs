@@ -20,6 +20,9 @@ pub struct DbtProject {
 
     #[serde(rename = "test-paths", default = "default_test_paths")]
     pub test_paths: Vec<String>,
+
+    #[serde(rename = "macro-paths", default = "default_macro_paths")]
+    pub macro_paths: Vec<String>,
 }
 
 fn default_model_paths() -> Vec<String> {
@@ -36,6 +39,10 @@ fn default_snapshot_paths() -> Vec<String> {
 
 fn default_test_paths() -> Vec<String> {
     vec!["tests".to_string()]
+}
+
+fn default_macro_paths() -> Vec<String> {
+    vec!["macros".to_string()]
 }
 
 impl DbtProject {
