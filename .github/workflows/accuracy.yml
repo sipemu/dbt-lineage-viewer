@@ -4,7 +4,8 @@ name: Lineage accuracy
 # scripts/accuracy/projects.json and fails when dbt-lineage misses a
 # dependency dbt knows about. Then measures column lineage against sqlglot
 # (scripts/accuracy-columns) and fails when it drops below baseline.json.
-# Weekly runs catch upstream dbt releases.
+# Weekly runs catch upstream dbt releases and also run the scale benchmark
+# (scripts/bench-scale) on generated 2k- and 10k-model projects.
 
 on:
   pull_request:
@@ -60,3 +61,9 @@ jobs:
       - run: python3 scripts/accuracy/run.py
       - name: Column lineage vs sqlglot
         run: python3 scripts/accuracy-columns/run.py
+      # Weekly only: generated 2k- and 10k-model projects from the checkouts
+      # above. Absolute times depend on the runner, so the gate is on scaling:
+      # time must grow at most 2x faster than the project.
+      - name: Scale benchmark
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python3 scripts/bench-scale/run.py --sizes 2000,10000 --max-scaling 2

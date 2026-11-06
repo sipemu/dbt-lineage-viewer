@@ -1,0 +1,6 @@
+{
+  "Fivetran dbt_netsuite": 17,
+  "Fivetran dbt_quickbooks": 10,
+  "Fivetran dbt_stripe": 2,
+  "Fivetran dbt_zendesk": 1
+}

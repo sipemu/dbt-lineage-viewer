@@ -16,7 +16,8 @@
       "repo": "https://github.com/tuva-health/tuva",
       "commit": "465927a0512e96ad480eb8c466a0c01598878b75",
       "parse_dir": "integration_tests",
-      "lineage_dir": "."
+      "lineage_dir": ".",
+      "columns": {}
     },
     {
       "name": "cal-itp data-infra",
@@ -43,6 +44,66 @@
       "lineage_dir": ".",
       "columns": {
         "vars": "{jira_schema: main}"
+      }
+    },
+    {
+      "name": "Fivetran dbt_shopify",
+      "repo": "https://github.com/fivetran/dbt_shopify",
+      "commit": "a033782ef90f0a009b534220bb0253fb2e3d3cb2",
+      "parse_dir": "integration_tests",
+      "lineage_dir": ".",
+      "columns": {
+        "vars": "{shopify_schema: main}"
+      }
+    },
+    {
+      "name": "Fivetran dbt_quickbooks",
+      "repo": "https://github.com/fivetran/dbt_quickbooks",
+      "commit": "0b9da0d889fd1e586ca4328734ea7e3c1911c87f",
+      "parse_dir": "integration_tests",
+      "lineage_dir": ".",
+      "columns": {
+        "vars": "{quickbooks_schema: main}"
+      }
+    },
+    {
+      "name": "Fivetran dbt_netsuite",
+      "repo": "https://github.com/fivetran/dbt_netsuite",
+      "commit": "e3c026e8f337a880ccf4e5510dac4a6a80482f24",
+      "parse_dir": "integration_tests",
+      "lineage_dir": ".",
+      "columns": {
+        "vars": "{netsuite_schema: main}"
+      }
+    },
+    {
+      "name": "Fivetran dbt_zendesk",
+      "repo": "https://github.com/fivetran/dbt_zendesk",
+      "commit": "c5f2cfa03a1629a357a3ad2d06c8173f52eeff69",
+      "parse_dir": "integration_tests",
+      "lineage_dir": ".",
+      "columns": {
+        "vars": "{zendesk_schema: main}"
+      }
+    },
+    {
+      "name": "Fivetran dbt_stripe",
+      "repo": "https://github.com/fivetran/dbt_stripe",
+      "commit": "7f5d6ae0d474b72b10ed765b7062725f1e5771b1",
+      "parse_dir": "integration_tests",
+      "lineage_dir": ".",
+      "columns": {
+        "vars": "{stripe_schema: main}"
+      }
+    },
+    {
+      "name": "Fivetran dbt_salesforce",
+      "repo": "https://github.com/fivetran/dbt_salesforce",
+      "commit": "8f9e9c0ae44f922283d238c2eef3f27d2f3e8d32",
+      "parse_dir": "integration_tests",
+      "lineage_dir": ".",
+      "columns": {
+        "vars": "{salesforce_history_schema: main, salesforce_schema: main}"
       }
     }
   ]

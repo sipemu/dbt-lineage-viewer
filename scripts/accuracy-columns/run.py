@@ -61,6 +61,7 @@ def main():
     ap.add_argument("--binary", default=str(ROOT / "target" / "release" / "dbt-lineage"))
     ap.add_argument("--work-dir", default=str(ROOT / ".accuracy" / "columns"))
     ap.add_argument("--update-baseline", action="store_true")
+    ap.add_argument("--only", help="comma-separated project names to measure")
     args = ap.parse_args()
 
     config = json.loads((HERE.parent / "accuracy" / "projects.json").read_text())
@@ -73,7 +74,7 @@ def main():
 
     results, regressions = {}, []
     for p in config["projects"]:
-        if "columns" not in p:
+        if "columns" not in p or (args.only and p["name"] not in args.only.split(",")):
             continue
         slug = re.sub(r"[^\w-]+", "-", p["name"]).strip("-").lower()
         repo_dir = work / slug
@@ -144,9 +145,9 @@ def main():
             f.write("## Column-lineage accuracy vs sqlglot\n\n" + md + "\n")
 
     if args.update_baseline:
-        baseline_path.write_text(json.dumps(
-            {n: {m: {k: r[m][k] for k in ("recall", "precision")} for m in r}
-             for n, r in results.items()}, indent=2) + "\n")
+        baseline.update({n: {m: {k: r[m][k] for k in ("recall", "precision")} for m in r}
+                         for n, r in results.items()})
+        baseline_path.write_text(json.dumps(baseline, indent=2) + "\n")
         return 0
     for line in regressions:
         print("regression:", line, file=sys.stderr)
