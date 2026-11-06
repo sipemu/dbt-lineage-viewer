@@ -2,8 +2,8 @@
   "name": "dbt-lineage-viewer",
   "displayName": "dbt-lineage: lineage & impact for dbt",
   "description": "See what your dbt change breaks (downstream models, columns, dashboards, contracts) before CI does. Plus hover, go-to-definition and lint for ref()/source(). Binary bundled; no warehouse, no Python.",
-  "version": "0.2.0",
-  "dbtLineageVersion": "0.15.0",
+  "version": "0.2.1",
+  "dbtLineageVersion": "0.16.0",
   "publisher": "sipemu",
   "license": "MIT",
   "repository": {

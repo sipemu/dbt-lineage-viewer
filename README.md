@@ -219,7 +219,7 @@ dbt-lineage:
 # .pre-commit-config.yaml in your dbt repo
 repos:
   - repo: https://github.com/sipemu/dbt-lineage-viewer
-    rev: v0.10.0
+    rev: v0.16.0
     hooks:
       - id: dbt-lineage-lint
       - id: dbt-lineage-check-manifest   # needs a compiled target/manifest.json

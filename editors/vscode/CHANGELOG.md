@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Bundles dbt-lineage 0.16.0: lineage from SQL now finds every dependency dbt records on the five public projects measured in the README (78% before), including refs nested in Jinja, refs inside macros and package macros, and loops over literal lists. Hover, go-to-definition, diagnostics and the impact panel all benefit.
+
 ## 0.2.0
 
 - **dbt-lineage: Show impact of my changes**: compares the working tree with the base branch (`dbtLineage.baseRef`, default `auto` → `origin/HEAD`, else `main`/`master`) and shows the `ci report` in a panel: changed nodes and columns, column impact, breaking changes, the Mermaid impact graph (rendered offline), the rebuild selector and lint. Status-bar item **dbt impact**; `dbtLineage.impactOnSave` refreshes the panel on save. Clear messages when the project is not in git or the base ref does not exist.
