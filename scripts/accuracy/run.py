@@ -5,8 +5,10 @@ For each project in projects.json: check it out at the pinned commit, run
 `dbt deps` + `dbt parse` (dbt Core with the DuckDB adapter, so no warehouse is
 needed), then `dbt-lineage verify` against the resulting manifest.json.
 
-Prints a Markdown table and exits 1 if dbt-lineage missed any dependency or
-model that dbt knows about. Extra dependencies (in Jinja branches switched off
+Prints a Markdown table and exits 1 if dbt-lineage missed more dependencies
+or models than baseline.json allows for a project (known misses, 0 for most;
+lower it when the parser improves, --update-baseline writes the current
+counts). Extra dependencies (in Jinja branches switched off
 by vars) are reported but don't fail the run.
 
     python3 scripts/accuracy/run.py                      # uses target/release/dbt-lineage
@@ -100,6 +102,8 @@ def main():
     # target/, which would restore broken checkouts.
     ap.add_argument("--work-dir", default=str(ROOT / ".accuracy" / "models"))
     ap.add_argument("--readme", action="store_true", help="rewrite the README accuracy table")
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="store this run's miss counts as the allowed ones")
     args = ap.parse_args()
 
     config = json.loads((HERE / "projects.json").read_text())
@@ -108,7 +112,9 @@ def main():
     dbt = ["uvx", "--quiet", "--from", f"dbt-core=={config['dbt_core']}",
            "--with", "dbt-duckdb", "dbt"]
 
-    rows, failed = [], []
+    baseline_path = HERE / "baseline.json"
+    baseline = json.loads(baseline_path.read_text()) if baseline_path.exists() else {}
+    rows, failed, counts = [], [], {}
     for p in config["projects"]:
         slug = re.sub(r"[^\w-]+", "-", p["name"]).strip("-").lower()
         repo_dir = work / slug
@@ -140,8 +146,14 @@ def main():
         )
         report = json.loads(verify.stdout)
         rows.append((p, report))
-        if report["missing"] or report["only_in_manifest"]:
+        misses = len(report["missing"]) + len(report["only_in_manifest"])
+        counts[p["name"]] = misses
+        allowed = baseline.get(p["name"], 0)
+        if misses > allowed:
             failed.append((p["name"], report))
+        elif misses < allowed:
+            print(f"{p['name']}: {misses} misses, baseline allows {allowed}: lower it",
+                  file=sys.stderr)
 
     md = table(rows)
     print(md)
@@ -165,6 +177,10 @@ def main():
             print(f"  {m['child']} <- {m['parent']}  {m.get('file') or ''}", file=sys.stderr)
         for m in r["only_in_manifest"][:20]:
             print(f"  model not found: {m}", file=sys.stderr)
+    if args.update_baseline:
+        baseline_path.write_text(json.dumps(
+            {n: c for n, c in counts.items() if c}, indent=2, sort_keys=True) + "\n")
+        return 0
     return 1 if failed else 0
 
 

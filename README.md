@@ -109,6 +109,12 @@ dependency:
 | [cal-itp data-infra](https://github.com/cal-itp/data-infra) `3801da6` | 625 | 1,192 / 1,192 | 0 |
 | [Fivetran dbt_hubspot](https://github.com/fivetran/dbt_hubspot) `5f00935` | 176 | 280 / 280 | 18 |
 | [Fivetran dbt_jira](https://github.com/fivetran/dbt_jira) `1a9f8b4` | 61 | 108 / 108 | 0 |
+| [Fivetran dbt_shopify](https://github.com/fivetran/dbt_shopify) `a033782` | 240 | 414 / 414 | 25 |
+| [Fivetran dbt_quickbooks](https://github.com/fivetran/dbt_quickbooks) `0b9da0d` | 114 | 200 / 210 | 35 |
+| [Fivetran dbt_netsuite](https://github.com/fivetran/dbt_netsuite) `e3c026e` | 106 | 166 / 183 | 7 |
+| [Fivetran dbt_zendesk](https://github.com/fivetran/dbt_zendesk) `c5f2cfa` | 88 | 161 / 162 | 5 |
+| [Fivetran dbt_stripe](https://github.com/fivetran/dbt_stripe) `7f5d6ae` | 65 | 115 / 117 | 0 |
+| [Fivetran dbt_salesforce](https://github.com/fivetran/dbt_salesforce) `8f9e9c0` | 24 | 42 / 42 | 1 |
 <!-- accuracy:end -->
 
 Every extra dependency sits in a Jinja branch switched off by the project's
@@ -134,6 +140,13 @@ baseline.
 | jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
 | Fivetran dbt_hubspot | 573 / 2,337 | 87% | 2,337 / 2,337 | 100% |
 | Fivetran dbt_jira | 283 / 971 | 92% | 971 / 971 | 99% |
+| Fivetran dbt_shopify | 621 / 5,436 | 80% | 5,436 / 5,436 | 100% |
+| Fivetran dbt_quickbooks | 1,188 / 2,993 | 95% | 2,993 / 2,993 | 100% |
+| Fivetran dbt_netsuite | 174 / 1,831 | 89% | 1,800 / 1,831 | 99% |
+| Fivetran dbt_zendesk | 320 / 1,665 | 91% | 1,653 / 1,665 | 100% |
+| Fivetran dbt_stripe | 179 / 1,816 | 84% | 1,809 / 1,816 | 100% |
+| Fivetran dbt_salesforce | 530 / 719 | 48% | 719 / 719 | 100% |
+| tuva | 3,463 / 12,143 | 92% | 6,782 / 12,143 | 100% |
 
 From SQL alone, columns of models written in SQL are traced completely,
 through CTEs, subqueries, joins, unions and `select *`. Fivetran's packages
