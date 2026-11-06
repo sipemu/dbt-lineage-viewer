@@ -5,7 +5,8 @@ name: Lineage accuracy
 # dependency dbt knows about. Then measures column lineage against sqlglot
 # (scripts/accuracy-columns) and fails when it drops below baseline.json.
 # Weekly runs catch upstream dbt releases and also run the scale benchmark
-# (scripts/bench-scale) on generated 2k- and 10k-model projects.
+# (scripts/bench-scale) on generated 2k- and 10k-model projects and the BI
+# exposure importer check (scripts/accuracy-bi, Metabase via Docker).
 
 on:
   pull_request:
@@ -79,3 +80,25 @@ jobs:
       - name: Rebuild selector vs dbt state:modified+
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: python3 scripts/accuracy-plan/run.py
+      # Weekly and on demand only: BI exposure importers (Superset, Tableau,
+      # Looker, Power BI, anofox) against ~100 MB of public artifacts pinned in
+      # scripts/accuracy-bi/sources.json, then Metabase against a throwaway
+      # metabase/metabase container (Docker is on ubuntu-latest). Each step
+      # fails below scripts/accuracy-bi/thresholds.json and appends its table
+      # to the job summary.
+      - name: Cache BI artifacts
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: actions/cache@v4
+        with:
+          path: .accuracy/bi
+          key: accuracy-bi-${{ hashFiles('scripts/accuracy-bi/sources.json') }}
+      - name: BI importers vs public dashboards
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        timeout-minutes: 15
+        run: |
+          python3 scripts/accuracy-bi/fetch.py
+          uv run --no-project --with sqlglot --with pyyaml --with lkml python scripts/accuracy-bi/run.py
+      - name: BI importers vs Metabase (Docker)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        timeout-minutes: 15
+        run: uv run --no-project --with sqlglot --with pyyaml --with lkml python scripts/accuracy-bi/metabase.py --docker

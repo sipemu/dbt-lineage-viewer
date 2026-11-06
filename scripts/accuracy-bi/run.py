@@ -15,7 +15,9 @@ score:
 - mapping: share of matched references pointing at the expected dbt node;
 - dbt parse: whether the generated exposures YAML parses with dbt Core.
 
-Prints a Markdown table; exits 1 when any set falls below thresholds.json.
+Prints a Markdown table (also appended to $GITHUB_STEP_SUMMARY when set);
+exits 1 when any set falls below thresholds.json or fails to run, 2 when
+the binary or the downloaded artifacts are missing.
 
     python3 scripts/accuracy-bi/fetch.py
     uv run --no-project --with sqlglot --with pyyaml --with lkml \\
@@ -155,6 +157,49 @@ def dbt_parse(project):
     return proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
 
 
+def check(label, r, thresholds):
+    """Failure messages for one set's result against thresholds.json."""
+    limit = thresholds.get(label, {})
+    failures = [f"{label}: {key} {r[key]} < {limit[key]}"
+                for key in ("recall", "precision", "mapping")
+                if key in limit and r.get(key) is not None and r[key] < limit[key]]
+    if r.get("dbt_parse") is False:
+        failures.append(f"{label}: generated YAML fails dbt parse")
+    return failures
+
+
+def table(results):
+    """The Markdown table docs/BI.md shows (one row per set)."""
+    pct = lambda v: "–" if v is None else f"{v:.0f}%"  # noqa: E731
+    lines = ["| Artifacts | Dashboards found | Table references found | Precision | Mapped to the right node | dbt parse |",
+             "| --- | ---: | ---: | ---: | ---: | :---: |"]
+    for label, r in results.items():
+        if "error" in r:
+            lines.append(f"| {label} | error: {r['error'].splitlines()[0][:120]} | | | | ✗ |")
+            continue
+        parse = {True: "✓", False: "✗"}.get(r.get("dbt_parse"), "–")
+        lines.append(f"| {label} | {r['dashboards_found']} / {r['dashboards']} | {r['refs_found']} / {r['refs']} "
+                     f"({pct(r['recall'])}) | {pct(r['precision'])} | {pct(r['mapping'])} | {parse} |")
+    return "\n".join(lines)
+
+
+def report(title, results, failures, note=None):
+    """Print the table and failures; append them to $GITHUB_STEP_SUMMARY in CI."""
+    md = table(results)
+    print(md)
+    for f in failures:
+        print("failure:", f, file=sys.stderr)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+            f.write(f"## {title}\n\n{md}\n\n")
+            if note:
+                f.write(note + "\n\n")
+            if failures:
+                f.write("**Below thresholds.json:**\n\n" + "".join(f"- {x}\n" for x in failures) + "\n")
+            else:
+                f.write("All sets meet thresholds.json.\n\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Measure BI exposure importers.")
     ap.add_argument("--binary", default=str(ROOT / "target" / "release" / "dbt-lineage"))
@@ -162,43 +207,40 @@ def main():
     ap.add_argument("--json", help="write the detailed results here")
     args = ap.parse_args()
 
+    if not Path(args.binary).is_file():
+        print(f"error: {args.binary} not found; run `cargo build --release` first", file=sys.stderr)
+        return 2
+    missing = sorted({i.split("/")[0] for _, _, _, inputs, _ in SETS for i in inputs
+                      if not (WORK / i.split("/")[0] / ".commit").exists()})
+    if missing:
+        print(f"error: artifacts missing in {WORK} ({', '.join(missing)}); "
+              "run `python3 scripts/accuracy-bi/fetch.py` first", file=sys.stderr)
+        return 2
+
     thresholds = json.loads((HERE / "thresholds.json").read_text())
     results, failures = {}, []
     for label, tool, flag, inputs, compute in SETS:
-        truth = compute()
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "bench"
-            models = fixture({t for ts in truth.values() for t in ts}, project)
-            r = score(truth, run_importer(args.binary, tool, flag, inputs, project), models)
-            if not args.no_dbt:
-                run_importer(args.binary, tool, flag, inputs, project, project / "models" / "exposures.yml")
-                r["dbt_parse"], log = dbt_parse(project)
-                if not r["dbt_parse"]:
-                    print(f"{label}: dbt parse failed\n{log}", file=sys.stderr)
+        try:
+            truth = compute()
+            with tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / "bench"
+                models = fixture({t for ts in truth.values() for t in ts}, project)
+                r = score(truth, run_importer(args.binary, tool, flag, inputs, project), models)
+                if not args.no_dbt:
+                    run_importer(args.binary, tool, flag, inputs, project, project / "models" / "exposures.yml")
+                    r["dbt_parse"], log = dbt_parse(project)
+                    if not r["dbt_parse"]:
+                        print(f"{label}: dbt parse failed\n{log}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 - one broken set must not hide the others
+            r = {"error": str(e) or type(e).__name__}
+            failures.append(f"{label}: {r['error'].splitlines()[0]}")
+            print(f"{label}: {e}", file=sys.stderr)
         results[label] = r
-        limit = thresholds.get(label, {})
-        for key in ("recall", "precision", "mapping"):
-            if key in limit and r[key] is not None and r[key] < limit[key]:
-                failures.append(f"{label}: {key} {r[key]} < {limit[key]}")
-        if r.get("dbt_parse") is False:
-            failures.append(f"{label}: generated YAML fails dbt parse")
+        failures += check(label, r, thresholds)
 
-    lines = ["| Artifacts | Dashboards found | Table references found | Precision | Mapped to the right node | dbt parse |",
-             "| --- | ---: | ---: | ---: | ---: | :---: |"]
-    for label, r in results.items():
-        parse = {True: "✓", False: "✗"}.get(r.get("dbt_parse"), "–")
-        pct = lambda v: "–" if v is None else f"{v:.0f}%"  # noqa: E731
-        lines.append(f"| {label} | {r['dashboards_found']} / {r['dashboards']} | {r['refs_found']} / {r['refs']} "
-                     f"({pct(r['recall'])}) | {pct(r['precision'])} | {pct(r['mapping'])} | {parse} |")
-    md = "\n".join(lines)
-    print(md)
-    if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-            f.write("## BI exposure importers vs. public dashboards\n\n" + md + "\n")
+    report("BI exposure importers vs. public dashboards", results, failures)
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
-    for f in failures:
-        print("failure:", f, file=sys.stderr)
     return 1 if failures else 0
 
 

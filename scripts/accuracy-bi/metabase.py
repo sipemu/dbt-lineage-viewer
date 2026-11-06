@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 """Metabase part of the BI importer accuracy check (needs Docker).
 
-Starts nothing itself: run Metabase with its sample database first, e.g.
+Either run Metabase with its sample database first, e.g.
 
     docker run -d --name dbtl-metabase-bench -p 3999:3000 metabase/metabase:v0.56.4
 
-Then this script sets the instance up through the API (admin user, API key),
+or pass --docker to have this script start a fresh container (removed again
+at the end; this is what CI does). The script then sets the instance up through the API (admin user, API key),
 adds two dashboards on top of Metabase's example dashboard (native SQL with a
 template tag, an optional clause and a CTE; a GUI question with a join; a
 question built on another question), computes the ground truth from the API's
 card definitions independently of dbt-lineage (sqlglot for native SQL), runs
-`dbt-lineage exposures metabase` and scores it like run.py.
+`dbt-lineage exposures metabase` and scores it like run.py against the
+"Metabase v0.56 (Docker)" entry of thresholds.json. Prints the table row
+(also appended to $GITHUB_STEP_SUMMARY when set); exits 1 below the
+thresholds or on any error, 2 when the binary or Docker is missing or
+Metabase does not come up.
 
-    uv run --no-project --with sqlglot python scripts/accuracy-bi/metabase.py [--url http://localhost:3999]
+    uv run --no-project --with sqlglot --with pyyaml --with lkml \\
+        python scripts/accuracy-bi/metabase.py [--docker | --url http://localhost:3999]
 """
 
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -30,6 +40,9 @@ import oracle  # noqa: E402
 import run as bench  # noqa: E402
 
 EMAIL, PASSWORD = "bench@example.com", "Bench-pass-2026!"
+IMAGE = "metabase/metabase:v0.56.4"
+LABEL = "Metabase v0.56 (Docker)"
+CONTAINER = "dbtl-metabase-bench-ci"
 
 
 class Api:
@@ -56,7 +69,8 @@ def wait_healthy(api, timeout=600):
         except Exception:  # noqa: BLE001 - not up yet
             pass
         time.sleep(5)
-    raise SystemExit("Metabase did not become healthy")
+    print(f"error: Metabase at {api.url} did not become healthy within {timeout}s", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def setup(api):
@@ -176,13 +190,20 @@ def truth(api):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://localhost:3999")
-    ap.add_argument("--binary", default=str(bench.ROOT / "target" / "release" / "dbt-lineage"))
-    args = ap.parse_args()
-    api = Api(args.url)
+def start_container(port):
+    if not shutil.which("docker"):
+        print("error: --docker needs the docker CLI", file=sys.stderr)
+        raise SystemExit(2)
+    subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
+    print(f"+ docker run {IMAGE} on port {port}", file=sys.stderr, flush=True)
+    subprocess.run(["docker", "run", "-d", "--name", CONTAINER, "-p", f"{port}:3000", IMAGE],
+                   check=True, stdout=subprocess.DEVNULL)
+
+
+def measure(api, binary):
+    start = time.time()
     wait_healthy(api)
+    print(f"Metabase healthy after {time.time() - start:.0f}s", file=sys.stderr, flush=True)
     key = setup(api)
     db, tables = sample_db(api)
     if not any(d["name"].startswith("Bench:") for d in api.call("GET", "/api/dashboard")):
@@ -191,16 +212,49 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp) / "bench"
         models = bench.fixture({t for ts in expected.values() for t in ts}, project)
-        import subprocess
-        cmd = [args.binary, "exposures", "metabase", "--url", args.url, "--api-key", key, "-p", str(project), "-o", "json"]
+        cmd = [binary, "exposures", "metabase", "--url", api.url, "--api-key", key, "-p", str(project), "-o", "json"]
         proc = subprocess.run(cmd, text=True, capture_output=True)
         if proc.returncode != 0:
-            raise SystemExit(proc.stderr)
+            raise RuntimeError(f"dbt-lineage exposures metabase failed:\n{proc.stderr}")
         r = bench.score(expected, proc, models)
-        subprocess.run(cmd[:-2] + ["--write", str(project / "models" / "exposures.yml")], capture_output=True, check=True)
+        subprocess.run(cmd[:-2] + ["--write", str(project / "models" / "exposures.yml")],
+                       capture_output=True, check=True)
         r["dbt_parse"], log = bench.dbt_parse(project)
-    print(json.dumps({k: v for k, v in r.items()}, indent=2))
-    return 0 if r["recall"] == 100.0 and r["precision"] == 100.0 and r["dbt_parse"] else 1
+        if not r["dbt_parse"]:
+            print(f"{LABEL}: dbt parse failed\n{log}", file=sys.stderr)
+    return r
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", default="http://localhost:3999")
+    ap.add_argument("--docker", action="store_true",
+                    help=f"start {IMAGE} on the --url port first and remove it afterwards")
+    ap.add_argument("--binary", default=str(bench.ROOT / "target" / "release" / "dbt-lineage"))
+    ap.add_argument("--json", help="write the detailed result here")
+    args = ap.parse_args()
+    if not Path(args.binary).is_file():
+        print(f"error: {args.binary} not found; run `cargo build --release` first", file=sys.stderr)
+        return 2
+    api = Api(args.url)
+    if args.docker:
+        start_container(urllib.parse.urlparse(args.url).port or 3999)
+    try:
+        r = measure(api, args.binary)
+    except Exception as e:  # noqa: BLE001 - report it in the summary, then fail
+        r = {"error": str(e) or type(e).__name__}
+        print(f"{LABEL}: {e}", file=sys.stderr)
+    finally:
+        if args.docker:
+            subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
+    thresholds = json.loads((HERE / "thresholds.json").read_text())
+    failures = bench.check(LABEL, r, thresholds)
+    if "error" in r:
+        failures.append(f"{LABEL}: {r['error'].splitlines()[0]}")
+    bench.report("BI exposure importers: Metabase", {LABEL: r}, failures)
+    if args.json:
+        Path(args.json).write_text(json.dumps(r, indent=2))
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
