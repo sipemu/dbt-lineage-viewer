@@ -9,10 +9,20 @@
       "precision": 100.0
     }
   },
+  "tuva": {
+    "raw": {
+      "recall": 50.9,
+      "precision": 93.0
+    },
+    "compiled": {
+      "recall": 79.6,
+      "precision": 99.0
+    }
+  },
   "Fivetran dbt_hubspot": {
     "raw": {
-      "recall": 24.5,
-      "precision": 86.6
+      "recall": 46.3,
+      "precision": 92.0
     },
     "compiled": {
       "recall": 100.0,
@@ -21,28 +31,18 @@
   },
   "Fivetran dbt_jira": {
     "raw": {
-      "recall": 29.1,
-      "precision": 92.5
+      "recall": 38.8,
+      "precision": 98.0
     },
     "compiled": {
       "recall": 100.0,
-      "precision": 99.2
-    }
-  },
-  "tuva": {
-    "raw": {
-      "recall": 28.5,
-      "precision": 91.5
-    },
-    "compiled": {
-      "recall": 55.9,
-      "precision": 100.0
+      "precision": 99.0
     }
   },
   "Fivetran dbt_shopify": {
     "raw": {
-      "recall": 11.4,
-      "precision": 80.1
+      "recall": 51.8,
+      "precision": 86.0
     },
     "compiled": {
       "recall": 100.0,
@@ -51,8 +51,8 @@
   },
   "Fivetran dbt_quickbooks": {
     "raw": {
-      "recall": 39.7,
-      "precision": 95.0
+      "recall": 43.7,
+      "precision": 96.0
     },
     "compiled": {
       "recall": 100.0,
@@ -61,28 +61,28 @@
   },
   "Fivetran dbt_netsuite": {
     "raw": {
-      "recall": 9.5,
-      "precision": 88.8
+      "recall": 25.5,
+      "precision": 96.0
     },
     "compiled": {
       "recall": 98.3,
-      "precision": 98.6
+      "precision": 99.0
     }
   },
   "Fivetran dbt_zendesk": {
     "raw": {
-      "recall": 19.2,
-      "precision": 90.9
+      "recall": 24.3,
+      "precision": 92.0
     },
     "compiled": {
       "recall": 99.3,
-      "precision": 99.9
+      "precision": 100.0
     }
   },
   "Fivetran dbt_stripe": {
     "raw": {
-      "recall": 9.9,
-      "precision": 84.4
+      "recall": 33.7,
+      "precision": 88.0
     },
     "compiled": {
       "recall": 99.6,
@@ -92,7 +92,7 @@
   "Fivetran dbt_salesforce": {
     "raw": {
       "recall": 73.7,
-      "precision": 48.4
+      "precision": 48.0
     },
     "compiled": {
       "recall": 100.0,

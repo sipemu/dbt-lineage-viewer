@@ -138,15 +138,15 @@ baseline.
 | Project | From SQL alone | Precision | With compiled SQL + catalog | Precision |
 | --- | ---: | ---: | ---: | ---: |
 | jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
-| Fivetran dbt_hubspot | 573 / 2,337 | 87% | 2,337 / 2,337 | 100% |
-| Fivetran dbt_jira | 283 / 971 | 92% | 971 / 971 | 99% |
-| Fivetran dbt_shopify | 621 / 5,436 | 80% | 5,436 / 5,436 | 100% |
-| Fivetran dbt_quickbooks | 1,188 / 2,993 | 95% | 2,993 / 2,993 | 100% |
-| Fivetran dbt_netsuite | 174 / 1,831 | 89% | 1,800 / 1,831 | 99% |
-| Fivetran dbt_zendesk | 320 / 1,665 | 91% | 1,653 / 1,665 | 100% |
-| Fivetran dbt_stripe | 179 / 1,816 | 84% | 1,809 / 1,816 | 100% |
+| tuva | 6,183 / 12,143 | 93% | 9,664 / 12,143 | 99% |
+| Fivetran dbt_hubspot | 1,082 / 2,337 | 92% | 2,337 / 2,337 | 100% |
+| Fivetran dbt_jira | 377 / 971 | 98% | 971 / 971 | 99% |
+| Fivetran dbt_shopify | 2,818 / 5,436 | 86% | 5,436 / 5,436 | 100% |
+| Fivetran dbt_quickbooks | 1,308 / 2,993 | 96% | 2,993 / 2,993 | 100% |
+| Fivetran dbt_netsuite | 466 / 1,831 | 96% | 1,800 / 1,831 | 99% |
+| Fivetran dbt_zendesk | 405 / 1,665 | 92% | 1,653 / 1,665 | 100% |
+| Fivetran dbt_stripe | 612 / 1,816 | 88% | 1,809 / 1,816 | 100% |
 | Fivetran dbt_salesforce | 530 / 719 | 48% | 719 / 719 | 100% |
-| tuva | 3,463 / 12,143 | 92% | 6,782 / 12,143 | 100% |
 
 From SQL alone, columns of models written in SQL are traced completely,
 through CTEs, subqueries, joins, unions and `select *`. Fivetran's packages
