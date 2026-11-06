@@ -17,7 +17,7 @@
       "commit": "465927a0512e96ad480eb8c466a0c01598878b75",
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
-      "columns": {}
+      "columns": {"lineage_dir": "integration_tests"}
     },
     {
       "name": "cal-itp data-infra",

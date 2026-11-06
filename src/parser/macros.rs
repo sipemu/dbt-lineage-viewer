@@ -8,7 +8,11 @@
 //!   makes every model calling it depend on `dim_feeds`.
 //!
 //! Arguments are resolved when they are string literals (positional, keyword or
-//! the parameter's default). Anything computed at render time is skipped.
+//! the parameter's default), or `~` / `+` concatenations of literals and
+//! parameters. A for-loop over a parameter whose default is a literal list is
+//! expanded over that default:
+//! `{% macro m(ms=['bill']) %}{% for x in ms %}{{ ref('int_' ~ x) }}{% endfor %}`
+//! references `int_bill`. Anything computed at render time is skipped.
 
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -33,6 +37,8 @@ pub enum MacroArg {
     Literal(String),
     /// The macro parameter at this index.
     Param(usize),
+    /// Concatenation (`~` / `+`) of literals and parameters.
+    Concat(Vec<MacroArg>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -56,7 +62,8 @@ static MACRO_DEF: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-const ARG: &str = r#"'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*"#;
+/// A literal, an identifier, or a `~` / `+` concatenation of them.
+const ARG: &str = r#"(?:'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*)(?:\s*[~+]\s*(?:'[^']*'|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*))*"#;
 
 static BODY_REF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
@@ -77,10 +84,21 @@ static CALL: LazyLock<Regex> = LazyLock::new(|| {
 const BUILTINS: &[&str] = &["ref", "source", "config", "var", "env_var", "return"];
 
 fn macro_arg(raw: &str, params: &[String]) -> Option<MacroArg> {
+    let terms = super::loops::concat_terms(raw.trim())?;
+    if terms.len() > 1 {
+        return terms
+            .iter()
+            .map(|t| macro_arg(t, params))
+            .collect::<Option<Vec<_>>>()
+            .map(MacroArg::Concat);
+    }
     if let Some(lit) = strip_quotes(raw) {
         return Some(MacroArg::Literal(lit.to_string()));
     }
-    params.iter().position(|p| p == raw).map(MacroArg::Param)
+    params
+        .iter()
+        .position(|p| p == raw.trim())
+        .map(MacroArg::Param)
 }
 
 /// Scan macro source content for macros whose body calls `ref()` or `source()`
@@ -94,9 +112,15 @@ pub fn detect_wrappers_in(content: &str) -> Vec<WrapperMacro> {
         }
         let mut params = Vec::new();
         let mut defaults = Vec::new();
+        let mut list_defaults = HashMap::new();
         for raw in split_args(&cap["args"]) {
             let (param, default) = match raw.split_once('=') {
-                Some((p, d)) => (p.trim(), strip_quotes(d).map(str::to_string)),
+                Some((p, d)) => {
+                    if let Some(items) = super::loops::literal_list(d) {
+                        list_defaults.insert(p.trim().to_string(), items);
+                    }
+                    (p.trim(), strip_quotes(d).map(str::to_string))
+                }
                 None => (raw.trim(), None),
             };
             if !param.is_empty() {
@@ -119,6 +143,20 @@ pub fn detect_wrappers_in(content: &str) -> Vec<WrapperMacro> {
                     deps.push(MacroDep::Source(s, t));
                 }
             }
+        }
+        // Loops over a parameter's literal-list default (or a list built in
+        // the body). Expanded over the default only: a call site passing a
+        // different list is not followed.
+        let (loop_refs, loop_sources) =
+            super::loops::extract_loop_calls_seeded(&cap["body"], list_defaults);
+        for r in loop_refs {
+            deps.push(MacroDep::Ref(MacroArg::Literal(r.name)));
+        }
+        for s in loop_sources {
+            deps.push(MacroDep::Source(
+                MacroArg::Literal(s.source_name),
+                MacroArg::Literal(s.table_name),
+            ));
         }
         if !deps.is_empty() {
             found.push(WrapperMacro {
@@ -330,10 +368,7 @@ pub fn extract_wrapper_calls(
                 continue;
             };
             let bound = bind_args(w, args);
-            let resolve = |a: &MacroArg| match a {
-                MacroArg::Literal(s) => Some(s.clone()),
-                MacroArg::Param(i) => bound[*i].clone(),
-            };
+            let resolve = |a: &MacroArg| resolve_arg(a, &bound);
             for dep in &w.deps {
                 match dep {
                     MacroDep::Ref(a) => {
@@ -358,6 +393,14 @@ pub fn extract_wrapper_calls(
         }
     }
     (refs, sources)
+}
+
+fn resolve_arg(a: &MacroArg, bound: &[Option<String>]) -> Option<String> {
+    match a {
+        MacroArg::Literal(s) => Some(s.clone()),
+        MacroArg::Param(i) => bound[*i].clone(),
+        MacroArg::Concat(parts) => parts.iter().map(|p| resolve_arg(p, bound)).collect(),
+    }
 }
 
 /// String-literal value of each macro parameter at one call site.
@@ -478,6 +521,54 @@ mod tests {
         let sql = "{% set rel = my_pkg.smart_ref('a') %}{{ dbt_utils.star(from=smart_ref('b')) }}";
         let (refs, _) = extract_wrapper_calls(sql, &wrappers);
         assert_eq!(names(&refs), ["a", "b"]);
+    }
+
+    #[test]
+    fn test_loop_over_list_default_with_concatenation() {
+        // Fivetran dbt_quickbooks' get_enabled_unioned_models.
+        let wrappers = detect_wrappers_in(
+            r"{% macro get_enabled(unioned_models = [
+                'bill',
+                'invoice']) %}
+              {% set enabled = [] %}
+              {{ enabled.append(ref('int__purchase_double_entry')) }}
+              {% for m in unioned_models %}
+                {% if var('using_' ~ m, True) %}
+                  {{ enabled.append(ref('int__' ~ m ~ '_double_entry')) }}
+                {% endif %}
+              {% endfor %}
+              {{ return(enabled) }}
+              {% endmacro %}",
+        );
+        let sql = "{{ dbt_utils.union_relations(get_enabled()) }}";
+        let (refs, _) = extract_wrapper_calls(sql, &wrappers);
+        assert_eq!(
+            names(&refs),
+            [
+                "int__purchase_double_entry",
+                "int__bill_double_entry",
+                "int__invoice_double_entry"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_concatenated_parameter_argument() {
+        let wrappers = detect_wrappers_in(
+            r#"{% macro stg(name, src='raw') %}{{ ref('stg_' ~ name) }}{{ source(src + "_db", name ~ '_v2') }}{% endmacro %}"#,
+        );
+        let (refs, sources) = extract_wrapper_calls("{{ stg('orders') }}", &wrappers);
+        assert_eq!(names(&refs), ["stg_orders"]);
+        assert_eq!(
+            (
+                sources[0].source_name.as_str(),
+                sources[0].table_name.as_str()
+            ),
+            ("raw_db", "orders_v2")
+        );
+        // An unresolvable part leaves the whole argument unresolved.
+        let (refs, _) = extract_wrapper_calls("{{ stg(var('x')) }}", &wrappers);
+        assert!(refs.is_empty());
     }
 
     #[test]
