@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Bundles dbt-lineage 0.18.0: when `target/manifest.json` holds dbt's compiled SQL (after `dbt compile` or `dbt run`), column lineage reads it for models whose file is unchanged, which covers columns that Jinja loops and macros generate.
+
 ## 0.2.2
 
 - Bundles dbt-lineage 0.17.0: column lineage is traced through CTEs, subqueries, joins, unions and `select *`, so the impact panel now shows which downstream columns a change breaks (it was nearly always empty before). The panel also lists models whose lineage Jinja decides at render time.
