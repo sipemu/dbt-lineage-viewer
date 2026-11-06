@@ -5,6 +5,8 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
+## [0.17.0] – 2026-11-06
+
 ### Added
 
 - `ci report --verify` (GitHub Action: `verify: true`) compares the parsed
@@ -22,6 +24,8 @@ Notable changes per release. Full per-release notes live on the
 
 ### Changed
 
+- **Upgrade recommended:** column impact in the PR comment was nearly always
+  empty on real projects before this release.
 - Column lineage rewritten as a scope-based analyzer. It traces columns
   through CTEs, subqueries, joins, unions and `select *` (expanded by name in
   dependency order), and neutralises Jinja instead of giving up on it.
