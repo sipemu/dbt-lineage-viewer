@@ -381,12 +381,28 @@ fn cached_regex(pattern: String) -> Option<Regex> {
         static CACHE: std::cell::RefCell<HashMap<String, Option<Regex>>> =
             std::cell::RefCell::new(HashMap::new());
     }
+    // Bounded: a compiled Unicode-aware regex takes tens of KB, and large
+    // projects produce tens of thousands of distinct patterns per thread.
+    const MAX_ENTRIES: usize = 256;
     CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(pattern)
-            .or_insert_with_key(|p| Regex::new(p).ok())
-            .clone()
+        let mut cache = cache.borrow_mut();
+        if let Some(hit) = cache.get(&pattern) {
+            return hit.clone();
+        }
+        if cache.len() >= MAX_ENTRIES {
+            cache.clear();
+        }
+        // ASCII mode: case-insensitive Unicode `\w` / `\b` compile into large
+        // automata, and freeing them leaves ~100 MiB per worker thread in
+        // the allocator on large projects. Column names are ASCII; Unicode
+        // stays the fallback for patterns that need it.
+        let compiled = regex::RegexBuilder::new(&pattern)
+            .unicode(false)
+            .build()
+            .or_else(|_| Regex::new(&pattern))
+            .ok();
+        cache.insert(pattern, compiled.clone());
+        compiled
     })
 }
 
