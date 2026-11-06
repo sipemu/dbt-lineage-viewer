@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- Bundles dbt-lineage 0.17.0: column lineage is traced through CTEs, subqueries, joins, unions and `select *`, so the impact panel now shows which downstream columns a change breaks (it was nearly always empty before). The panel also lists models whose lineage Jinja decides at render time.
+
 ## 0.2.1
 
 - Bundles dbt-lineage 0.16.0: lineage from SQL now finds every dependency dbt records on the five public projects measured in the README (78% before), including refs nested in Jinja, refs inside macros and package macros, and loops over literal lists. Hover, go-to-definition, diagnostics and the impact panel all benefit.
