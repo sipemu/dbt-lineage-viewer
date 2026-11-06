@@ -97,8 +97,11 @@ measures that on your own project against a `manifest.json` from `dbt parse`.
 
 Results on public dbt projects (manifests from `dbt parse`, dbt Core 1.12 with
 the DuckDB adapter; packages measured through their `integration_tests`
-project):
+project). [`scripts/accuracy/run.py`](scripts/accuracy/run.py) produces this
+table, and CI runs it on every parser change and weekly, failing on any missed
+dependency:
 
+<!-- accuracy:start -->
 | Project | Models compared | Dependencies found | Extra, not in manifest |
 | --- | ---: | ---: | ---: |
 | [jaffle-shop](https://github.com/dbt-labs/jaffle-shop) `5beb145` | 13 | 17 / 17 | 0 |
@@ -106,6 +109,7 @@ project):
 | [cal-itp data-infra](https://github.com/cal-itp/data-infra) `3801da6` | 625 | 1,192 / 1,192 | 0 |
 | [Fivetran dbt_hubspot](https://github.com/fivetran/dbt_hubspot) `5f00935` | 176 | 280 / 280 | 18 |
 | [Fivetran dbt_jira](https://github.com/fivetran/dbt_jira) `1a9f8b4` | 61 | 108 / 108 | 0 |
+<!-- accuracy:end -->
 
 Every extra dependency sits in a Jinja branch switched off by the project's
 current vars (`{% if var('hubspot_property_enabled') %}`). dbt records only the

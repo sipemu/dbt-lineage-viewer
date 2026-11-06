@@ -1,0 +1,56 @@
+name: Lineage accuracy
+
+# Measures SQL-parse lineage against `dbt parse` on the public projects in
+# scripts/accuracy/projects.json and fails when dbt-lineage misses a
+# dependency dbt knows about. Weekly runs catch upstream dbt releases.
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "scripts/accuracy/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/accuracy.yml"
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "scripts/accuracy/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/accuracy.yml"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  accuracy:
+    name: Lineage accuracy vs dbt parse
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: scripts/accuracy/projects.json
+      - name: Cache project checkouts
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/accuracy/*/
+            !target/accuracy/*/**/target
+            !target/accuracy/*/**/.dbt-lineage
+          key: accuracy-projects-${{ hashFiles('scripts/accuracy/projects.json') }}
+      - run: cargo build --release --no-default-features
+      - run: python3 scripts/accuracy/run.py

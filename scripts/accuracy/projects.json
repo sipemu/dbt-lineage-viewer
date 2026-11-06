@@ -1,0 +1,40 @@
+{
+  "dbt_core": "1.12.6",
+  "projects": [
+    {
+      "name": "jaffle-shop",
+      "repo": "https://github.com/dbt-labs/jaffle-shop",
+      "commit": "5beb145b00f5465ec759cfcdd9745e858818cf95",
+      "parse_dir": ".",
+      "lineage_dir": "."
+    },
+    {
+      "name": "tuva",
+      "repo": "https://github.com/tuva-health/tuva",
+      "commit": "465927a0512e96ad480eb8c466a0c01598878b75",
+      "parse_dir": "integration_tests",
+      "lineage_dir": "."
+    },
+    {
+      "name": "cal-itp data-infra",
+      "repo": "https://github.com/cal-itp/data-infra",
+      "commit": "3801da68ed9731b464e14d5afc80b57f30024bae",
+      "parse_dir": "warehouse",
+      "lineage_dir": "warehouse"
+    },
+    {
+      "name": "Fivetran dbt_hubspot",
+      "repo": "https://github.com/fivetran/dbt_hubspot",
+      "commit": "5f0093547ded4c4a7d48ad6ceb32e94a641c1690",
+      "parse_dir": "integration_tests",
+      "lineage_dir": "."
+    },
+    {
+      "name": "Fivetran dbt_jira",
+      "repo": "https://github.com/fivetran/dbt_jira",
+      "commit": "1a9f8b4a4fe76587679330e14fa0decab7fb551c",
+      "parse_dir": "integration_tests",
+      "lineage_dir": "."
+    }
+  ]
+}

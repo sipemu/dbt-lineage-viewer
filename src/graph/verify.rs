@@ -104,7 +104,9 @@ fn collect(graph: &LineageGraph) -> Side {
     let mut nodes = BTreeMap::new();
     for idx in graph.node_indices() {
         let node = &graph[idx];
-        if !is_compared(node.node_type) {
+        // The manifest maps analyses to models; they are not part of the DAG
+        // that SQL-parse mode builds.
+        if !is_compared(node.node_type) || node.unique_id.starts_with("analysis.") {
             continue;
         }
         let parents = graph
@@ -309,6 +311,15 @@ mod tests {
         let r = verify(&parsed, &manifest, |_| true);
         assert!(r.found_everything());
         assert!(!r.is_exact());
+    }
+
+    #[test]
+    fn analyses_are_ignored() {
+        let parsed = graph(BASE, &[]);
+        let mut nodes = BASE.to_vec();
+        nodes.push(("analysis.flow", NodeType::Model));
+        let manifest = graph(&nodes, &[("model.fct_orders", "analysis.flow")]);
+        assert!(verify(&parsed, &manifest, |_| true).is_exact());
     }
 
     #[test]
