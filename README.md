@@ -138,7 +138,7 @@ baseline.
 | Project | From SQL alone | Precision | With compiled SQL + catalog | Precision |
 | --- | ---: | ---: | ---: | ---: |
 | jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
-| tuva | 7,241 / 12,143 | 94% | 12,141 / 12,143 | 100% |
+| tuva | 10,359 / 12,143 | 99% | 12,141 / 12,143 | 100% |
 | Fivetran dbt_hubspot | 2,146 / 2,337 | 97% | 2,337 / 2,337 | 100% |
 | Fivetran dbt_jira | 713 / 971 | 98% | 971 / 971 | 99% |
 | Fivetran dbt_shopify | 5,109 / 5,436 | 98% | 5,436 / 5,436 | 100% |
