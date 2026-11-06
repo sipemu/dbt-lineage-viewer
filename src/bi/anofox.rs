@@ -3,10 +3,13 @@
 //! A dashboard is one DuckDB `.sql` file: header comments (`-- @title`,
 //! `-- @description`, `-- @owner`) describe it, and every `SELECT` with
 //! `::ROLE` casts becomes a panel. The tables those statements read are the
-//! dashboard's dependencies; tables and views the file creates itself (sample
-//! data, CSV loads) are local and skipped.
+//! dashboard's dependencies, and so are the files they read
+//! (`read_parquet(getvariable('anofox_data') || '/orders.parquet')`), which
+//! map to the model the file is named after. A table or view a scanned file
+//! creates (`CREATE TEMP TABLE t AS FROM read_parquet(…)`) stands for what it
+//! reads; one with no dbt input (sample data, CSV loads) maps to nothing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -17,7 +20,7 @@ use sqlparser::ast::{visit_relations, Statement};
 use sqlparser::dialect::DuckDbDialect;
 use sqlparser::parser::Parser;
 
-use super::Dashboard;
+use super::{Dashboard, FileRead};
 
 /// Panel roles that mark a file as a dashboard (not a helper script).
 static ROLE_CAST: LazyLock<Regex> = LazyLock::new(|| {
@@ -36,6 +39,13 @@ static CREATED: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+/// A statement defining a table or view from a query (`… AS SELECT`, `… AS FROM`).
+static CREATED_AS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?is)^\s*create\s+(?:or\s+replace\s+)?(?:temp(?:orary)?\s+)?(?:table|view)\s+(?:if\s+not\s+exists\s+)?([A-Za-z_"][\w."]*)\s+as\b"#,
+    )
+    .unwrap()
+});
 static FROM_JOIN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\b(?:from|join)\s+([A-Za-z_"][\w."]*)(\s*\()?"#).unwrap());
 static QUOTED_IDENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""(?:[^"]|"")*""#).unwrap());
@@ -43,11 +53,152 @@ static CTE_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b([A-Za-z_]\w*)\s+as\s+(?:not\s+)?(?:materialized\s+)?\(").unwrap()
 });
 static STRING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"'(?:[^']|'')*'").unwrap());
+/// DuckDB's file readers: `read_parquet`, `read_csv_auto`, `read_json_objects`, ….
+static FILE_READ: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(read_(?:parquet|csv|json|ndjson)(?:_objects)?(?:_auto)?)\s*\(").unwrap()
+});
+/// A path argument that is a literal or a `||` concatenation ending in one.
+static TRAILING_LITERAL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)(?:^|\|\|)\s*'((?:[^']|'')*)'$").unwrap());
+static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+
+/// Names the model a read file stands for: its base name without extension
+/// (`…/orders.parquet` → `orders`), or the `{model}` part of a pattern such
+/// as `{model}.parquet`.
+#[derive(Debug, Default)]
+pub struct FileNamer {
+    pattern: Option<Regex>,
+}
+
+impl FileNamer {
+    /// `pattern` must contain `{model}`; it is matched against the end of the
+    /// path, so `exports/{model}.csv` requires that folder.
+    pub fn new(pattern: Option<&str>) -> Result<Self> {
+        let Some(pattern) = pattern else {
+            return Ok(Self::default());
+        };
+        anyhow::ensure!(
+            pattern.contains("{model}"),
+            "--file-pattern '{pattern}' has no {{model}} placeholder"
+        );
+        let body = pattern
+            .replace('\\', "/")
+            .split("{model}")
+            .map(regex::escape)
+            .collect::<Vec<_>>()
+            .join("([^/]+?)");
+        let re = Regex::new(&format!("(?i)(?:^|/){body}$"))?;
+        Ok(Self { pattern: Some(re) })
+    }
+
+    /// `None` for globs and for paths the pattern doesn't fit.
+    pub fn name(&self, path: &str) -> Option<String> {
+        let path = path.replace('\\', "/");
+        if path.contains(['*', '?', '[', '{']) {
+            return None;
+        }
+        match &self.pattern {
+            Some(re) => re.captures(&path).map(|c| c[1].to_string()),
+            None => {
+                let file = path.rsplit('/').next().unwrap_or(&path);
+                let stem = file.split('.').next().unwrap_or(file);
+                (!stem.is_empty()).then(|| stem.to_string())
+            }
+        }
+    }
+}
+
+/// What a statement or file reads.
+#[derive(Debug, Default, Clone)]
+struct Reads {
+    tables: BTreeSet<String>,
+    files: BTreeSet<FileRead>,
+}
+
+impl Reads {
+    fn extend(&mut self, other: &Reads) {
+        self.tables.extend(other.tables.iter().cloned());
+        self.files.extend(other.files.iter().cloned());
+    }
+}
+
+/// One scanned file: everything it reads, and the tables it creates.
+#[derive(Debug, Default)]
+struct Script {
+    reads: Reads,
+    /// Tables and views created from a query, with what that query reads.
+    defs: HashMap<String, Reads>,
+    /// Every table, view or macro the file creates.
+    created: BTreeSet<String>,
+}
+
+impl Script {
+    fn scan(sql: &str, namer: &FileNamer) -> Self {
+        let mut script = Script {
+            created: created_tables(sql),
+            ..Script::default()
+        };
+        for stmt in split_statements(&strip_comments(sql)) {
+            let reads = Reads {
+                tables: statement_tables(stmt),
+                files: file_reads(stmt, namer),
+            };
+            if let Some(c) = CREATED_AS.captures(stmt) {
+                script
+                    .defs
+                    .entry(normalise(&c[1]))
+                    .or_default()
+                    .extend(&reads);
+            }
+            script.reads.extend(&reads);
+        }
+        script
+    }
+
+    fn merge(&mut self, other: &Script) {
+        for (name, reads) in &other.defs {
+            self.defs.entry(name.clone()).or_default().extend(reads);
+        }
+        self.created.extend(other.created.iter().cloned());
+    }
+}
+
+/// `reads` with every created table replaced by what it reads
+/// (transitively). A table's definition comes from the first of `scopes`
+/// that has one: the dashboard's own file first, since dashboards often each
+/// define a view `wk` of their own. Created tables without a query
+/// definition (macros, `CREATE TABLE t (…)`) are dropped.
+fn resolve(reads: &Reads, scopes: &[&Script], created: &BTreeSet<String>) -> Reads {
+    let mut out = Reads {
+        tables: BTreeSet::new(),
+        files: reads.files.clone(),
+    };
+    let mut seen = BTreeSet::new();
+    let mut todo: Vec<&String> = reads.tables.iter().collect();
+    while let Some(table) = todo.pop() {
+        if !seen.insert(table) {
+            continue;
+        }
+        if let Some(def) = scopes.iter().find_map(|s| s.defs.get(table)) {
+            out.files.extend(def.files.iter().cloned());
+            todo.extend(&def.tables);
+        } else if !created.contains(table) && !table.is_empty() {
+            out.tables.insert(table.clone());
+        }
+    }
+    out
+}
 
 /// Collect dashboards from files and directories (searched recursively for
 /// `.sql`). `url` is the exposure URL; `{name}` in it is replaced by the
 /// file name without extension. Without `url`, the file path is used.
-pub fn dashboards_from_paths(paths: &[PathBuf], url: Option<&str>) -> Result<Vec<Dashboard>> {
+/// `file_pattern` names read files after models (see [`FileNamer`]).
+pub fn dashboards_from_paths(
+    paths: &[PathBuf],
+    url: Option<&str>,
+    file_pattern: Option<&str>,
+) -> Result<Vec<Dashboard>> {
+    let namer = FileNamer::new(file_pattern)?;
     let mut files = Vec::new();
     for p in paths {
         if p.is_dir() {
@@ -67,26 +218,42 @@ pub fn dashboards_from_paths(paths: &[PathBuf], url: Option<&str>) -> Result<Vec
     for file in files {
         let sql = std::fs::read_to_string(&file)
             .with_context(|| format!("cannot read {}", file.display()))?;
-        sources.push((file, sql));
+        let script = Script::scan(&sql, &namer);
+        sources.push((file, sql, script));
     }
-    // Tables created by any scanned file (an `init.sql` loading CSVs, a
-    // `compute.sql` materializing results) belong to the dashboards, not dbt.
-    let created: BTreeSet<String> = sources
-        .iter()
-        .flat_map(|(_, sql)| created_tables(sql))
-        .collect();
-    let mut dashboards = Vec::new();
-    for (file, sql) in &sources {
-        if let Some(mut d) = parse_dashboard(file, sql, url) {
-            d.tables.retain(|t| !created.contains(t));
-            dashboards.push(d);
+    // Tables created by any scanned file (an `init.sql` loading files, a
+    // `compute.sql` materializing results) stand for what they read. Helper
+    // scripts' definitions come before other dashboards' ones.
+    let mut parsed = Vec::new();
+    let (mut helpers, mut others) = (Script::default(), Script::default());
+    for (file, sql, script) in &sources {
+        match dashboard(file, sql, url, Reads::default()) {
+            Some(d) => {
+                others.merge(script);
+                parsed.push((d, script));
+            }
+            None => helpers.merge(script),
         }
+    }
+    let created: BTreeSet<String> = helpers.created.union(&others.created).cloned().collect();
+    let mut dashboards = Vec::new();
+    for (mut d, script) in parsed {
+        let reads = resolve(&script.reads, &[script, &helpers, &others], &created);
+        (d.tables, d.files) = (reads.tables, reads.files);
+        dashboards.push(d);
     }
     Ok(dashboards)
 }
 
 /// Parse one file; `None` when it is not a dashboard (no title, no panels).
+/// Only the tables this file creates are resolved.
 pub fn parse_dashboard(path: &Path, sql: &str, url: Option<&str>) -> Option<Dashboard> {
+    let script = Script::scan(sql, &FileNamer::default());
+    let reads = resolve(&script.reads, &[&script], &script.created);
+    dashboard(path, sql, url, reads)
+}
+
+fn dashboard(path: &Path, sql: &str, url: Option<&str>, reads: Reads) -> Option<Dashboard> {
     let header = |key: &str| {
         HEADER
             .captures_iter(sql)
@@ -120,64 +287,113 @@ pub fn parse_dashboard(path: &Path, sql: &str, url: Option<&str>) -> Option<Dash
         description: header("description"),
         owner_name,
         owner_email,
-        tables: dashboard_tables(sql),
+        tables: reads.tables,
+        files: reads.files,
     })
 }
 
-/// Tables read by the dashboard, minus what the file creates itself, CTEs
-/// and table functions (`read_csv(…)`, `range(…)`).
+/// Tables read by the SQL, minus what it creates itself, CTEs and table
+/// functions (`read_csv(…)`, `range(…)`).
 pub fn dashboard_tables(sql: &str) -> BTreeSet<String> {
-    let code = strip_comments(sql);
     let local = created_tables(sql);
-
     let mut found = BTreeSet::new();
     // Statement by statement, so one DuckDB construct the parser doesn't
-    // know only costs that statement; it falls back to FROM/JOIN scanning.
-    for stmt in split_statements(&code) {
-        match Parser::parse_sql(&DuckDbDialect {}, stmt) {
-            Ok(statements) => {
-                // Top-level CTEs from the AST, nested ones (in subqueries,
-                // macros) by name pattern.
-                let mut ctes = cte_names(&statements);
-                ctes.extend(CTE_NAME.captures_iter(stmt).map(|c| normalise(&c[1])));
-                let _ = visit_relations(&statements, |rel| {
-                    let name = normalise(&rel.to_string());
-                    if !ctes.contains(&name) && !is_function_call(stmt, &rel.to_string()) {
-                        found.insert(name);
-                    }
-                    ControlFlow::<()>::Continue(())
-                });
-            }
-            Err(_) => {
-                // Blank string literals and quoted identifiers with spaces
-                // (column labels like "Street km from previous").
-                let text = STRING.replace_all(stmt, "''");
-                let text = QUOTED_IDENT.replace_all(&text, |c: &regex::Captures| {
-                    if c[0].contains(char::is_whitespace) {
-                        "\"\"".to_string()
-                    } else {
-                        c[0].to_string()
-                    }
-                });
-                let ctes: BTreeSet<String> = CTE_NAME
-                    .captures_iter(&text)
-                    .map(|c| normalise(&c[1]))
-                    .collect();
-                for cap in FROM_JOIN.captures_iter(&text) {
-                    let name = normalise(&cap[1]);
-                    if cap.get(2).is_none() && !ctes.contains(&name) {
-                        found.insert(name);
-                    }
-                }
-            }
-        }
+    // know only costs that statement.
+    for stmt in split_statements(&strip_comments(sql)) {
+        found.extend(statement_tables(stmt));
     }
     found.retain(|t| !local.contains(t) && !t.is_empty());
     found
 }
 
-/// Drop `--` and `/* */` comments, keeping string literals intact. One pass,
-/// so an apostrophe in a comment (`-- the DC's`) doesn't open a string.
+/// Tables one statement reads, minus CTEs and table functions. Falls back to
+/// FROM/JOIN scanning when the parser can't read the statement.
+fn statement_tables(stmt: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    match Parser::parse_sql(&DuckDbDialect {}, stmt) {
+        Ok(statements) => {
+            // Top-level CTEs from the AST, nested ones (in subqueries,
+            // macros) by name pattern.
+            let mut ctes = cte_names(&statements);
+            ctes.extend(CTE_NAME.captures_iter(stmt).map(|c| normalise(&c[1])));
+            let _ = visit_relations(&statements, |rel| {
+                let name = normalise(&rel.to_string());
+                if !ctes.contains(&name) && !is_function_call(stmt, &rel.to_string()) {
+                    found.insert(name);
+                }
+                ControlFlow::<()>::Continue(())
+            });
+        }
+        Err(_) => {
+            // Blank string literals and quoted identifiers with spaces
+            // (column labels like "Street km from previous").
+            let text = STRING.replace_all(stmt, "''");
+            let text = QUOTED_IDENT.replace_all(&text, |c: &regex::Captures| {
+                if c[0].contains(char::is_whitespace) {
+                    "\"\"".to_string()
+                } else {
+                    c[0].to_string()
+                }
+            });
+            let ctes: BTreeSet<String> = CTE_NAME
+                .captures_iter(&text)
+                .map(|c| normalise(&c[1]))
+                .collect();
+            for cap in FROM_JOIN.captures_iter(&text) {
+                let name = normalise(&cap[1]);
+                if cap.get(2).is_none() && !ctes.contains(&name) {
+                    found.insert(name);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Files one statement reads with DuckDB's `read_*` functions. The path is
+/// the first argument when it is a string literal or a `||` concatenation
+/// ending in one; anything else is kept with no model name.
+fn file_reads(stmt: &str, namer: &FileNamer) -> BTreeSet<FileRead> {
+    let strings: Vec<_> = STRING.find_iter(stmt).map(|m| m.range()).collect();
+    FILE_READ
+        .captures_iter(stmt)
+        .filter_map(|c| {
+            let call = c.get(0)?;
+            if strings.iter().any(|r| r.contains(&call.start())) {
+                return None;
+            }
+            let arg = first_argument(&stmt[call.end()..]).trim();
+            let path = TRAILING_LITERAL
+                .captures(arg)
+                .map(|l| l[1].replace("''", "'"));
+            Some(FileRead {
+                call: format!("{}({})", &c[1], WHITESPACE.replace_all(arg, " ")),
+                name: path.and_then(|p| namer.name(&p)),
+            })
+        })
+        .collect()
+}
+
+/// Text up to the first top-level `,` or the closing `)` of a call.
+fn first_argument(rest: &str) -> &str {
+    let (mut depth, mut quote) = (0usize, None::<char>);
+    for (i, c) in rest.char_indices() {
+        match (c, quote) {
+            (c, Some(q)) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            ('\'' | '"', None) => quote = Some(c),
+            ('(' | '[' | '{', None) => depth += 1,
+            (')' | ']' | '}', None) if depth > 0 => depth -= 1,
+            (')' | ']' | '}' | ',', None) if depth == 0 => return &rest[..i],
+            _ => {}
+        }
+    }
+    rest
+}
+
 /// Tables, views and macros a script creates (lower-cased).
 pub fn created_tables(sql: &str) -> BTreeSet<String> {
     CREATED
@@ -186,6 +402,8 @@ pub fn created_tables(sql: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Drop `--` and `/* */` comments, keeping string literals intact. One pass,
+/// so an apostrophe in a comment (`-- the DC's`) doesn't open a string.
 fn strip_comments(sql: &str) -> String {
     let bytes = sql.as_bytes();
     let mut out = String::with_capacity(sql.len());
@@ -329,6 +547,121 @@ FROM stg_payments SELECT amount ::HISTOGRAM;
                 "stg_payments"
             ]
         );
+        // `it_alarms` stands for its CSV file.
+        let files: Vec<_> = d
+            .files
+            .iter()
+            .map(|f| (&f.call[..], f.name.as_deref()))
+            .collect();
+        assert_eq!(files, vec![("read_csv('data/alarms.csv')", Some("alarms"))]);
+    }
+
+    fn files_of(sql: &str) -> Vec<(String, Option<String>)> {
+        parse_dashboard(Path::new("d.sql"), sql, None)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|f| (f.call, f.name))
+            .collect()
+    }
+
+    #[test]
+    fn file_reads_name_models() {
+        let sql = r#"-- @title Files
+SELECT * ::TABLE FROM read_parquet(getvariable('anofox_data') || '/package_downloads.parquet');
+SELECT * ::TABLE FROM READ_CSV_AUTO('data\Orders.csv', header = true);
+SELECT * ::TABLE FROM read_json_objects('s3://b/events.json.gz') e JOIN read_ndjson_auto('x/it''s.ndjson') USING (id);
+SELECT * ::TABLE FROM read_parquet('runs/*/run.parquet');
+SELECT * ::TABLE FROM read_parquet(getvariable('file'));
+SELECT * ::TABLE FROM read_parquet(['a.parquet', 'b.parquet']);
+SELECT 'read_parquet(''not_a_call.parquet'')' ::TEXT_MARKDOWN;
+"#;
+        let some = |s: &str| Some(s.to_string());
+        assert_eq!(
+            files_of(sql),
+            vec![
+                (
+                    r"READ_CSV_AUTO('data\Orders.csv')".to_string(),
+                    some("Orders")
+                ),
+                (
+                    "read_json_objects('s3://b/events.json.gz')".to_string(),
+                    some("events")
+                ),
+                (
+                    "read_ndjson_auto('x/it''s.ndjson')".to_string(),
+                    some("it's")
+                ),
+                ("read_parquet('runs/*/run.parquet')".to_string(), None),
+                ("read_parquet(['a.parquet', 'b.parquet'])".to_string(), None),
+                (
+                    "read_parquet(getvariable('anofox_data') || '/package_downloads.parquet')"
+                        .to_string(),
+                    some("package_downloads")
+                ),
+                ("read_parquet(getvariable('file'))".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn file_pattern_template() {
+        let namer = FileNamer::new(Some("{model}.parquet")).unwrap();
+        assert_eq!(namer.name("data/orders.parquet").as_deref(), Some("orders"));
+        assert_eq!(namer.name("data/orders.csv"), None);
+        let namer = FileNamer::new(Some("exports/{model}.csv")).unwrap();
+        assert_eq!(
+            namer.name("/srv/exports/fct_sales.csv").as_deref(),
+            Some("fct_sales")
+        );
+        assert_eq!(namer.name("/srv/other/fct_sales.csv"), None);
+        assert_eq!(namer.name("exports/sales_*.csv"), None);
+        assert!(FileNamer::new(Some("orders.parquet")).is_err());
+        // Default: the base name without extension(s).
+        let namer = FileNamer::default();
+        assert_eq!(namer.name("a/b/c.csv.gz").as_deref(), Some("c"));
+        assert_eq!(namer.name("data/"), None);
+    }
+
+    #[test]
+    fn created_tables_stand_for_what_they_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("init.sql"),
+            "CREATE OR REPLACE TEMP TABLE pq_orders AS\nFROM read_parquet(getvariable('anofox_data') || '/orders.parquet');\n\
+             CREATE VIEW joined AS SELECT * FROM pq_orders JOIN dim_customers USING (id);\n\
+             CREATE TABLE sample AS SELECT * FROM range(3) t(x);\n\
+             CREATE TABLE loaded (x INT);\n\
+             CREATE TABLE wk AS SELECT * FROM fct_weeks;",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("a.sql"),
+            "-- @title A\nSELECT * ::TABLE FROM joined, sample, loaded;\nSELECT * ::TABLE FROM wk;",
+        )
+        .unwrap();
+        // A dashboard's own `wk` wins over the one in init.sql.
+        std::fs::write(
+            dir.path().join("b.sql"),
+            "-- @title B\nCREATE TEMP VIEW wk AS FROM read_csv('sample.csv');\nSELECT * ::TABLE FROM wk;",
+        )
+        .unwrap();
+        let ds = dashboards_from_paths(&[dir.path().to_path_buf()], None, None).unwrap();
+        let (a, b) = (&ds[0], &ds[1]);
+        assert_eq!(
+            a.tables.iter().collect::<Vec<_>>(),
+            vec!["dim_customers", "fct_weeks"]
+        );
+        let names: Vec<_> = a.files.iter().map(|f| f.name.as_deref()).collect();
+        assert_eq!(names, vec![Some("orders")]);
+        assert!(b.tables.is_empty(), "{:?}", b.tables);
+        let names: Vec<_> = b.files.iter().map(|f| f.name.as_deref()).collect();
+        assert_eq!(names, vec![Some("sample")]);
+        // The pattern applies to every scanned file.
+        let ds =
+            dashboards_from_paths(&[dir.path().to_path_buf()], None, Some("{model}.csv")).unwrap();
+        assert_eq!(ds[0].files.iter().next().unwrap().name, None);
+        assert!(dashboards_from_paths(&[dir.path().to_path_buf()], None, Some("x")).is_err());
     }
 
     #[test]
@@ -387,7 +720,7 @@ FROM ev LEFT JOIN measured m USING (sku) SELECT sku AS "#", km AS "Street km fro
         )
         .unwrap();
         std::fs::write(dir.path().join("notes.md"), "SELECT 1::METRIC FROM t3;").unwrap();
-        let ds = dashboards_from_paths(&[dir.path().to_path_buf()], None).unwrap();
+        let ds = dashboards_from_paths(&[dir.path().to_path_buf()], None, None).unwrap();
         let names: Vec<&str> = ds.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, vec!["a", "B"]);
         // t2 is created by helper.sql, so it is local to the dashboards.

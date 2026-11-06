@@ -198,6 +198,7 @@ pub fn dashboards_from_paths(
         owner_name: Some("powerbi".into()),
         owner_email: None,
         tables,
+        files: BTreeSet::new(),
     };
 
     let mut dashboards = Vec::new();

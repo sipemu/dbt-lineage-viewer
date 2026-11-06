@@ -276,6 +276,7 @@ fn make_dashboard(
         owner_name: Some("superset".into()),
         owner_email: None,
         tables,
+        files: BTreeSet::new(),
     }
 }
 

@@ -150,6 +150,7 @@ impl Workbook {
             owner_name: Some("tableau".into()),
             owner_email: None,
             tables,
+            files: BTreeSet::new(),
         };
         if self.dashboards.is_empty() {
             let tables = if self.worksheets.is_empty() {

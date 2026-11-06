@@ -473,6 +473,12 @@ pub enum ExposureSource {
         /// without extension (default: the file path)
         #[arg(long)]
         url: Option<String>,
+        /// How files read with `read_parquet` / `read_csv` / `read_json` are
+        /// named after models, e.g. '{model}.parquet' or 'exports/{model}.csv'
+        /// (matched against the end of the path). Default: the file name
+        /// without extension
+        #[arg(long = "file-pattern")]
+        file_pattern: Option<String>,
         /// Path to dbt project directory
         #[arg(short = 'p', long = "project-dir", default_value = ".")]
         project_dir: PathBuf,

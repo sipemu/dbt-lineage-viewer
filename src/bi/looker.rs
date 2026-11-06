@@ -602,6 +602,7 @@ pub fn parse_dashboards(
             owner_name: Some("looker".to_string()),
             owner_email: None,
             tables,
+            files: Default::default(),
         });
     }
     out

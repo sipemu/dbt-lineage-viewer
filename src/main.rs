@@ -234,6 +234,7 @@ fn run(cli: Cli) -> Result<()> {
                 cli::ExposureSource::Anofox {
                     dashboards,
                     url,
+                    file_pattern,
                     project_dir,
                     manifest,
                     write,
@@ -241,6 +242,7 @@ fn run(cli: Cli) -> Result<()> {
                 } => run_exposures_anofox_command(
                     dashboards,
                     url.as_deref(),
+                    file_pattern.as_deref(),
                     project_dir,
                     manifest.as_ref(),
                     write.as_ref(),
@@ -1117,6 +1119,7 @@ fn run_exposures_metabase_command(
 fn run_exposures_anofox_command(
     dashboards: &[PathBuf],
     url: Option<&str>,
+    file_pattern: Option<&str>,
     project_dir: &Path,
     manifest: Option<&PathBuf>,
     write: Option<&PathBuf>,
@@ -1126,7 +1129,7 @@ fn run_exposures_anofox_command(
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
     let dag = build_dag(&project_dir, manifest, false)?;
-    let dashboards = dbt_lineage::bi::anofox::dashboards_from_paths(dashboards, url)?;
+    let dashboards = dbt_lineage::bi::anofox::dashboards_from_paths(dashboards, url, file_pattern)?;
     emit_exposures(&dag, &dashboards, write, output)
 }
 
@@ -1225,6 +1228,12 @@ fn emit_exposures(
         eprintln!(
             "dbt-lineage: '{}' reads '{}', which matches no model or source",
             dashboard, table
+        );
+    }
+    for (dashboard, call) in &mapped.unmatched_files {
+        eprintln!(
+            "dbt-lineage: '{}': {} matches no model or source",
+            dashboard, call
         );
     }
     for dashboard in &mapped.skipped {

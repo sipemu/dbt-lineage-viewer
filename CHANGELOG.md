@@ -27,6 +27,16 @@ Notable changes per release. Full per-release notes live on the
   Fivetran's dbt_hubspot reaches 100% of column dependencies at 100%
   precision and dbt_jira 100% at 99%.
 
+- `exposures anofox` maps dashboards that read files to dbt models (#66):
+  `read_parquet` / `read_csv` / `read_json` with a literal path, or a `||`
+  concatenation ending in one (`getvariable('anofox_data') ||
+  '/package_downloads.parquet'`), depends on the model, seed, snapshot or
+  source named like the file. Tables and views a scanned file creates
+  (`CREATE TEMP TABLE t AS FROM read_parquet(…)`) now stand for what they
+  read, so panels reading `t` depend on those. Unmatched file reads are
+  reported on stderr; `--file-pattern '{model}.parquet'` sets how files are
+  named.
+
 ### Changed
 
 - The regex column analyzer now only fills in models the AST analyzer can't

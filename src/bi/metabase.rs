@@ -102,6 +102,7 @@ impl<'a> Client<'a> {
                 owner_name,
                 owner_email,
                 tables,
+                files: Default::default(),
             });
         }
         out.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));

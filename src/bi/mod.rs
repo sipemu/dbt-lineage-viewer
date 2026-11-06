@@ -32,6 +32,19 @@ pub struct Dashboard {
     /// Physical table names read by the dashboard's questions, as written
     /// (`orders`, `analytics.orders`, `"db"."schema"."orders"`).
     pub tables: BTreeSet<String>,
+    /// Files read directly (`read_parquet('…/orders.parquet')`); only
+    /// anofox-visualization reports these.
+    pub files: BTreeSet<FileRead>,
+}
+
+/// A file a dashboard reads, e.g. `read_parquet(getvariable('d') || '/x.parquet')`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FileRead {
+    /// The call as written, for messages: `read_parquet('data/x.parquet')`.
+    pub call: String,
+    /// The model, seed, snapshot or source table the file is named after
+    /// (`x`); `None` for globs and paths that aren't literal.
+    pub name: Option<String>,
 }
 
 /// dbt `exposures:` YAML document.
@@ -67,6 +80,8 @@ pub struct MappedExposures {
     pub exposures: Vec<Exposure>,
     /// `(dashboard name, table)` pairs with no matching model or source.
     pub unmatched: Vec<(String, String)>,
+    /// `(dashboard name, file read)` pairs whose file names no model or source.
+    pub unmatched_files: Vec<(String, String)>,
     /// Dashboards skipped because none of their tables matched.
     pub skipped: Vec<String>,
 }
@@ -156,6 +171,16 @@ pub fn map_dashboards(graph: &LineageGraph, dashboards: &[Dashboard]) -> MappedE
                     deps.insert(dep.clone());
                 }
                 None => result.unmatched.push((d.name.clone(), table.clone())),
+            }
+        }
+        for file in &d.files {
+            match file.name.as_deref().and_then(|n| relations.lookup(n)) {
+                Some(dep) => {
+                    deps.insert(dep.clone());
+                }
+                None => result
+                    .unmatched_files
+                    .push((d.name.clone(), file.call.clone())),
             }
         }
         if deps.is_empty() {
@@ -256,6 +281,7 @@ mod tests {
             owner_name: None,
             owner_email: Some("ana@example.com".into()),
             tables: tables.iter().map(|t| t.to_string()).collect(),
+            files: BTreeSet::new(),
         }
     }
 
@@ -296,6 +322,44 @@ mod tests {
             ]
         );
         assert_eq!(r.skipped, vec!["Nothing known".to_string()]);
+    }
+
+    #[test]
+    fn maps_file_reads_and_reports_unmatched_files() {
+        let file = |call: &str, name: Option<&str>| FileRead {
+            call: call.into(),
+            name: name.map(String::from),
+        };
+        let mut d = dash("1", "Files", &[]);
+        d.files = [
+            file("read_parquet('data/Orders.parquet')", Some("Orders")),
+            file("read_csv('payments.csv')", Some("payments")),
+            file("read_parquet('x/*.parquet')", None),
+            file("read_json('ghost.json')", Some("ghost")),
+        ]
+        .into_iter()
+        .collect();
+        let r = map_dashboards(&graph(), &[d]);
+        assert_eq!(
+            r.exposures[0].depends_on,
+            vec!["ref('orders')", "source('raw', 'payments')"]
+        );
+        assert!(r.unmatched.is_empty());
+        assert_eq!(
+            r.unmatched_files,
+            vec![
+                ("Files".to_string(), "read_json('ghost.json')".to_string()),
+                (
+                    "Files".to_string(),
+                    "read_parquet('x/*.parquet')".to_string()
+                ),
+            ]
+        );
+        // A dashboard whose only reads are unmatched files is skipped.
+        let mut d = dash("2", "Glob only", &[]);
+        d.files.insert(file("read_parquet('x/*.parquet')", None));
+        let r = map_dashboards(&graph(), &[d]);
+        assert_eq!(r.skipped, vec!["Glob only".to_string()]);
     }
 
     #[test]
