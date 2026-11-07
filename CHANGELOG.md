@@ -7,6 +7,23 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- Bitbucket Pipe brought up to Atlassian's pipe requirements: `pipe.yml`
+  pins the image version and declares every variable with its default,
+  the README follows the required sections (YAML Definition, Variables,
+  Details, Prerequisites, Examples, Support), `pipe.sh` validates its
+  variables and logs through a toolkit-style `common.sh` (`DEBUG: 'true'`
+  traces it), and there is a complete `bitbucket-pipelines.yml` example.
+  The publishing steps for a Bitbucket mirror and the Pipes directory are
+  in `integrations/bitbucket/README.md`. An end-to-end test runs the pipe
+  image on a fixture repository against a mocked Bitbucket API and
+  Pipelines proxy (`integrations/bitbucket/test`, in CI and via
+  `cargo test --release --test bitbucket_pipe_test -- --ignored`).
+- `ci annotations --report-id` names the Code Insights report (default
+  `dbt-lineage`), for repositories with several dbt projects. The pipe's
+  `REPORT_ID` variable sets it.
+- `BITBUCKET_API_URL` overrides the Bitbucket API base URL for `ci comment`
+  and `ci annotations --post`.
+
 - Column lineage renders model Jinja when it writes the SELECT (loops,
   macros producing columns or whole queries), approximating `dbt compile`
   without dbt: the project's and installed packages' macros with their
@@ -109,6 +126,20 @@ Notable changes per release. Full per-release notes live on the
   the project's and the installed packages' `vars`.
 
 ### Fixed
+
+- Bitbucket Pipe: Code Insights without a token now goes through the
+  Pipelines proxy at `host.docker.internal:29418`. Pipes run in their own
+  container, so `localhost:29418` did not reach it there. Git proxy settings
+  that point at `localhost:29418` are redirected the same way when the PR
+  destination branch is fetched.
+- Code Insights bodies follow Bitbucket's schema more closely. The report
+  carries `external_id`, and its details mention when findings beyond the
+  1,000-annotation limit were left out. Annotations carry `result` and
+  `link`, `details` is capped at 2,000 characters, and paths are normalised
+  to be relative to the repository root. An annotation without a usable path
+  goes to the report overview instead of pointing at an invalid file. At
+  most 1,000 annotations are ever sent per report. A token now takes
+  precedence over `BITBUCKET_PROXY`.
 
 - Manifest mode counted `on-run-start` / `on-run-end` hooks (resource type
   `operation`) as models, so `summary` counted them and `lint`

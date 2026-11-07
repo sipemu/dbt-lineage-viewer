@@ -1,0 +1,36 @@
+# Example bitbucket-pipelines.yml for a repository with a dbt project.
+# Store a repository access token (Pull requests: Write) as the secured
+# repository variable DBT_LINEAGE_BB_TOKEN for the PR comment; Code Insights
+# works without it through the Pipelines proxy.
+image: atlassian/default-image:4
+
+definitions:
+  steps:
+    - step: &dbt-lineage
+        name: dbt-lineage
+        clone:
+          depth: full # the diff needs the PR destination branch
+        script:
+          - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+            variables:
+              BITBUCKET_ACCESS_TOKEN: $DBT_LINEAGE_BB_TOKEN
+              PROJECT_DIR: '.'
+              FAIL_ON: 'lint-errors'
+        artifacts:
+          - dbt-lineage-report.md
+          - dbt-lineage-insights.json
+
+pipelines:
+  pull-requests:
+    '**':
+      - step: *dbt-lineage
+  branches:
+    main:
+      # No PR here: lint findings as a Code Insights report on the commit.
+      - step:
+          <<: *dbt-lineage
+          script:
+            - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+              variables:
+                COMMENT: 'false'
+                FAIL_ON: 'never'

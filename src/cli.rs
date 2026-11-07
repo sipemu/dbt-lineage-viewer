@@ -621,6 +621,11 @@ pub enum CiAction {
         /// else the Pipelines proxy, BITBUCKET_PROXY or localhost:29418)
         #[arg(long)]
         post: bool,
+        /// bitbucket only: Code Insights report id. Re-running with the same
+        /// id replaces the commit's report; use one id per dbt project when a
+        /// repository has several.
+        #[arg(long, default_value = "dbt-lineage")]
+        report_id: String,
     },
 }
 

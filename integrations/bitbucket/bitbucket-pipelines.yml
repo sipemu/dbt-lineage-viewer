@@ -1,0 +1,35 @@
+# CI for the pipe repository once it is mirrored to Bitbucket
+# (bitbucket.org/sipemu/dbt-lineage-pipe). The image is built, end-to-end
+# tested (test/test_pipe.py against a mock Bitbucket API) and published from
+# GitHub; here every push builds the pipe on the pinned base image and
+# smoke-tests the entrypoint, and every X.Y.Z tag checks that pipe.yml points
+# at the published image of that version and that it runs.
+image: atlassian/default-image:4
+
+definitions:
+  steps:
+    - step: &smoke
+        name: Build and smoke-test
+        services:
+          - docker
+        script:
+          - bash -n pipe.sh common.sh
+          - docker build -t dbt-lineage-pipe:ci .
+          # Invalid variables must fail fast with a clear message.
+          - '! docker run --rm -e FAIL_ON=bogus dbt-lineage-pipe:ci > out.txt 2>&1'
+          - grep -q "FAIL_ON must be one of" out.txt
+          - docker run --rm --entrypoint dbt-lineage dbt-lineage-pipe:ci --version
+
+pipelines:
+  default:
+    - step: *smoke
+  tags:
+    '*.*.*':
+      - step: *smoke
+      - step:
+          name: Check published image
+          services:
+            - docker
+          script:
+            - test "$(sed -n 's/^image: .*://p' pipe.yml)" = "$BITBUCKET_TAG"
+            - docker pull "$(sed -n 's/^image: //p' pipe.yml)"
