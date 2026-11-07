@@ -49,6 +49,9 @@ pub enum Target {
         token: String,
     },
     Bitbucket {
+        /// `https://api.bitbucket.org`, or `BITBUCKET_API_URL` (tests,
+        /// Bitbucket-compatible gateways).
+        api: String,
         workspace: String,
         repo: String,
         pr: u64,
@@ -112,6 +115,7 @@ impl Target {
                     .to_string(),
             }),
             Platform::Bitbucket => Ok(Target::Bitbucket {
+                api: bitbucket_api(env).unwrap_or(BITBUCKET_API).to_string(),
                 workspace: need(env, "BITBUCKET_WORKSPACE", "Bitbucket Pipelines")?.to_string(),
                 repo: need(env, "BITBUCKET_REPO_SLUG", "Bitbucket Pipelines")?.to_string(),
                 pr: need(env, "BITBUCKET_PR_ID", "run in a pull-requests pipeline")?
@@ -143,6 +147,14 @@ impl Target {
             ),
         }
     }
+}
+
+/// Public Bitbucket Cloud API.
+pub const BITBUCKET_API: &str = "https://api.bitbucket.org";
+
+/// `BITBUCKET_API_URL` override, without a trailing slash.
+pub fn bitbucket_api(env: &HashMap<String, String>) -> Option<&str> {
+    var(env, "BITBUCKET_API_URL").map(|u| u.trim_end_matches('/'))
 }
 
 fn github_pr_number(env: &HashMap<String, String>) -> Option<u64> {
@@ -251,15 +263,15 @@ pub fn upsert(http: &dyn Http, target: &Target, body: &str) -> Result<Outcome> {
             Ok(outcome)
         }
         Target::Bitbucket {
+            api,
             workspace,
             repo,
             pr,
             token,
         } => {
             let headers = vec![("Authorization".into(), format!("Bearer {token}"))];
-            let base = format!(
-                "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/pullrequests/{pr}/comments"
-            );
+            let base =
+                format!("{api}/2.0/repositories/{workspace}/{repo}/pullrequests/{pr}/comments");
             // Bitbucket paginates with a `next` URL.
             let mut next = Some(format!("{base}?pagelen=100"));
             let mut existing = None;
@@ -579,8 +591,39 @@ mod tests {
     }
 
     #[test]
+    fn bitbucket_target_and_api_override() {
+        let mut env: HashMap<String, String> = [
+            ("BITBUCKET_BUILD_NUMBER", "1"),
+            ("BITBUCKET_WORKSPACE", "ws"),
+            ("BITBUCKET_REPO_SLUG", "r"),
+            ("BITBUCKET_PR_ID", "4"),
+            ("BITBUCKET_ACCESS_TOKEN", "t"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let api = |env: &HashMap<String, String>| match Target::from_env(Platform::Bitbucket, env)
+            .unwrap()
+        {
+            Target::Bitbucket { api, .. } => api,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(api(&env), BITBUCKET_API);
+        env.insert("BITBUCKET_API_URL".into(), "http://mock:1/".into());
+        assert_eq!(api(&env), "http://mock:1");
+        let fake = Fake::new(vec![(200, json!({"values": []})), (201, json!({}))]);
+        let target = Target::from_env(Platform::Bitbucket, &env).unwrap();
+        upsert(&fake, &target, "r").unwrap();
+        assert_eq!(
+            fake.seen.borrow()[1].url,
+            "http://mock:1/2.0/repositories/ws/r/pullrequests/4/comments"
+        );
+    }
+
+    #[test]
     fn bitbucket_follows_next_and_creates() {
         let target = Target::Bitbucket {
+            api: BITBUCKET_API.into(),
             workspace: "ws".into(),
             repo: "r".into(),
             pr: 4,

@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | GitHub Actions | `uses: sipemu/dbt-lineage-viewer@v0` | `GITHUB_TOKEN` (automatic) | SARIF via code scanning |
 | GitLab CI | CI/CD component, [`integrations/gitlab`](../integrations/gitlab) | `GITLAB_TOKEN`: project access token, `api` scope | Code Quality (`ci annotations --format codeclimate`) |
-| Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:v0`, [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | Code Insights report + annotations (`ci annotations --format bitbucket --post`) |
+| Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:0.18.0` (or `:v0`), [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | Code Insights report + annotations (`ci annotations --format bitbucket --post`) |
 | Azure Pipelines | step template, [`integrations/azure`](../integrations/azure) | `SYSTEM_ACCESSTOKEN` | build warnings/errors (`ci annotations --format azure`) |
 
 `DBT_LINEAGE_TOKEN` overrides the platform token everywhere.
@@ -45,7 +45,7 @@ dbt-lineage:
 
 ## Bitbucket Pipelines
 
-See [`integrations/bitbucket/README.md`](../integrations/bitbucket/README.md).
+See [`integrations/bitbucket/README.md`](../integrations/bitbucket/README.md) (variables, examples, Code Insights details) and the complete [`bitbucket-pipelines.yml` example](../integrations/bitbucket/examples/bitbucket-pipelines.yml).
 
 ## Azure Pipelines
 
@@ -94,10 +94,10 @@ The build service account needs "Contribute to pull requests" on the repository.
 | --- | --- | --- |
 | `sarif` | GitHub code scanning | upload with `github/codeql-action/upload-sarif` |
 | `codeclimate` | GitLab Code Quality | `artifacts:reports:codequality` |
-| `bitbucket` | Bitbucket Code Insights | `--post` replaces the commit's `dbt-lineage` report and creates up to 1,000 annotations in batches of 100; result `FAILED` when there are error findings |
+| `bitbucket` | Bitbucket Code Insights | `--post` replaces the commit's report (id `--report-id`, default `dbt-lineage`) and creates up to 1,000 annotations in batches of 100, with stable `external_id`s; result `FAILED` when there are error findings |
 | `azure` | Azure Pipelines | `##vso[task.logissue]` lines on stdout |
 
-Bitbucket authentication: `DBT_LINEAGE_TOKEN` or `BITBUCKET_ACCESS_TOKEN` (Bearer, `https://api.bitbucket.org`); without a token, inside Pipelines the request goes through the proxy that runs alongside every step at `localhost:29418` (plain `http://api.bitbucket.org`, auth added by the proxy). `BITBUCKET_PROXY` overrides the proxy address.
+Bitbucket authentication: `DBT_LINEAGE_TOKEN` or `BITBUCKET_ACCESS_TOKEN` (Bearer, `https://api.bitbucket.org`); without a token, inside Pipelines the request goes through the proxy that runs alongside every step at `localhost:29418` (plain `http://api.bitbucket.org`, auth added by the proxy). `BITBUCKET_PROXY` overrides the proxy address (a pipe container reaches it as `http://host.docker.internal:29418`, which the pipe sets); with a token the proxy is not used. `BITBUCKET_API_URL` replaces `https://api.bitbucket.org` for the comment and Code Insights calls (tests, gateways).
 
 ## Outputs and exit codes
 

@@ -281,12 +281,14 @@ fn run(cli: Cli) -> Result<()> {
                     manifest,
                     out,
                     post,
+                    report_id,
                 } => run_ci_annotations_command(
                     *format,
                     project_dir,
                     manifest.as_ref(),
                     out.as_ref(),
                     *post,
+                    report_id,
                 ),
             },
         };
@@ -1308,12 +1310,14 @@ fn run_ci_annotations_command(
     manifest: Option<&PathBuf>,
     out: Option<&PathBuf>,
     post: bool,
+    report_id: &str,
 ) -> Result<()> {
     use dbt_lineage::ci::annotations as ann;
 
     if post && format != cli::AnnotationFormat::Bitbucket {
         anyhow::bail!("--post is only supported with --format bitbucket");
     }
+    ann::validate_report_id(report_id)?;
     let project_dir = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -1338,11 +1342,11 @@ fn run_ci_annotations_command(
             buf.extend(ann::azure_logging_commands(&lint, &locations).into_bytes())
         }
         cli::AnnotationFormat::Bitbucket => {
-            let report = ann::bitbucket_report(&lint);
+            let report = ann::bitbucket_report(&lint, report_id);
             let annotations = ann::bitbucket_annotations(&lint, &locations);
             if post {
                 let env: std::collections::HashMap<String, String> = std::env::vars().collect();
-                let target = ann::BitbucketTarget::from_env(&env)?;
+                let target = ann::BitbucketTarget::from_env(&env, report_id)?;
                 let sent = match &target.proxy {
                     Some(proxy) => ann::post_bitbucket(
                         &dbt_lineage::ci::comment::ProxyHttp::new(proxy)?,
@@ -1359,9 +1363,7 @@ fn run_ci_annotations_command(
                 };
                 eprintln!(
                     "dbt-lineage: Code Insights report '{}' with {} annotation(s) on {}",
-                    ann::REPORT_ID,
-                    sent,
-                    target.commit
+                    target.report_id, sent, target.commit
                 );
             }
             serde_json::to_writer_pretty(

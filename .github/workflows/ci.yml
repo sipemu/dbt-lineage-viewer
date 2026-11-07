@@ -71,3 +71,12 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  bitbucket-pipe:
+    name: Bitbucket Pipe (Docker, mock API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Builds the release image from source, then the pipe on top, and runs
+      # the entrypoint against a mocked Bitbucket API and Pipelines proxy.
+      - run: python3 integrations/bitbucket/test/test_pipe.py

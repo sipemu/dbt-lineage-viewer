@@ -1,16 +1,37 @@
 name: dbt-lineage
-image: ghcr.io/sipemu/dbt-lineage-pipe:v0
+image: ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
 category: Code quality
-description: PR-time dbt lineage diff, impact diagram, rebuild selector and lint, without a warehouse.
-repository: https://github.com/sipemu/dbt-lineage-viewer
+description: Report dbt lineage changes, rebuild selector and lint findings to the pull request, without a warehouse.
+repository: https://bitbucket.org/sipemu/dbt-lineage-pipe
 maintainer:
   name: Simon Müller
   website: https://github.com/sipemu
 vendor:
   name: dbt-lineage
   website: https://github.com/sipemu/dbt-lineage-viewer
+variables:
+  - name: BITBUCKET_ACCESS_TOKEN
+    default: ''
+  - name: PROJECT_DIR
+    default: '.'
+  - name: BASE
+    default: 'auto'
+  - name: MANIFEST
+    default: ''
+  - name: FAIL_ON
+    default: 'lint-errors'
+  - name: COMMENT
+    default: 'true'
+  - name: INSIGHTS
+    default: 'true'
+  - name: REPORT_ID
+    default: 'dbt-lineage'
+  - name: DEBUG
+    default: 'false'
 tags:
   - dbt
   - lineage
   - data
   - sql
+  - lint
+  - code-insights
