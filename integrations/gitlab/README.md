@@ -13,7 +13,7 @@ include:
       fail-on: lint-errors    # optional
 ```
 
-Pin a release (`@0.18.0`), a minor (`@0.18`) or a major (`@0`) instead of `~latest` for reproducible pipelines. The job runs on merge request pipelines only.
+Pin a release (`@0.19.0`), a minor (`@0.19`) or a major (`@0`) instead of `~latest` for reproducible pipelines. The job runs on merge request pipelines only.
 
 What you get on each MR pipeline:
 
@@ -29,7 +29,7 @@ The job clones with `GIT_DEPTH: "0"` and fetches the MR target branch when it is
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
 | `stage` | string | `test` | Pipeline stage |
-| `version` | string | `v0` | Tag of the `ghcr.io/sipemu/dbt-lineage` image (`v0`, `0.18`, `0.18.0`, `latest`) |
+| `version` | string | `v0` | Tag of the `ghcr.io/sipemu/dbt-lineage` image (`v0`, `0.19`, `0.19.0`, `latest`) |
 | `project-dir` | string | `.` | dbt project directory, relative to the repository root |
 | `base` | string | `auto` | Base ref; `auto` = MR target branch |
 | `manifest` | string | `""` | Optional compiled `manifest.json` |
@@ -62,7 +62,7 @@ Each release (after the container image for it is published on ghcr.io):
 2. Tag the commit with a plain semantic version, without a `v` prefix (the catalog rejects other tags), and push the tag:
 
    ```sh
-   git push git@gitlab.com:sipemu/dbt-lineage.git gitlab-component:refs/tags/0.18.0
+   git push git@gitlab.com:sipemu/dbt-lineage.git gitlab-component:refs/tags/0.19.0
    ```
 
    The tag pipeline tests the component again, then `create-release` (the `release` keyword) creates the GitLab release, which publishes that version to the CI/CD Catalog. Create releases through this pipeline rather than the UI: the catalog publishes versions released by a CI job.

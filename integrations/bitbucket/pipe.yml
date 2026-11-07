@@ -1,5 +1,5 @@
 name: dbt-lineage
-image: ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+image: ghcr.io/sipemu/dbt-lineage-pipe:0.19.0
 category: Code quality
 description: Report dbt lineage changes, rebuild selector and lint findings to the pull request, without a warehouse.
 repository: https://bitbucket.org/sipemu/dbt-lineage-pipe

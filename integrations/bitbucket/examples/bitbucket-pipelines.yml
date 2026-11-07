@@ -11,7 +11,7 @@ definitions:
         clone:
           depth: full # the diff needs the PR destination branch
         script:
-          - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+          - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.19.0
             variables:
               BITBUCKET_ACCESS_TOKEN: $DBT_LINEAGE_BB_TOKEN
               PROJECT_DIR: '.'
@@ -30,7 +30,7 @@ pipelines:
       - step:
           <<: *dbt-lineage
           script:
-            - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+            - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.19.0
               variables:
                 COMMENT: 'false'
                 FAIL_ON: 'never'

@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | GitHub Actions | `uses: sipemu/dbt-lineage-viewer@v0` | `GITHUB_TOKEN` (automatic) | SARIF via code scanning |
 | GitLab CI | CI/CD component, [`integrations/gitlab`](../integrations/gitlab) | `GITLAB_TOKEN`: project access token, `api` scope | Code Quality (`ci annotations --format codeclimate`) |
-| Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:0.18.0` (or `:v0`), [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | Code Insights report + annotations (`ci annotations --format bitbucket --post`) |
+| Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:0.19.0` (or `:v0`), [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | Code Insights report + annotations (`ci annotations --format bitbucket --post`) |
 | Azure Pipelines | step template, [`integrations/azure`](../integrations/azure) | `SYSTEM_ACCESSTOKEN` | build warnings/errors (`ci annotations --format azure`) |
 
 `DBT_LINEAGE_TOKEN` overrides the platform token everywhere.

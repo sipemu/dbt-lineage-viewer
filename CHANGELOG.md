@@ -5,6 +5,8 @@ Notable changes per release. Full per-release notes live on the
 
 ## [Unreleased]
 
+## [0.19.0] – 2026-11-07
+
 ### Added
 
 - GitLab CI/CD Catalog: `integrations/gitlab` is laid out as the catalog

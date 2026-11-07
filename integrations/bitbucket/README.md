@@ -7,7 +7,7 @@ Report dbt lineage changes, the rebuild selector and lint findings to the pull r
 Add the following snippet to the script section of your `bitbucket-pipelines.yml` file:
 
 ```yaml
-- pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+- pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.19.0
   variables:
     BITBUCKET_ACCESS_TOKEN: $DBT_LINEAGE_BB_TOKEN # Optional (needed for the PR comment).
     # PROJECT_DIR: '<string>' # Optional.
@@ -20,7 +20,7 @@ Add the following snippet to the script section of your `bitbucket-pipelines.yml
     # DEBUG: '<boolean>' # Optional.
 ```
 
-Pin the full version as above for repeatable builds. `:0.18` follows patch releases, `:v0` every 0.x release, and `:latest` the newest release. Once the pipe is mirrored to Bitbucket (see [Publishing](#publishing-maintainers)), `pipe: sipemu/dbt-lineage-pipe:0.18.0` works too.
+Pin the full version as above for repeatable builds. `:0.19` follows patch releases, `:v0` every 0.x release, and `:latest` the newest release. Once the pipe is mirrored to Bitbucket (see [Publishing](#publishing-maintainers)), `pipe: sipemu/dbt-lineage-pipe:0.19.0` works too.
 
 ## Variables
 
@@ -74,7 +74,7 @@ pipelines:
           clone:
             depth: full
           script:
-            - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+            - pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.19.0
               variables:
                 BITBUCKET_ACCESS_TOKEN: $DBT_LINEAGE_BB_TOKEN
           artifacts:
@@ -84,7 +84,7 @@ pipelines:
 Advanced example: dbt project in a subdirectory, a compiled manifest, failing on breaking changes, and no comment (Code Insights only, through the Pipelines proxy, so no token is needed):
 
 ```yaml
-- pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.18.0
+- pipe: docker://ghcr.io/sipemu/dbt-lineage-pipe:0.19.0
   variables:
     PROJECT_DIR: 'warehouse/dbt'
     MANIFEST: 'warehouse/dbt/target/manifest.json'
@@ -135,7 +135,7 @@ The image is published automatically. These steps are manual and need a Bitbucke
 
    ```yaml
    repositoryPath: 'sipemu/dbt-lineage-pipe'
-   version: '0.18.0'
+   version: '0.19.0'
    ```
 
    Commit it, run `python build_run.py pipes/dbt-lineage.yml` to validate, and open a pull request. The review checks the README structure, semantic version tags, CI and tests, an image under 1 GB, pinned base images, a support channel, and a commitment to maintain the pipe. Atlassian currently accepts only *vendors*, meaning the authors or maintainers of the product the pipe integrates. dbt-lineage qualifies as its own vendor. Questions go to `pipelines-feedback@atlassian.com`.

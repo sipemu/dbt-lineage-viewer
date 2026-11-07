@@ -7,7 +7,7 @@ spec:
     version:
       type: string
       default: v0
-      description: Tag of the ghcr.io/sipemu/dbt-lineage image (v0, 0.18, 0.18.0, latest).
+      description: Tag of the ghcr.io/sipemu/dbt-lineage image (v0, 0.19, 0.19.0, latest).
     project-dir:
       type: string
       default: .

@@ -1,7 +1,7 @@
 # Pipeline of the CI/CD Catalog project (gitlab.com/sipemu/dbt-lineage),
 # whose root is this directory. It runs the component from this commit on a
 # small dbt project, checks its artifacts, and publishes a catalog release
-# for every semantic-version tag (e.g. 0.18.0).
+# for every semantic-version tag (e.g. 0.19.0).
 
 workflow:
   rules:
