@@ -331,6 +331,9 @@ fn render_gaps_section(md: &mut String, gaps: &[crate::graph::gaps::LineageGap])
                     format!("dependency computed at render time: `{}`", escape(call))
                 }
                 GapReason::GeneratedSql => "columns written by a Jinja loop or macro".to_string(),
+                GapReason::DataDependent(call) => {
+                    format!("columns depend on warehouse data: `{}`", escape(call))
+                }
             })
             .collect();
         let _ = writeln!(md, "| `{}` | {} |", gap.model, why.join("; "));
@@ -612,6 +615,7 @@ mod tests {
                 reasons: vec![
                     GapReason::DynamicRef("ref(var('x'))".into()),
                     GapReason::GeneratedSql,
+                    GapReason::DataDependent("run_query()".into()),
                 ],
             }],
             ..Default::default()
@@ -619,7 +623,7 @@ mod tests {
         let md = render_markdown(&report);
         assert!(md.contains("### ⚠️ Lineage may be incomplete"));
         assert!(md.contains(
-            "| `fct` | dependency computed at render time: `ref(var('x'))`; columns written by a Jinja loop or macro |"
+            "| `fct` | dependency computed at render time: `ref(var('x'))`; columns written by a Jinja loop or macro; columns depend on warehouse data: `run_query()` |"
         ));
         assert!(!render_markdown(&CiReport::default()).contains("may be incomplete"));
     }

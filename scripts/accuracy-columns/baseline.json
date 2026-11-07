@@ -11,8 +11,8 @@
   },
   "tuva": {
     "raw": {
-      "recall": 85.3,
-      "precision": 99.0
+      "recall": 86.1,
+      "precision": 99.6
     },
     "compiled": {
       "recall": 100.0,
@@ -21,8 +21,8 @@
   },
   "Fivetran dbt_hubspot": {
     "raw": {
-      "recall": 91.8,
-      "precision": 96.8
+      "recall": 95.2,
+      "precision": 97.5
     },
     "compiled": {
       "recall": 100.0,
@@ -31,8 +31,8 @@
   },
   "Fivetran dbt_jira": {
     "raw": {
-      "recall": 73.4,
-      "precision": 98.1
+      "recall": 82.9,
+      "precision": 98.4
     },
     "compiled": {
       "recall": 100.0,
@@ -41,7 +41,7 @@
   },
   "Fivetran dbt_shopify": {
     "raw": {
-      "recall": 94.0,
+      "recall": 95.5,
       "precision": 98.5
     },
     "compiled": {
@@ -51,8 +51,8 @@
   },
   "Fivetran dbt_quickbooks": {
     "raw": {
-      "recall": 68.7,
-      "precision": 99.0
+      "recall": 86.4,
+      "precision": 100.0
     },
     "compiled": {
       "recall": 100.0,
@@ -61,8 +61,8 @@
   },
   "Fivetran dbt_netsuite": {
     "raw": {
-      "recall": 61.1,
-      "precision": 97.8
+      "recall": 72.0,
+      "precision": 97.5
     },
     "compiled": {
       "recall": 98.3,
@@ -71,7 +71,7 @@
   },
   "Fivetran dbt_zendesk": {
     "raw": {
-      "recall": 93.3,
+      "recall": 93.9,
       "precision": 99.3
     },
     "compiled": {
@@ -81,7 +81,7 @@
   },
   "Fivetran dbt_stripe": {
     "raw": {
-      "recall": 86.8,
+      "recall": 87.4,
       "precision": 95.5
     },
     "compiled": {
@@ -91,8 +91,8 @@
   },
   "Fivetran dbt_salesforce": {
     "raw": {
-      "recall": 91.9,
-      "precision": 75.8
+      "recall": 100.0,
+      "precision": 100.0
     },
     "compiled": {
       "recall": 100.0,

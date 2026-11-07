@@ -3,6 +3,9 @@
 //! the CI comment so a short impact list isn't mistaken for a complete one.
 
 use std::path::Path;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use petgraph::stable_graph::NodeIndex;
 
@@ -15,7 +18,26 @@ pub enum GapReason {
     /// A loop or macro writes part of the SELECT: column lineage may miss
     /// columns.
     GeneratedSql,
+    /// The SQL depends on warehouse data (`dbt_utils.get_column_values()`,
+    /// `run_query()`, …), e.g. a pivot with a column per value: columns it
+    /// writes from query results are unknown without dbt.
+    DataDependent(String),
 }
+
+static DATA_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\b((?:dbt_utils\.)?(?:get_column_values|get_query_results_as_dict|get_single_value)|run_query)\s*\(",
+    )
+    .unwrap()
+});
+
+/// The first call in `sql` that reads warehouse data at render time.
+fn data_dependent_call(sql: &str) -> Option<String> {
+    let sql = JINJA_COMMENT.replace_all(sql, "");
+    DATA_CALL.captures(&sql).map(|c| format!("{}()", &c[1]))
+}
+
+static JINJA_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{#.*?#\}").unwrap());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineageGap {
@@ -48,6 +70,9 @@ pub fn lineage_gaps(
             if crate::parser::ast_column_lineage::sql_generated_by_jinja(&sql) {
                 reasons.push(GapReason::GeneratedSql);
             }
+            if let Some(call) = data_dependent_call(&sql) {
+                reasons.push(GapReason::DataDependent(call));
+            }
             (!reasons.is_empty()).then(|| LineageGap {
                 model: node.label.clone(),
                 reasons,
@@ -72,6 +97,10 @@ mod tests {
             (
                 "looped.sql",
                 "select {% for c in cols %}{{ c }},{% endfor %} id from {{ ref('a') }}",
+            ),
+            (
+                "pivot.sql",
+                "{# run_query() in a comment #}{% set vals = dbt_utils.get_column_values(ref('a'), 'k') %}select {% for v in vals %}{{ v }},{% endfor %} id from {{ ref('a') }}",
             ),
         ];
         let mut g = LineageGraph::new();
@@ -100,6 +129,13 @@ mod tests {
                 LineageGap {
                     model: "looped".into(),
                     reasons: vec![GapReason::GeneratedSql],
+                },
+                LineageGap {
+                    model: "pivot".into(),
+                    reasons: vec![
+                        GapReason::GeneratedSql,
+                        GapReason::DataDependent("dbt_utils.get_column_values()".into()),
+                    ],
                 },
             ]
         );
