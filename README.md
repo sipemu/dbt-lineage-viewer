@@ -133,14 +133,15 @@ is measured the same way against a reference: [sqlglot](https://github.com/tobym
 column lineage over the SQL dbt compiled after `dbt seed` and `dbt run` on
 DuckDB ([`scripts/accuracy-columns/`](scripts/accuracy-columns)). CI re-runs
 it alongside the model check and fails when a number drops below its
-baseline.
+baseline. Packages are measured from their `integration_tests` project,
+where dbt ran: its `vars` reach the package's models as a root project's do.
 
 | Project | From SQL alone | Precision | With compiled SQL + catalog | Precision |
 | --- | ---: | ---: | ---: | ---: |
 | jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
 | tuva | 10,451 / 12,143 | 100% | 12,141 / 12,143 | 100% |
-| Fivetran dbt_hubspot | 2,225 / 2,337 | 98% | 2,337 / 2,337 | 100% |
-| Fivetran dbt_jira | 805 / 971 | 98% | 971 / 971 | 99% |
+| Fivetran dbt_hubspot | 2,226 / 2,337 | 98% | 2,337 / 2,337 | 100% |
+| Fivetran dbt_jira | 930 / 971 | 99% | 971 / 971 | 99% |
 | Fivetran dbt_shopify | 5,192 / 5,436 | 98% | 5,436 / 5,436 | 100% |
 | Fivetran dbt_quickbooks | 2,587 / 2,993 | 100% | 2,993 / 2,993 | 100% |
 | Fivetran dbt_netsuite | 1,318 / 1,831 | 98% | 1,800 / 1,831 | 99% |
@@ -153,7 +154,9 @@ through CTEs, subqueries, joins, unions and `select *`. Where Jinja writes
 the SELECT (loops, macros producing column lists or whole queries, as in
 Fivetran's packages), dbt-lineage renders the model the way `dbt compile`
 would, without dbt or a warehouse: the project's and installed packages'
-macros (`dbt_packages/`, with `adapter.dispatch`), `vars`, and the columns it
+macros (`dbt_packages/`, with `adapter.dispatch`), `vars` (the root
+project's over each package's own), `graph.nodes` / `graph.sources` from the
+parsed project, and the columns it
 already knows for each upstream relation (YAML, seed headers, upstream
 models) answering `adapter.get_columns_in_relation`. What stays out of reach
 offline: macros that read data (pivots over `dbt_utils.get_column_values`,

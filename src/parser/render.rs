@@ -8,7 +8,8 @@
 //! returns the columns the analyzer already knows for that relation (YAML
 //! declarations, seed headers, upstream models' inferred columns);
 //! `run_query()` returns an empty table; `is_incremental()` is false; `var()`
-//! reads the project's and packages' `vars`; `env_var()` its default.
+//! reads the project's and packages' `vars`; `env_var()` its default;
+//! `graph.nodes` / `graph.sources` describe the parsed project.
 //! dbt's own adapter macros (`dbt.type_string()`, `dbt.dateadd()`, …) are
 //! replaced by small DuckDB-flavoured stand-ins.
 //!
@@ -24,7 +25,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use minijinja::value::{Enumerator, Kwargs, Object, ObjectRepr, Value};
 use minijinja::{Environment, Error, ErrorKind, State, UndefinedBehavior};
@@ -38,6 +39,8 @@ const REL_PREFIX: &str = "__dbtl_rel_";
 const RAW: &str = "__raw__";
 /// Package holding the dbt stand-ins.
 const DBT: &str = "dbt";
+/// Error a macro's `return()` unwinds with.
+const RETURNED: &str = "macro returned";
 /// Macro nesting limit.
 const MAX_DEPTH: usize = 64;
 /// Upper bound on template instructions per macro call or model.
@@ -77,6 +80,9 @@ struct Shared {
     package_dirs: HashMap<String, String>,
     vars: Vars,
     by_ref: HashMap<String, String>,
+    /// Relation identifier (lowercase) → node id, from `with_graph`, for
+    /// `adapter.get_relation()` by name.
+    by_identifier: OnceLock<HashMap<String, String>>,
 }
 
 #[derive(Default)]
@@ -162,9 +168,7 @@ impl Renderer {
                     .extend(sql_files(&dir.join(path)).map(|f| (name.clone(), dir.clone(), f)));
             }
             let defaults = vars.package.entry(name.clone()).or_default();
-            for (k, v) in &p.vars {
-                defaults.entry(k.clone()).or_insert_with(|| yaml_value(v));
-            }
+            package_defaults(&name, &p.vars, &package_names, defaults);
             package_order.push(name);
         }
 
@@ -205,9 +209,34 @@ impl Renderer {
             package_dirs,
             vars,
             by_ref,
+            by_identifier: OnceLock::new(),
         });
         install_globals(&mut env, &shared);
         Some(Renderer { env, shared })
+    }
+
+    /// Fill dbt's `graph` context (`graph.nodes`, `graph.sources`) from the
+    /// parsed project, for macros that look nodes up by name, package or
+    /// tag and read their `config`, `columns` or `depends_on`.
+    pub fn with_graph(mut self, nodes: &[GraphNode]) -> Renderer {
+        let graph = graph_context(nodes, &self.shared.root, &self.shared.package_dirs);
+        self.env.add_global("graph", graph);
+        // Sources first: `get_relation(schema=…, identifier='price')` mostly
+        // probes for an optional source table.
+        let mut by_identifier = HashMap::new();
+        for source in [true, false] {
+            for n in nodes
+                .iter()
+                .filter(|n| (n.resource_type == "source") == source)
+            {
+                let name = n.name.rsplit_once('.').map_or(n.name.as_str(), |(_, t)| t);
+                by_identifier
+                    .entry(name.to_lowercase())
+                    .or_insert_with(|| n.unique_id.clone());
+            }
+        }
+        let _ = self.shared.by_identifier.set(by_identifier);
+        self
     }
 
     /// Render a model's SQL. `None` when the template uses anything this
@@ -258,6 +287,186 @@ fn package_of(path: &Path, dirs: &HashMap<String, String>) -> Option<String> {
         }
     }
     None
+}
+
+/// A parsed node for dbt's `graph` context.
+#[derive(Debug, Clone, Default)]
+pub struct GraphNode {
+    /// dbt-lineage's node id (`model.orders`, `source.raw.orders`).
+    pub unique_id: String,
+    /// `model`, `seed`, `snapshot` or `source`.
+    pub resource_type: &'static str,
+    /// Model / seed / snapshot name; a source's `<source>.<table>`.
+    pub name: String,
+    /// File relative to the project root (picks the package).
+    pub file_path: Option<PathBuf>,
+    pub materialized: Option<String>,
+    pub tags: Vec<String>,
+    pub description: Option<String>,
+    /// Known column names (YAML-declared, else read from the SELECT).
+    pub columns: Vec<String>,
+    /// dbt-lineage ids of the node's parents.
+    pub depends_on: Vec<String>,
+}
+
+/// dbt's `graph` global: `nodes` (models, seeds, snapshots) and `sources`
+/// keyed by dbt-style unique ids (`model.<package>.<name>`,
+/// `source.<package>.<source>.<table>`), with the attributes macros commonly
+/// read. Relations live in database `db`, schema `main`.
+fn graph_context(nodes: &[GraphNode], root: &str, dirs: &HashMap<String, String>) -> Value {
+    let package = |n: &GraphNode| {
+        n.file_path
+            .as_deref()
+            .and_then(|p| package_of(p, dirs))
+            .unwrap_or_else(|| root.to_string())
+    };
+    // dbt-lineage id → dbt id.
+    let dbt_id = |n: &GraphNode| {
+        let rest = n
+            .unique_id
+            .split_once('.')
+            .map_or(n.unique_id.as_str(), |(_, r)| r);
+        format!("{}.{}.{rest}", n.resource_type, package(n))
+    };
+    let ids: HashMap<&str, String> = nodes
+        .iter()
+        .map(|n| (n.unique_id.as_str(), dbt_id(n)))
+        .collect();
+    let mut graph_nodes = BTreeMap::new();
+    let mut graph_sources = BTreeMap::new();
+    for n in nodes {
+        let pkg = package(n);
+        let id = ids[n.unique_id.as_str()].clone();
+        let path = n
+            .file_path
+            .as_deref()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        // In declaration order, as dbt keeps them.
+        let columns: Vec<(Value, Value)> = n
+            .columns
+            .iter()
+            .map(|c| {
+                let col = map([
+                    ("name", Value::from(c.as_str())),
+                    ("description", Value::from("")),
+                    ("data_type", Value::from(())),
+                    ("meta", Value::from(BTreeMap::<String, Value>::new())),
+                    ("tags", Value::from(Vec::<Value>::new())),
+                ]);
+                (Value::from(c.as_str()), col)
+            })
+            .collect();
+        let tags = Value::from(
+            n.tags
+                .iter()
+                .map(|t| Value::from(t.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let (name, source_name) = match n.resource_type {
+            "source" => match n.name.split_once('.') {
+                Some((s, t)) => (t.to_string(), Some(s.to_string())),
+                None => (n.name.clone(), None),
+            },
+            _ => (n.name.clone(), None),
+        };
+        let mut entry: BTreeMap<String, Value> = BTreeMap::new();
+        let mut put = |k: &str, v: Value| {
+            entry.insert(k.to_string(), v);
+        };
+        put("unique_id", Value::from(id.as_str()));
+        put("resource_type", Value::from(n.resource_type));
+        put("name", Value::from(name.as_str()));
+        put("package_name", Value::from(pkg.as_str()));
+        put("database", Value::from("db"));
+        put("schema", Value::from("main"));
+        put("original_file_path", Value::from(path.as_str()));
+        put("path", Value::from(path.as_str()));
+        put(
+            "description",
+            Value::from(n.description.clone().unwrap_or_default()),
+        );
+        put("tags", tags.clone());
+        put("meta", Value::from(BTreeMap::<String, Value>::new()));
+        put("columns", MutDict::value(columns));
+        if let Some(source_name) = &source_name {
+            put("source_name", Value::from(source_name.as_str()));
+            put("identifier", Value::from(name.as_str()));
+            put(
+                "fqn",
+                Value::from(vec![pkg.clone(), source_name.clone(), name.clone()]),
+            );
+            graph_sources.insert(id, Value::from(entry));
+            continue;
+        }
+        let materialized = n.materialized.clone().unwrap_or_else(|| {
+            match n.resource_type {
+                "seed" => "seed",
+                "snapshot" => "snapshot",
+                _ => "view",
+            }
+            .to_string()
+        });
+        put("alias", Value::from(name.as_str()));
+        put("fqn", Value::from(vec![pkg.clone(), name.clone()]));
+        put(
+            "config",
+            map([
+                ("enabled", Value::from(true)),
+                ("materialized", Value::from(materialized)),
+                ("tags", tags),
+                ("alias", Value::from(())),
+                ("schema", Value::from(())),
+                ("meta", Value::from(BTreeMap::<String, Value>::new())),
+            ]),
+        );
+        let parents: Vec<Value> = n
+            .depends_on
+            .iter()
+            .filter_map(|p| ids.get(p.as_str()))
+            .map(|p| Value::from(p.as_str()))
+            .collect();
+        put(
+            "depends_on",
+            map([
+                ("nodes", Value::from(parents)),
+                ("macros", Value::from(Vec::<Value>::new())),
+            ]),
+        );
+        graph_nodes.insert(id, Value::from(entry));
+    }
+    map([
+        ("nodes", Value::from(graph_nodes)),
+        ("sources", Value::from(graph_sources)),
+        ("macros", Value::from(BTreeMap::<String, Value>::new())),
+    ])
+}
+
+/// A package's own `vars` as dbt reads them for that package's nodes: its
+/// global keys, overridden by the ones it scopes to itself
+/// (`vars: {jira: {issue: …}}` in dbt_jira's dbt_project.yml). Keys scoped
+/// to another package never apply to this package's nodes.
+fn package_defaults(
+    package: &str,
+    vars: &HashMap<String, serde_yaml::Value>,
+    packages: &HashSet<String>,
+    out: &mut BTreeMap<String, Value>,
+) {
+    let mut own = None;
+    for (k, v) in vars {
+        match v {
+            serde_yaml::Value::Mapping(m) if k == package => own = Some(m),
+            serde_yaml::Value::Mapping(_) if packages.contains(k) => {}
+            _ => {
+                out.insert(k.clone(), yaml_value(v));
+            }
+        }
+    }
+    for (k, v) in own.into_iter().flatten() {
+        if let Some(k) = k.as_str() {
+            out.insert(k.to_string(), yaml_value(v));
+        }
+    }
 }
 
 fn yaml_value(v: &serde_yaml::Value) -> Value {
@@ -697,8 +906,11 @@ fn call_macro(state: &State, template: &str, name: &str, args: &[Value]) -> Resu
         })
     })();
     let returned = with_state(|s| s.returns.pop().flatten());
-    let output = result?;
-    Ok(returned.unwrap_or(output))
+    // A `return()` unwinds the macro with an error; its value is the result.
+    if let Some(v) = returned {
+        return Ok(v);
+    }
+    result
 }
 
 /// A macro by name, optionally in a namespace (`dbt_utils.star`).
@@ -960,7 +1172,7 @@ impl Object for Relation {
             "get" => Ok(self
                 .get_value(&args.first().cloned().unwrap_or_default())
                 .or_else(|| args.get(1).cloned())
-                .unwrap_or_default()),
+                .unwrap_or(Value::from(()))),
             "include" | "quote" | "incorporate" | "replace_path" => {
                 Ok(Value::from_dyn_object(self.clone()))
             }
@@ -1077,13 +1289,19 @@ impl Object for Adapter {
                 arg_str(args, 0, "identifier").unwrap_or_default()
             ))),
             "type" => Ok(Value::from("duckdb")),
-            // A relation named by a placeholder (`source(…).schema`) exists.
+            // A relation named by a placeholder (`source(…).schema`) exists,
+            // and so does one whose identifier names a known source or node;
+            // anything else is `none`, as for a missing table.
             "get_relation" | "load_relation" => Ok(["identifier", "schema", "relation"]
                 .iter()
                 .enumerate()
                 .find_map(|(i, k)| relation_node(&arg(args, 2 - i.min(2), k)?))
+                .or_else(|| {
+                    let id = arg_str(args, 2, "identifier")?.to_lowercase();
+                    self.0 .0.by_identifier.get()?.get(&id).cloned()
+                })
                 .map(relation)
-                .unwrap_or_default()),
+                .unwrap_or(Value::from(()))),
             "get_missing_columns" | "list_relations_without_caching" => Ok(MutList::value(vec![])),
             "check_schema_exists" | "already_exists" => Ok(Value::from(true)),
             _ => {
@@ -1466,7 +1684,7 @@ impl Object for MutDict {
                         .map(|(_, v)| v.clone())
                 })
                 .or_else(|| args.get(1).cloned())
-                .unwrap_or_default()),
+                .unwrap_or(Value::from(()))),
             "items" => Ok(pairs(&items)),
             "keys" => Ok(Value::from(
                 items.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
@@ -1803,11 +2021,18 @@ fn install_globals(env: &mut Environment<'static>, shared: &Arc<Shared>) {
     add_fn(env, "is_incremental", |_, _| Ok(Value::from(false)));
     add_fn(env, "return", |_, args| {
         let v = mutify(args.first().cloned().unwrap_or_default());
-        with_state(|s| {
-            if let Some(slot) = s.returns.last_mut() {
+        let in_macro = with_state(|s| match s.returns.last_mut() {
+            Some(slot) => {
                 slot.get_or_insert(v);
+                true
             }
+            None => false,
         });
+        // As in dbt, `return()` ends the macro: unwind to `call_macro`,
+        // which hands back the value (nothing after it runs).
+        if in_macro {
+            return Err(err(RETURNED));
+        }
         Ok(Value::from(""))
     });
     for name in ["log", "print", "statement", "debug"] {
@@ -1825,7 +2050,7 @@ fn install_globals(env: &mut Environment<'static>, shared: &Arc<Shared>) {
         Ok(arg(args, 0, "relation")
             .and_then(|r| relation_node(&r))
             .map(relation)
-            .unwrap_or_default())
+            .unwrap_or(Value::from(())))
     });
     add_fn(env, "__list", |_, args| {
         Ok(mutify(
@@ -2119,6 +2344,155 @@ mod tests {
             squash(&out.sql),
             "select date_diff('day', a, b) as d, varchar as t, 0 as n from t"
         );
+    }
+
+    #[test]
+    fn root_vars_override_a_packages_own_scoped_defaults() {
+        let dir = project(&[
+            (
+                "dbt_project.yml",
+                "name: p\nvars:\n  history_cols: ['team', 'labels']\n  jira:\n    label: root_scoped\n",
+            ),
+            (
+                "dbt_packages/jira/dbt_project.yml",
+                "name: jira\nvars:\n  label: pkg_global\n  history_cols: []\n  jira:\n    issue: \"{{ source('jira', 'issue') }}\"\n    label: pkg_scoped\n  utils:\n    issue: wrong\n",
+            ),
+            ("dbt_packages/utils/dbt_project.yml", "name: utils\n"),
+        ]);
+        let r = Renderer::new(dir.path(), HashMap::new()).unwrap();
+        let sql = "select {% for c in var('history_cols', []) %}{{ c }}, {% endfor %}'{{ var('label') }}' as l from {{ var('issue') }}";
+        let out = r
+            .render(
+                sql,
+                ModelInput {
+                    node_id: "model.jira.m",
+                    file_path: Some(Path::new("dbt_packages/jira/models/m.sql")),
+                    columns: HashMap::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            squash(&out.sql),
+            "select team, labels, 'root_scoped' as l from __dbtl_rel_0__"
+        );
+        assert_eq!(out.relations, vec!["source.jira.issue"]);
+        // Without root overrides the package's self-scoped value applies.
+        let dir = project(&[
+            ("dbt_project.yml", "name: p\n"),
+            (
+                "dbt_packages/jira/dbt_project.yml",
+                "name: jira\nvars:\n  label: pkg_global\n  jira:\n    label: pkg_scoped\n",
+            ),
+        ]);
+        let r = Renderer::new(dir.path(), HashMap::new()).unwrap();
+        let out = r
+            .render(
+                "select '{{ var('label') }}' as l from t",
+                ModelInput {
+                    node_id: "model.jira.m",
+                    file_path: Some(Path::new("dbt_packages/jira/models/m.sql")),
+                    columns: HashMap::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(squash(&out.sql), "select 'pkg_scoped' as l from t");
+    }
+
+    fn graph_fixture() -> Vec<GraphNode> {
+        vec![
+            GraphNode {
+                unique_id: "model.wrapper".into(),
+                resource_type: "model",
+                name: "wrapper".into(),
+                file_path: Some(PathBuf::from("dbt_packages/shop/models/wrapper.sql")),
+                materialized: Some("table".into()),
+                tags: vec!["core".into()],
+                columns: vec!["id".into(), "Data_Source".into()],
+                depends_on: vec!["source.raw.orders".into()],
+                ..GraphNode::default()
+            },
+            GraphNode {
+                unique_id: "source.raw.orders".into(),
+                resource_type: "source",
+                name: "raw.orders".into(),
+                file_path: Some(PathBuf::from("models/sources.yml")),
+                columns: vec!["id".into()],
+                ..GraphNode::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn graph_holds_parsed_nodes_and_sources() {
+        let dir = project(&[
+            ("dbt_project.yml", "name: p\n"),
+            ("dbt_packages/shop/dbt_project.yml", "name: shop\n"),
+            (
+                "macros/find.sql",
+                "{% macro find(name) %}{% for n in graph['nodes'].values() %}{% if n.resource_type == 'model' and n.package_name == 'shop' and n.name == name %}{{ return(n) }}{% endif %}{% endfor %}{{ exceptions.raise_compiler_error('no node ' ~ name) }}{% endmacro %}",
+            ),
+        ]);
+        let r = Renderer::new(dir.path(), HashMap::new())
+            .unwrap()
+            .with_graph(&graph_fixture());
+        let sql = "{% set n = find('wrapper') %}select {% for c in n.columns.values() %}{{ c.name | lower }}, {% endfor %}'{{ n.config.materialized }}' as m, '{{ n.unique_id }}' as u, '{{ n.depends_on.nodes | join(',') }}' as d, '{{ n.tags | join(',') }}' as t, '{{ graph.sources.values() | map(attribute='source_name') | join(',') }}' as s from x";
+        let out = r
+            .render(
+                sql,
+                ModelInput {
+                    node_id: "model.m",
+                    file_path: None,
+                    columns: HashMap::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            squash(&out.sql),
+            "select id, data_source, 'table' as m, 'model.shop.wrapper' as u, 'source.p.raw.orders' as d, 'core' as t, 'raw' as s from x"
+        );
+    }
+
+    #[test]
+    fn return_ends_the_macro_and_errors_fail_only_their_model() {
+        let dir = project(&[
+            ("dbt_project.yml", "name: p\n"),
+            (
+                "macros/first.sql",
+                "{% macro first(xs) %}{% for x in xs %}{% if x != '' %}{{ return(x) }}{% endif %}{% endfor %}{{ exceptions.raise_compiler_error('none found') }}{% endmacro %}",
+            ),
+        ]);
+        let r = Renderer::new(dir.path(), HashMap::new()).unwrap();
+        let input = || ModelInput {
+            node_id: "model.m",
+            file_path: None,
+            columns: HashMap::new(),
+        };
+        assert!(r.render("select {{ first([]) }} from t", input()).is_none());
+        let out = r
+            .render("select {{ first(['', 'a', 'b']) }} from t", input())
+            .unwrap();
+        assert_eq!(squash(&out.sql), "select a from t");
+    }
+
+    #[test]
+    fn missing_relations_and_keys_are_none() {
+        let dir = project(&[("dbt_project.yml", "name: p\n")]);
+        let r = Renderer::new(dir.path(), HashMap::new())
+            .unwrap()
+            .with_graph(&graph_fixture());
+        let sql = "{% set d = {} %}select {{ 'y' if adapter.get_relation(database='db', schema='raw', identifier='orders') is not none else 'n' }} as a, {{ 'y' if adapter.get_relation(database='db', schema='raw', identifier='nope') is none else 'n' }} as b, {{ 'y' if d.get('k') is none else 'n' }} as c from t";
+        let out = r
+            .render(
+                sql,
+                ModelInput {
+                    node_id: "model.m",
+                    file_path: None,
+                    columns: HashMap::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(squash(&out.sql), "select y as a, y as b, y as c from t");
+        assert_eq!(out.relations, vec!["source.raw.orders"]);
     }
 
     #[test]

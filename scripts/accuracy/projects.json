@@ -33,7 +33,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{hubspot_schema: main}"
+        "vars": "{hubspot_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -43,7 +44,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{jira_schema: main}"
+        "vars": "{jira_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -53,7 +55,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{shopify_schema: main}"
+        "vars": "{shopify_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -63,7 +66,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{quickbooks_schema: main}"
+        "vars": "{quickbooks_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -73,7 +77,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{netsuite_schema: main}"
+        "vars": "{netsuite_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -83,7 +88,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{zendesk_schema: main}"
+        "vars": "{zendesk_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -93,7 +99,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{stripe_schema: main}"
+        "vars": "{stripe_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     },
     {
@@ -103,7 +110,8 @@
       "parse_dir": "integration_tests",
       "lineage_dir": ".",
       "columns": {
-        "vars": "{salesforce_history_schema: main, salesforce_schema: main}"
+        "vars": "{salesforce_history_schema: main, salesforce_schema: main}",
+        "lineage_dir": "integration_tests"
       }
     }
   ]

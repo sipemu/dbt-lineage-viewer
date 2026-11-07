@@ -171,6 +171,7 @@ fn analyze_graph(
                         renderer
                             .get_or_insert_with(|| {
                                 super::render::Renderer::new(root, relations.by_ref.clone())
+                                    .map(|r| r.with_graph(&graph_nodes(graph, root)))
                             })
                             .as_ref()?
                             .render(
@@ -207,6 +208,73 @@ fn analyze_graph(
         }
     }
     (edges, schema)
+}
+
+/// Columns each model declares in YAML (project and packages), by model
+/// name: what dbt's parsed graph holds as a node's `columns`.
+fn yaml_model_columns(root: &std::path::Path) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let Ok(project) = super::project::DbtProject::load(root) else {
+        return out;
+    };
+    let Ok(files) =
+        super::discovery::discover_files_with_packages(root, &project.resolve_paths(root))
+    else {
+        return out;
+    };
+    for path in &files.yaml_files {
+        let Some(schema) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|c| super::yaml_schema::parse_schema_file(&c).ok())
+        else {
+            continue;
+        };
+        for m in schema.models {
+            if !m.columns.is_empty() {
+                out.entry(m.name)
+                    .or_insert_with(|| m.columns.into_iter().map(|c| c.name).collect());
+            }
+        }
+    }
+    out
+}
+
+/// The project's models, seeds, snapshots and sources for the renderer's
+/// `graph` context, with their parents. Models carry their YAML-declared
+/// columns, as in dbt's parsed graph.
+fn graph_nodes(graph: &LineageGraph, root: &std::path::Path) -> Vec<super::render::GraphNode> {
+    let declared = yaml_model_columns(root);
+    graph
+        .node_indices()
+        .filter_map(|i| {
+            let n = &graph[i];
+            let columns = match n.node_type {
+                NodeType::Model => declared.get(&n.label).cloned().unwrap_or_default(),
+                _ => n.columns.clone(),
+            };
+            let resource_type = match n.node_type {
+                NodeType::Model => "model",
+                NodeType::Seed => "seed",
+                NodeType::Snapshot => "snapshot",
+                NodeType::Source => "source",
+                _ => return None,
+            };
+            Some(super::render::GraphNode {
+                unique_id: n.unique_id.clone(),
+                resource_type,
+                name: n.label.clone(),
+                file_path: n.file_path.clone(),
+                materialized: n.materialization.clone(),
+                tags: n.tags.clone(),
+                description: n.description.clone(),
+                columns,
+                depends_on: graph
+                    .neighbors_directed(i, petgraph::Direction::Incoming)
+                    .map(|p| graph[p].unique_id.clone())
+                    .collect(),
+            })
+        })
+        .collect()
 }
 
 /// Analyze one model's SQL. Public for direct testing: `schema` maps node ids

@@ -30,10 +30,18 @@ pub struct DbtProject {
 }
 
 /// String-valued vars for `var()` resolution: package defaults
-/// (`dbt_packages/*/dbt_project.yml`), overridden by the root project's vars,
-/// global or scoped to a package (`vars: {pkg: {name: value}}`).
+/// (`dbt_packages/*/dbt_project.yml`, global or scoped to the package
+/// itself), overridden by the root project's vars, global or scoped to a
+/// package (`vars: {pkg: {name: value}}`). One flat map: a value the root
+/// scopes to one package applies to all.
 pub fn project_vars(project_dir: &Path) -> HashMap<String, String> {
-    fn flatten(vars: &HashMap<String, serde_yaml::Value>, out: &mut HashMap<String, String>) {
+    /// `own`: a package's name — only its self-scoped block applies (dbt
+    /// reads a package's vars for that package's nodes only).
+    fn flatten(
+        vars: &HashMap<String, serde_yaml::Value>,
+        own: Option<&str>,
+        out: &mut HashMap<String, String>,
+    ) {
         let mut scoped = Vec::new();
         for (k, v) in vars {
             match v {
@@ -43,7 +51,7 @@ pub fn project_vars(project_dir: &Path) -> HashMap<String, String> {
                 serde_yaml::Value::Number(n) => {
                     out.insert(k.clone(), n.to_string());
                 }
-                serde_yaml::Value::Mapping(m) => scoped.push(m),
+                serde_yaml::Value::Mapping(m) if own.is_none_or(|o| o == k) => scoped.push(m),
                 _ => {}
             }
         }
@@ -62,12 +70,12 @@ pub fn project_vars(project_dir: &Path) -> HashMap<String, String> {
         packages.sort();
         for pkg in packages {
             if let Ok(p) = DbtProject::load(&pkg) {
-                flatten(&p.vars, &mut out);
+                flatten(&p.vars, Some(&p.name), &mut out);
             }
         }
     }
     if let Ok(p) = DbtProject::load(project_dir) {
-        flatten(&p.vars, &mut out);
+        flatten(&p.vars, None, &mut out);
     }
     out
 }
@@ -199,6 +207,32 @@ seed-paths: ["data"]
         let err = DbtProject::load(tmp.path()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Failed to parse"), "Got: {}", msg);
+    }
+
+    #[test]
+    fn test_project_vars_precedence_and_scoping() {
+        let tmp = tempfile::tempdir().unwrap();
+        let write = |path: &str, content: &str| {
+            let p = tmp.path().join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, content).unwrap();
+        };
+        write(
+            "dbt_project.yml",
+            "name: root\nvars:\n  schema_name: root_global\n  jira:\n    table: root_scoped\n",
+        );
+        write(
+            "dbt_packages/jira/dbt_project.yml",
+            "name: jira\nvars:\n  schema_name: pkg\n  jira:\n    issue: \"{{ source('jira', 'issue') }}\"\n    table: pkg_scoped\n  other:\n    leaked: yes\n",
+        );
+        let vars = project_vars(tmp.path());
+        // Root vars win over package defaults, scoped over global.
+        assert_eq!(vars["schema_name"], "root_global");
+        assert_eq!(vars["table"], "root_scoped");
+        // A package's self-scoped defaults apply…
+        assert_eq!(vars["issue"], "{{ source('jira', 'issue') }}");
+        // …but not what it scopes to another package.
+        assert!(!vars.contains_key("leaked"));
     }
 
     #[test]

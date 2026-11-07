@@ -159,6 +159,26 @@ Notable changes per release. Full per-release notes live on the
 
 ### Fixed
 
+- Column lineage from SQL alone, `vars` in packages: a package's own
+  `dbt_project.yml` vars scoped to itself (`vars: {jira: {issue: …}}`, as
+  Fivetran packages declare their sources) now apply to its models when it is
+  installed in `dbt_packages/`, under the root project's vars (global or
+  `vars: {jira: {…}}`), which win as in dbt. Blocks a package scopes to
+  another package no longer leak into the flat var map used for refs.
+- Column lineage from SQL alone, rendering: `graph.nodes` and
+  `graph.sources` hold the parsed project's models, seeds, snapshots and
+  sources (dbt-style unique ids, `resource_type`, `name`, `package_name`,
+  `config.materialized` / `tags`, YAML-declared `columns`,
+  `depends_on.nodes`), so macros that look nodes up render instead of
+  stopping on `raise_compiler_error` (tuva's `data_quality__logical_*`).
+  `return()` ends the macro as in dbt; `adapter.get_relation()` is `none` for
+  an unknown table and finds known sources and models by identifier;
+  `dict.get()` of a missing key is `none`.
+- Column-accuracy check: Fivetran packages are measured from their
+  `integration_tests` project, where dbt ran, so its `vars` (jira's
+  `issue_field_history_columns`) shape the rendered SQL as they did the
+  reference. dbt_jira from SQL alone: 805 → 930 of 971 edges (82.9% →
+  95.8%), precision 98.4% → 98.6%; dbt_hubspot 2,225 → 2,226.
 - Bitbucket Pipe: Code Insights without a token now goes through the
   Pipelines proxy at `host.docker.internal:29418`. Pipes run in their own
   container, so `localhost:29418` did not reach it there. Git proxy settings
