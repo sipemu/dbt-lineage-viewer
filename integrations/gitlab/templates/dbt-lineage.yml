@@ -1,21 +1,27 @@
 spec:
   inputs:
     stage:
+      type: string
       default: test
       description: Pipeline stage for the job.
     version:
+      type: string
       default: v0
-      description: Tag of the ghcr.io/sipemu/dbt-lineage image (v0, 0.10, 0.10.0, latest).
+      description: Tag of the ghcr.io/sipemu/dbt-lineage image (v0, 0.18, 0.18.0, latest).
     project-dir:
+      type: string
       default: .
-      description: Path to the dbt project (containing dbt_project.yml).
+      description: Path to the dbt project (containing dbt_project.yml), relative to the repository root.
     base:
+      type: string
       default: auto
-      description: Base ref to diff against. `auto` uses the MR target branch.
+      description: Base ref to diff against. `auto` uses the MR target branch, fetched on demand.
     manifest:
+      type: string
       default: ""
-      description: Optional path to a compiled manifest.json.
+      description: Optional path to a compiled manifest.json (or a directory containing target/manifest.json).
     fail-on:
+      type: string
       default: lint-errors
       description: Comma-separated lint-errors, plan-empty, manifest-stale, breaking-changes, or never.
     comment:
@@ -31,6 +37,7 @@ dbt-lineage:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   variables:
+    # Full history: the diff needs the merge base with the target branch.
     GIT_DEPTH: "0"
     DBT_LINEAGE_PROJECT_DIR: "$[[ inputs.project-dir ]]"
     DBT_LINEAGE_BASE: "$[[ inputs.base ]]"
@@ -44,7 +51,9 @@ dbt-lineage:
       rc=0
       dbt-lineage ci report "$@" --base "$DBT_LINEAGE_BASE" --fail-on "$DBT_LINEAGE_FAIL_ON" \
         --out dbt-lineage-report.md --outputs dbt-lineage.env || rc=$?
-      dbt-lineage lint "$@" -o codeclimate > gl-code-quality-report.json || true
+      # Code Quality: paths relative to the repository root, stable fingerprints.
+      dbt-lineage ci annotations --format codeclimate "$@" --out gl-code-quality-report.json \
+        || echo "[]" > gl-code-quality-report.json
       if [ "$DBT_LINEAGE_COMMENT" = "true" ] && [ -f dbt-lineage-report.md ]; then
         dbt-lineage ci comment --file dbt-lineage-report.md \
           || echo "dbt-lineage: MR note skipped (set GITLAB_TOKEN to a project access token with api scope)"

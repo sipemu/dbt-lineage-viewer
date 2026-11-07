@@ -36,6 +36,17 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-features -- -D warnings
 
+  gitlab-component:
+    name: GitLab component
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema pyyaml
+      - run: python3 scripts/check-gitlab-component.py
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

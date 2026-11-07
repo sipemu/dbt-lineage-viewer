@@ -5,7 +5,7 @@
 | Platform | Integration | Comment token | Inline findings |
 | --- | --- | --- | --- |
 | GitHub Actions | `uses: sipemu/dbt-lineage-viewer@v0` | `GITHUB_TOKEN` (automatic) | SARIF via code scanning |
-| GitLab CI | CI/CD component, [`integrations/gitlab`](../integrations/gitlab) | `GITLAB_TOKEN`: project access token, `api` scope | Code Quality (`lint -o codeclimate`) |
+| GitLab CI | CI/CD component, [`integrations/gitlab`](../integrations/gitlab) | `GITLAB_TOKEN`: project access token, `api` scope | Code Quality (`ci annotations --format codeclimate`) |
 | Bitbucket Pipelines | Pipe `ghcr.io/sipemu/dbt-lineage-pipe:v0`, [`integrations/bitbucket`](../integrations/bitbucket) | `BITBUCKET_ACCESS_TOKEN`: repository access token | Code Insights report + annotations (`ci annotations --format bitbucket --post`) |
 | Azure Pipelines | step template, [`integrations/azure`](../integrations/azure) | `SYSTEM_ACCESSTOKEN` | build warnings/errors (`ci annotations --format azure`) |
 
@@ -35,7 +35,7 @@ dbt-lineage:
   variables: { GIT_DEPTH: "0" }
   script:
     - dbt-lineage ci report --out dbt-lineage-report.md || rc=$?
-    - dbt-lineage lint -o codeclimate > gl-code-quality-report.json || true
+    - dbt-lineage ci annotations --format codeclimate --out gl-code-quality-report.json || true
     - dbt-lineage ci comment --file dbt-lineage-report.md
     - exit ${rc:-0}
   artifacts:

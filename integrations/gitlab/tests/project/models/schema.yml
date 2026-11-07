@@ -1,0 +1,11 @@
+sources:
+  - name: raw
+    tables:
+      - name: orders
+      - name: unused
+
+models:
+  - name: stg_orders
+    description: Staged orders
+  - name: orders
+    description: Orders mart

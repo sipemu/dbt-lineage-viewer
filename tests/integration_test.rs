@@ -416,3 +416,105 @@ mod cli {
         assert!(orders.contains("<svg class=\"lineage\""));
     }
 }
+
+mod gitlab_code_quality {
+    use std::path::Path;
+    use std::process::Command;
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let dest = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir(&entry.path(), &dest);
+            } else {
+                std::fs::copy(entry.path(), dest).unwrap();
+            }
+        }
+    }
+
+    /// The fixture project in `<root>/dbt`, plus a model referencing an
+    /// undefined model so lint has findings.
+    fn checkout_with_project_in_subdir(git: bool) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("dbt");
+        copy_dir(&super::fixture_dir(), &project);
+        std::fs::write(
+            project.join("models/broken.sql"),
+            "select * from {{ ref('ghost') }}\n",
+        )
+        .unwrap();
+        if git {
+            let ok = Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(root.path())
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git init");
+        }
+        root
+    }
+
+    fn code_quality(project_dir: &Path, cwd: &Path, env: &[(&str, &Path)]) -> serde_json::Value {
+        let out = tempfile::NamedTempFile::new().unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_dbt-lineage"));
+        cmd.args(["ci", "annotations", "--format", "codeclimate", "-p"])
+            .arg(project_dir)
+            .arg("--out")
+            .arg(out.path())
+            .current_dir(cwd);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&std::fs::read(out.path()).unwrap()).unwrap()
+    }
+
+    fn assert_issue_paths(v: &serde_json::Value) {
+        let issues = v.as_array().unwrap();
+        assert!(!issues.is_empty(), "expected lint findings: {v}");
+        for i in issues {
+            let path = i["location"]["path"].as_str().unwrap();
+            assert!(path.starts_with("dbt/"), "{path} not relative to repo root");
+            assert!(i["location"]["lines"]["begin"].as_u64().unwrap() >= 1);
+        }
+        let ghost = issues
+            .iter()
+            .find(|i| i["description"].as_str().unwrap().contains("ghost"))
+            .expect("finding for the undefined ref");
+        assert_eq!(ghost["location"]["path"], "dbt/models/broken.sql");
+        assert_eq!(ghost["severity"], "major");
+    }
+
+    #[test]
+    fn test_paths_relative_to_repo_root_from_git() {
+        let root = checkout_with_project_in_subdir(true);
+        // Relative -p from the repository root, as the component runs it.
+        let v = code_quality(Path::new("dbt"), root.path(), &[]);
+        assert_issue_paths(&v);
+    }
+
+    #[test]
+    fn test_paths_relative_to_repo_root_from_ci_project_dir() {
+        // No git repository (or one git refuses): the checkout root comes
+        // from GitLab's CI_PROJECT_DIR.
+        let root = checkout_with_project_in_subdir(false);
+        let ceiling = root.path().parent().unwrap();
+        let v = code_quality(
+            &root.path().join("dbt"),
+            root.path(),
+            &[
+                ("CI_PROJECT_DIR", root.path()),
+                ("GIT_CEILING_DIRECTORIES", ceiling),
+            ],
+        );
+        assert_issue_paths(&v);
+    }
+}

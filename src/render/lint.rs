@@ -95,25 +95,42 @@ pub fn render_lint_codeclimate(report: &LintReport, locations: &Locations) {
 
 /// GitLab Code Quality report (CodeClimate subset), for
 /// `artifacts:reports:codequality`.
+///
+/// GitLab requires `description`, `check_name`, `fingerprint`, `severity`
+/// (`info`, `minor`, `major`, `critical`, `blocker`), `location.path`
+/// relative to the repository root and `location.lines.begin`. GitLab keys
+/// findings by fingerprint to tell an MR's new findings from existing ones,
+/// so the fingerprint hashes rule and node (stable across commits and
+/// message rewording) and is made unique when a node repeats a finding.
 pub fn render_lint_codeclimate_to_writer<W: Write>(
     report: &LintReport,
     locations: &Locations,
     w: &mut W,
 ) {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let issues: Vec<serde_json::Value> = report
         .findings
         .iter()
         .map(|f| {
-            let severity = match f.severity {
-                LintSeverity::Error => "major",
-                LintSeverity::Warning => "minor",
-                LintSeverity::Info => "info",
+            let (severity, category) = match f.severity {
+                LintSeverity::Error => ("major", "Bug Risk"),
+                LintSeverity::Warning => ("minor", "Style"),
+                LintSeverity::Info => ("info", "Style"),
             };
-            let fingerprint = blake3::hash(format!("{}:{}", f.rule, f.unique_id).as_bytes());
+            let key = format!("{}:{}", f.rule, f.unique_id);
+            let n = seen.entry(key.clone()).or_insert(0);
+            let key = if *n == 0 {
+                key
+            } else {
+                format!("{key}:{n}:{}", f.message)
+            };
+            *n += 1;
             json!({
+                "type": "issue",
                 "description": f.message,
                 "check_name": f.rule,
-                "fingerprint": fingerprint.to_hex().to_string(),
+                "categories": [category],
+                "fingerprint": blake3::hash(key.as_bytes()).to_hex().to_string(),
                 "severity": severity,
                 "location": {
                     "path": locations.for_id(&f.unique_id),
@@ -194,19 +211,100 @@ mod tests {
         }
     }
 
+    /// Check a report against GitLab's Code Quality schema: required fields
+    /// and their types, the severity enum, repository-relative paths and
+    /// unique fingerprints.
+    fn assert_gitlab_code_quality(v: &serde_json::Value) {
+        let issues = v.as_array().expect("top level is an array");
+        let mut fingerprints = std::collections::HashSet::new();
+        for i in issues {
+            for field in ["description", "check_name", "fingerprint", "severity"] {
+                assert!(i[field].is_string(), "{field} missing in {i}");
+            }
+            assert!(matches!(
+                i["severity"].as_str().unwrap(),
+                "info" | "minor" | "major" | "critical" | "blocker"
+            ));
+            let path = i["location"]["path"].as_str().expect("location.path");
+            assert!(!path.is_empty());
+            assert!(!path.starts_with('/') && !path.starts_with("./"), "{path}");
+            assert!(!path.contains('\\') && !path.contains("/./"), "{path}");
+            assert!(i["location"]["lines"]["begin"].as_u64().unwrap() >= 1);
+            assert!(
+                fingerprints.insert(i["fingerprint"].as_str().unwrap().to_string()),
+                "duplicate fingerprint in {i}"
+            );
+        }
+    }
+
+    fn codeclimate(r: &LintReport, loc: &Locations) -> serde_json::Value {
+        let mut buf = Vec::new();
+        render_lint_codeclimate_to_writer(r, loc, &mut buf);
+        serde_json::from_slice(&buf).unwrap()
+    }
+
     #[test]
     fn test_codeclimate_shape() {
-        let mut buf = Vec::new();
-        render_lint_codeclimate_to_writer(&report(), &Locations::default(), &mut buf);
-        let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        let v = codeclimate(&report(), &Locations::default());
+        assert_gitlab_code_quality(&v);
         let issues = v.as_array().unwrap();
         assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0]["type"], "issue");
         assert_eq!(issues[0]["check_name"], "unused-source");
+        assert_eq!(issues[0]["description"], "Source 'raw.x' is unused.");
         assert_eq!(issues[0]["severity"], "minor");
         assert_eq!(issues[1]["severity"], "major");
         assert_eq!(issues[0]["location"]["path"], "dbt_project.yml");
         assert_eq!(issues[0]["location"]["lines"]["begin"], 1);
         assert_eq!(issues[0]["fingerprint"].as_str().unwrap().len(), 64);
-        assert_ne!(issues[0]["fingerprint"], issues[1]["fingerprint"]);
+    }
+
+    #[test]
+    fn test_codeclimate_empty_report_is_empty_array() {
+        let v = codeclimate(&LintReport { findings: vec![] }, &Locations::default());
+        assert_eq!(v, serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_codeclimate_fingerprints_stable_and_unique() {
+        // The same rule on the same node twice: still distinct fingerprints.
+        let mut r = report();
+        let mut dup = r.findings[0].clone();
+        dup.message = "Source 'raw.x' is unused (again).".into();
+        r.findings.push(dup);
+        assert_gitlab_code_quality(&codeclimate(&r, &Locations::default()));
+
+        // Stable across runs and independent of the message wording, so an
+        // MR that rewords a message doesn't show the finding as new.
+        let mut reworded = report();
+        reworded.findings[0].message = "Unused source.".into();
+        let base = codeclimate(&report(), &Locations::default());
+        assert_eq!(
+            base[0]["fingerprint"],
+            codeclimate(&reworded, &Locations::default())[0]["fingerprint"]
+        );
+        assert_eq!(base, codeclimate(&report(), &Locations::default()));
+    }
+
+    #[test]
+    fn test_codeclimate_paths_relative_to_repo_root() {
+        use crate::graph::types::{LineageGraph, NodeData, NodeType};
+        let mut g = LineageGraph::new();
+        g.add_node(NodeData {
+            unique_id: "source.raw.x".into(),
+            label: "raw.x".into(),
+            node_type: NodeType::Source,
+            file_path: Some("/repo/dbt/./models/sources.yml".into()),
+            description: None,
+            materialization: None,
+            tags: vec![],
+            columns: vec![],
+        });
+        let loc = Locations::from_graph(&g, std::path::Path::new("/repo/dbt"), "dbt/");
+        let v = codeclimate(&report(), &loc);
+        assert_gitlab_code_quality(&v);
+        assert_eq!(v[0]["location"]["path"], "dbt/models/sources.yml");
+        // Undefined node no model references: the project file.
+        assert_eq!(v[1]["location"]["path"], "dbt/dbt_project.yml");
     }
 }

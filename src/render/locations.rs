@@ -90,6 +90,32 @@ impl Locations {
     }
 }
 
+/// CI variables holding the repository checkout root, for when git cannot
+/// tell (e.g. `safe.directory` refusing a checkout owned by another uid).
+pub const CHECKOUT_ROOT_VARS: [&str; 4] = [
+    "CI_PROJECT_DIR",
+    "GITHUB_WORKSPACE",
+    "BITBUCKET_CLONE_DIR",
+    "BUILD_SOURCESDIRECTORY",
+];
+
+/// The project's path inside the checkout at `root`, as `"dbt/"` (or `""`
+/// for the root itself). `None` when the project is outside `root`.
+pub fn prefix_under_root(project_dir: &Path, root: &Path) -> Option<String> {
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let rel = canon(project_dir)
+        .strip_prefix(canon(root))
+        .ok()?
+        .to_path_buf();
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    let rel = rel.trim_matches('/');
+    Some(if rel.is_empty() {
+        String::new()
+    } else {
+        format!("{rel}/")
+    })
+}
+
 /// SARIF `locations` array pointing at line 1 of `path`.
 pub fn sarif_location(path: &str) -> serde_json::Value {
     serde_json::json!([{
@@ -150,6 +176,19 @@ mod tests {
         assert_eq!(loc.for_id("phantom.ghost"), "dbt/models/marts/mart.sql");
         assert_eq!(loc.for_id("model.unknown"), "dbt/dbt_project.yml");
         assert_eq!(loc.for_model("unknown"), "dbt/dbt_project.yml");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("dbt").join("core");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert_eq!(
+            prefix_under_root(&sub, tmp.path()).as_deref(),
+            Some("dbt/core/")
+        );
+        assert_eq!(
+            prefix_under_root(tmp.path(), tmp.path()).as_deref(),
+            Some("")
+        );
+        assert_eq!(prefix_under_root(tmp.path(), &sub), None);
 
         let v = sarif_location("dbt/models/marts/mart.sql");
         assert_eq!(

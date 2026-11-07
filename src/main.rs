@@ -1420,7 +1420,15 @@ fn repo_locations(
     dag: &graph::types::LineageGraph,
     project_dir: &Path,
 ) -> render::locations::Locations {
-    let prefix = dbt_lineage::git::show_prefix(project_dir).unwrap_or_default();
+    use render::locations::{prefix_under_root, CHECKOUT_ROOT_VARS};
+    let prefix = dbt_lineage::git::show_prefix(project_dir)
+        .or_else(|| {
+            CHECKOUT_ROOT_VARS.iter().find_map(|var| {
+                let root = std::env::var_os(var)?;
+                prefix_under_root(project_dir, Path::new(&root))
+            })
+        })
+        .unwrap_or_default();
     render::locations::Locations::from_graph(dag, project_dir, &prefix)
 }
 

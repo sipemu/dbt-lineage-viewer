@@ -7,6 +7,20 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- GitLab CI/CD Catalog: `integrations/gitlab` is laid out as the catalog
+  project (typed `spec:inputs`, README, a test dbt project) with a
+  `.gitlab-ci.yml` that runs the component from the commit, checks its
+  report, dotenv and Code Quality output, and releases semantic-version tags
+  to the catalog with the `release` keyword. The README lists the manual
+  publishing steps. `scripts/check-gitlab-component.py` validates the
+  component against GitLab's CI schema in GitHub CI (#62).
+- GitLab Code Quality report (`ci annotations --format codeclimate`, `lint
+  -o codeclimate`): `type` and `categories` per finding, fingerprints unique
+  when a node repeats a rule (and still independent of message wording),
+  and paths relative to the repository root even when git cannot read the
+  checkout, using `CI_PROJECT_DIR` (or the GitHub, Bitbucket, Azure
+  equivalent). The component now writes it with `ci annotations` (#62).
+
 - Column lineage renders model Jinja when it writes the SELECT (loops,
   macros producing columns or whole queries), approximating `dbt compile`
   without dbt: the project's and installed packages' macros with their

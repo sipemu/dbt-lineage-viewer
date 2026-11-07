@@ -1,0 +1,82 @@
+# Pipeline of the CI/CD Catalog project (gitlab.com/sipemu/dbt-lineage),
+# whose root is this directory. It runs the component from this commit on a
+# small dbt project, checks its artifacts, and publishes a catalog release
+# for every semantic-version tag (e.g. 0.18.0).
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+stages:
+  - test
+  - release
+
+include:
+  # The component as of this commit, not a released version.
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/dbt-lineage@$CI_COMMIT_SHA
+    inputs:
+      stage: test
+      project-dir: tests/project
+      # Branch and tag pipelines have no MR target branch to diff against.
+      base: HEAD
+      fail-on: never
+      comment: false
+
+# Same job name as the component's job: GitLab merges these keys into it.
+dbt-lineage:
+  rules:
+    - when: on_success
+  artifacts:
+    # Report files are not passed to later jobs unless listed in paths.
+    paths:
+      - dbt-lineage-report.md
+      - gl-code-quality-report.json
+      - dbt-lineage.env
+
+check-component:
+  stage: test
+  image: python:3-alpine
+  needs:
+    - job: dbt-lineage
+      artifacts: true
+  script:
+    - test -s dbt-lineage-report.md
+    - grep -q '^selector=' dbt-lineage.env
+    - grep -q '^failed=false$' dbt-lineage.env
+    - |
+      python3 - <<'EOF'
+      # GitLab Code Quality report schema (artifacts:reports:codequality).
+      import json
+      issues = json.load(open("gl-code-quality-report.json"))
+      assert isinstance(issues, list) and issues, "expected findings for tests/project"
+      seen = set()
+      for i in issues:
+          for f in ("description", "check_name", "fingerprint", "severity"):
+              assert isinstance(i.get(f), str) and i[f], (f, i)
+          assert i["severity"] in ("info", "minor", "major", "critical", "blocker"), i
+          path = i["location"]["path"]
+          assert path.startswith("tests/project/"), path
+          assert isinstance(i["location"]["lines"]["begin"], int), i
+          assert i["fingerprint"] not in seen, i
+          seen.add(i["fingerprint"])
+      assert any(i["check_name"] == "unused-source" for i in issues), issues
+      print(f"{len(issues)} Code Quality findings OK")
+      EOF
+
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  needs:
+    - check-component
+  rules:
+    # The CI/CD Catalog only publishes semantic-version tags.
+    - if: $CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+$/
+  script:
+    - echo "Releasing $CI_COMMIT_TAG of the components in $CI_PROJECT_PATH"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "dbt-lineage CI/CD component $CI_COMMIT_TAG. Changelog: https://github.com/sipemu/dbt-lineage-viewer/blob/master/CHANGELOG.md"
