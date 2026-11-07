@@ -9,7 +9,10 @@ fn pipe_dir() -> PathBuf {
 }
 
 fn read(name: &str) -> String {
-    std::fs::read_to_string(pipe_dir().join(name)).unwrap()
+    // Windows checkouts may convert line endings to CRLF.
+    std::fs::read_to_string(pipe_dir().join(name))
+        .unwrap()
+        .replace("\r\n", "\n")
 }
 
 /// Variable names declared under `variables:` in pipe.yml.
