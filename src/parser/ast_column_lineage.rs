@@ -165,8 +165,8 @@ fn analyze_graph(
                     .or_else(|| analyze_model(&sql, &relations, &schema, &parents, &declared))
             }
             None => {
-                // Jinja writes part of the SELECT: render it like `dbt compile`.
-                let rendered = sql_generated_by_jinja(&sql)
+                // Render like `dbt compile` where Jinja shapes the SQL.
+                let rendered = needs_render(&sql)
                     .then(|| {
                         renderer
                             .get_or_insert_with(|| {
@@ -1062,6 +1062,17 @@ fn model_result(binder: &Binder, query: &Query, declared: &[String]) -> ModelRes
 }
 
 static FOR_LOOP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{%-?\s*for\s").unwrap());
+static RENDER_ONLY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(from|join)\s+\{\{-?\s*var\s*\(|\{%-?\s*(if|elif)\s").unwrap()
+});
+
+/// Whether only rendering reads this model right: Jinja writes part of its
+/// SELECT, an `{% if %}` picks its SQL (`{% if var('multibook') %}`), or a var
+/// names a relation it reads (`from {{ var('orders') }}`, the var set to
+/// `"{{ source('raw', 'orders') }}"`). Elsewhere the static reading is as good.
+fn needs_render(sql: &str) -> bool {
+    RENDER_ONLY.is_match(&JINJA_COMMENT.replace_all(sql, "")) || sql_generated_by_jinja(sql)
+}
 
 /// Whether Jinja writes part of this model's SELECT (a loop, a macro that
 /// expands to columns or to the whole query), or the SQL can't be parsed. The
@@ -1352,6 +1363,51 @@ mod tests {
             vec![
                 ("source.raw.orders".into(), "amount".into(), "amount".into()),
                 ("source.raw.orders".into(), "id".into(), "order_id".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn relations_named_by_vars_are_rendered() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = [
+            (
+                "dbt_project.yml",
+                "name: shop\nvars:\n  orders: \"{{ source('raw', 'orders') }}\"\n",
+            ),
+            (
+                "models/sources.yml",
+                "version: 2\nsources:\n  - name: raw\n    tables:\n      - name: orders\n        columns:\n          - name: id\n          - name: amount\n",
+            ),
+            ("models/orders_tmp.sql", "select *\nfrom {{ var('orders') }}"),
+        ];
+        for (path, content) in files {
+            let p = dir.path().join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, content).unwrap();
+        }
+        assert!(needs_render("select * from {{ var('orders') }}"));
+        assert!(needs_render(
+            "select a{% if var('b') %}, b{% endif %} from t"
+        ));
+        assert!(!needs_render("select {{ var('x') }} as x from t"));
+        let project = super::super::project::DbtProject::load(dir.path()).unwrap();
+        let found =
+            super::super::discovery::discover_files(&project.resolve_paths(dir.path())).unwrap();
+        let graph = crate::graph::builder::build_graph_no_cache(dir.path(), &found).unwrap();
+        let mut got: Vec<(String, String, String)> =
+            resolve_column_lineage_ast_in(&graph, dir.path())
+                .edges
+                .into_iter()
+                .filter(|e| e.target_node.ends_with("orders_tmp"))
+                .map(|e| (e.source_node, e.source_column, e.target_column))
+                .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("source.raw.orders".into(), "amount".into(), "amount".into()),
+                ("source.raw.orders".into(), "id".into(), "id".into()),
             ]
         );
     }

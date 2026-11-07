@@ -138,15 +138,15 @@ baseline.
 | Project | From SQL alone | Precision | With compiled SQL + catalog | Precision |
 | --- | ---: | ---: | ---: | ---: |
 | jaffle-shop | 87 / 87 | 100% | 87 / 87 | 100% |
-| tuva | 10,359 / 12,143 | 99% | 12,141 / 12,143 | 100% |
-| Fivetran dbt_hubspot | 2,146 / 2,337 | 97% | 2,337 / 2,337 | 100% |
-| Fivetran dbt_jira | 713 / 971 | 98% | 971 / 971 | 99% |
-| Fivetran dbt_shopify | 5,109 / 5,436 | 98% | 5,436 / 5,436 | 100% |
-| Fivetran dbt_quickbooks | 2,055 / 2,993 | 99% | 2,993 / 2,993 | 100% |
-| Fivetran dbt_netsuite | 1,118 / 1,831 | 98% | 1,800 / 1,831 | 99% |
-| Fivetran dbt_zendesk | 1,553 / 1,665 | 99% | 1,653 / 1,665 | 100% |
-| Fivetran dbt_stripe | 1,576 / 1,816 | 96% | 1,809 / 1,816 | 100% |
-| Fivetran dbt_salesforce | 661 / 719 | 76% | 719 / 719 | 100% |
+| tuva | 10,451 / 12,143 | 100% | 12,141 / 12,143 | 100% |
+| Fivetran dbt_hubspot | 2,225 / 2,337 | 98% | 2,337 / 2,337 | 100% |
+| Fivetran dbt_jira | 805 / 971 | 98% | 971 / 971 | 99% |
+| Fivetran dbt_shopify | 5,192 / 5,436 | 98% | 5,436 / 5,436 | 100% |
+| Fivetran dbt_quickbooks | 2,587 / 2,993 | 100% | 2,993 / 2,993 | 100% |
+| Fivetran dbt_netsuite | 1,318 / 1,831 | 98% | 1,800 / 1,831 | 99% |
+| Fivetran dbt_zendesk | 1,563 / 1,665 | 99% | 1,653 / 1,665 | 100% |
+| Fivetran dbt_stripe | 1,588 / 1,816 | 96% | 1,809 / 1,816 | 100% |
+| Fivetran dbt_salesforce | 719 / 719 | 100% | 719 / 719 | 100% |
 
 From SQL alone, columns of models written in SQL are traced completely,
 through CTEs, subqueries, joins, unions and `select *`. Where Jinja writes
@@ -156,9 +156,10 @@ would, without dbt or a warehouse: the project's and installed packages'
 macros (`dbt_packages/`, with `adapter.dispatch`), `vars`, and the columns it
 already knows for each upstream relation (YAML, seed headers, upstream
 models) answering `adapter.get_columns_in_relation`. What stays out of reach
-offline: macros that read data (`run_query`, pivots over
-`dbt_utils.get_column_values`) and `select *` from sources whose columns YAML
-doesn't declare; the catalog closes most of that gap.
+offline: macros that read data (pivots over `dbt_utils.get_column_values`,
+`run_query` results; `ci report` lists such models as lineage gaps), columns
+of sources that YAML doesn't declare, and staging models over those (Fivetran's
+`_tmp` pass-throughs); the catalog closes most of that gap.
 
 **With dbt artifacts:** when `target/manifest.json` holds dbt's compiled SQL
 (from `dbt compile` or `dbt run`), column lineage reads it for every model

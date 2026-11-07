@@ -7,6 +7,25 @@ Notable changes per release. Full per-release notes live on the
 
 ### Added
 
+- Column lineage from SQL alone renders more of what `dbt compile` would:
+  macro parameter defaults that read earlier parameters
+  (`alias=column_dict[key]['alias']`, Fivetran's `coalesce_rename`), models
+  that read a relation named by a var (`from {{ var('accounts') }}`) or pick
+  their SQL with `{% if %}`, lists built by `{% set x = a + b %}` that are
+  then `.append()`ed, `var()` resolved for the package of the model being
+  rendered (not the macro asking), dbt's macros called without `dbt.`, and
+  `dbt_utils.get_single_value()` / `run_query()` columns as an empty result
+  (their defaults apply; no data is assumed). dbt_salesforce goes from 661 to
+  719 of 719 column dependencies (precision 76% to 100%), dbt_quickbooks
+  2,055 to 2,587 (99% to 100%), dbt_netsuite 1,118 to 1,318 (97.8% to
+  97.5%: YAML declares source columns the test data lacks), dbt_jira 713 to
+  805, dbt_hubspot 2,146 to 2,225, dbt_shopify 5,109 to 5,192, dbt_stripe
+  1,576 to 1,588, dbt_zendesk 1,553 to 1,563 and tuva 10,359 to 10,451
+  (precision 99.0% to 99.6%).
+- `ci report` lineage gaps name models whose columns depend on warehouse
+  data (`dbt_utils.get_column_values()`, `run_query()`,
+  `get_single_value()`, `get_query_results_as_dict()`), e.g. pivots with a
+  column per value, which no offline reading can know.
 - Column lineage renders model Jinja when it writes the SELECT (loops,
   macros producing columns or whole queries), approximating `dbt compile`
   without dbt: the project's and installed packages' macros with their

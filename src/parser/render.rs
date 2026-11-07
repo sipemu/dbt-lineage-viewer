@@ -363,9 +363,125 @@ fn top_level_if(s: &str) -> Option<usize> {
 fn prepare_macro_source(source: &str) -> String {
     let source = prepare_source(source);
     let source = FOREIGN_BLOCK.replace_all(&source, "");
+    let source = late_defaults(&source);
     MACRO_DEF
         .replace_all(&source, format!("${{1}}{RAW}${{2}}"))
         .into_owned()
+}
+
+/// Placeholder default for a parameter whose default is computed at call time.
+const UNSET: &str = "__dbtl_unset__";
+static IDENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").unwrap());
+static STRING_LIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*""#).unwrap());
+
+/// Jinja evaluates a macro parameter's default when the macro is called, so a
+/// default may read the parameters before it (`alias=column_dict[key]['alias']`);
+/// minijinja evaluates it without them. Such defaults become a placeholder
+/// the macro body replaces first: `{% macro m(a, b=a ~ 'x') %}` →
+/// `{% macro m(a, b='__dbtl_unset__') %}{% if b == '__dbtl_unset__' %}{% set b = a ~ 'x' %}{% endif %}`.
+fn late_defaults(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut last = 0;
+    for m in MACRO_DEF.find_iter(source) {
+        let start = m.end();
+        if start < last {
+            continue;
+        }
+        let rest = &source[start..];
+        let Some(open) = rest.find('(').filter(|i| {
+            rest[..*i]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c.is_whitespace())
+        }) else {
+            continue;
+        };
+        let Some(close) = matching_close(&rest[open..]).map(|c| open + c) else {
+            continue;
+        };
+        let after = &rest[close + 1..];
+        let Some(tag_end) = after.find("%}") else {
+            continue;
+        };
+        let between = after[..tag_end].trim();
+        if !(between.is_empty() || between == "-") {
+            continue;
+        }
+        let mut names: Vec<&str> = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+        let mut late: Vec<(&str, &str)> = Vec::new();
+        for param in split_top_level(&rest[open + 1..close]) {
+            let Some((name, default)) = param.split_once('=') else {
+                names.push(param.trim());
+                params.push(param.to_string());
+                continue;
+            };
+            let (name, default) = (name.trim(), default.trim());
+            let code = STRING_LIT.replace_all(default, "''");
+            if IDENT.find_iter(&code).any(|i| names.contains(&i.as_str())) {
+                params.push(format!("{name}='{UNSET}'"));
+                late.push((name, default));
+            } else {
+                params.push(param.to_string());
+            }
+            names.push(name);
+        }
+        if late.is_empty() {
+            continue;
+        }
+        let tag_close = close + 1 + tag_end + 2;
+        out.push_str(&source[last..start]);
+        out.push_str(&rest[..=open]);
+        out.push_str(&params.join(","));
+        out.push_str(&rest[close..tag_close]);
+        for (i, (name, default)) in late.iter().enumerate() {
+            let dash = if between == "-" && i + 1 == late.len() {
+                "-"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "{{% if {name} == '{UNSET}' %}}{{% set {name} = {default} %}}{{% endif {dash}%}}"
+            ));
+        }
+        last = start + tag_close;
+    }
+    out.push_str(&source[last..]);
+    out
+}
+
+/// `s` split at commas outside brackets and strings.
+fn split_top_level(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0i32, 0);
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => quote = Some(c),
+            '[' | '{' | '(' => depth += 1,
+            ']' | '}' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if !s[start..].trim().is_empty() {
+        parts.push(&s[start..]);
+    }
+    parts
 }
 
 /// `{% set x = [...] %}` → `{% set x = __list([...]) %}`, and `{...}` →
@@ -380,6 +496,15 @@ fn wrap_set_literals(source: &str) -> String {
         }
         let rest = &source[start..];
         let Some(open) = rest.chars().next().filter(|c| *c == '[' || *c == '{') else {
+            // Any other value: lists it yields (`a + b`, a var's list) become
+            // mutable too; mutable ones pass through, keeping aliases.
+            if let Some(end) = tag_end(rest) {
+                out.push_str(&source[last..start]);
+                out.push_str("__mut(");
+                out.push_str(rest[..end].trim_end());
+                out.push_str(") ");
+                last = start + end;
+            }
             continue;
         };
         let Some(close) = matching_close(rest) else {
@@ -397,6 +522,39 @@ fn wrap_set_literals(source: &str) -> String {
     }
     out.push_str(&source[last..]);
     out
+}
+
+/// Byte index of the `%}` / `-%}` ending the tag `s` is inside, outside
+/// brackets and strings.
+fn tag_end(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => quote = Some(c),
+            '[' | '{' | '(' => depth += 1,
+            ']' | '}' | ')' => depth -= 1,
+            '-' | '%' if depth == 0 => {
+                let r = &s[i..];
+                if r.starts_with("-%}") || r.starts_with("%}") {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Byte index of the bracket closing the one `s` starts with.
@@ -486,13 +644,20 @@ impl Shared {
             .collect()
     }
 
-    fn var(&self, name: &str, caller: &str) -> Option<Value> {
+    /// A var as dbt resolves it for a node of package `model` (the model being
+    /// rendered, whichever package's macro asks), then for the calling macro's
+    /// package, then any package's default.
+    fn var(&self, name: &str, model: &str, caller: &str) -> Option<Value> {
         let v = &self.vars;
-        v.scoped
-            .get(caller)
-            .and_then(|m| m.get(name))
-            .or_else(|| v.root.get(name))
-            .or_else(|| v.package.get(caller).and_then(|m| m.get(name)))
+        let in_package = |pkg: &str| {
+            v.scoped
+                .get(pkg)
+                .and_then(|m| m.get(name))
+                .or_else(|| v.root.get(name))
+                .or_else(|| v.package.get(pkg).and_then(|m| m.get(name)))
+        };
+        in_package(model)
+            .or_else(|| in_package(caller))
             .or_else(|| {
                 self.package_order
                     .iter()
@@ -1079,9 +1244,8 @@ impl Object for EmptyTable {
 
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str() {
-            Some("columns" | "rows" | "column_names" | "column_types") => {
-                Some(Value::from_object(EmptyTable))
-            }
+            Some("columns") => Some(Value::from_object(EmptyColumns)),
+            Some("rows" | "column_names" | "column_types") => Some(Value::from_object(EmptyTable)),
             _ => None,
         }
     }
@@ -1094,6 +1258,42 @@ impl Object for EmptyTable {
     ) -> Result<Value, Error> {
         match method {
             "values" | "keys" | "items" | "print_table" => Ok(Value::from_object(EmptyTable)),
+            _ => Err(Error::from(ErrorKind::UnknownMethod)),
+        }
+    }
+}
+
+/// An empty table's `columns`: the result's shape is unknown, so any column
+/// (`table.columns[0]`) is an empty one, as in a query that returned no rows.
+/// `dbt_utils.get_single_value()` then falls back to its default.
+#[derive(Debug)]
+struct EmptyColumns;
+
+impl Object for EmptyColumns {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Seq
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Empty
+    }
+
+    fn is_true(self: &Arc<Self>) -> bool {
+        false
+    }
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        (key.is_number() || key.as_str().is_some()).then(|| Value::from_object(EmptyTable))
+    }
+
+    fn call_method(
+        self: &Arc<Self>,
+        _state: &mut State<'_, '_>,
+        method: &str,
+        _args: &[Value],
+    ) -> Result<Value, Error> {
+        match method {
+            "values" | "keys" | "items" => Ok(Value::from_object(EmptyTable)),
             _ => Err(Error::from(ErrorKind::UnknownMethod)),
         }
     }
@@ -1321,6 +1521,14 @@ fn mutify(v: Value) -> Value {
                 .collect(),
         );
     }
+    // A lazy sequence (`list_a + list_b`): collect it.
+    if v.as_object()
+        .is_some_and(|o| o.repr() == ObjectRepr::Iterable)
+    {
+        if let Ok(items) = v.try_iter() {
+            return MutList::value(items.map(mutify).collect());
+        }
+    }
     v
 }
 
@@ -1420,6 +1628,33 @@ impl Object for Clock {
 // ---------------------------------------------------------------------------
 // Globals
 
+/// dbt macros the stand-ins cover, callable without the `dbt.` namespace
+/// unless a project or package defines its own.
+const DBT_GLOBAL_MACROS: &[&str] = &[
+    "type_string",
+    "type_text",
+    "type_timestamp",
+    "type_date",
+    "type_int",
+    "type_bigint",
+    "type_numeric",
+    "type_float",
+    "type_boolean",
+    "current_timestamp",
+    "current_timestamp_backcompat",
+    "current_timestamp_in_utc_backcompat",
+    "snapshot_get_time",
+    "dateadd",
+    "datediff",
+    "date_trunc",
+    "last_day",
+    "safe_cast",
+    "cast_bool_to_text",
+    "concat",
+    "hash",
+    "split_part",
+];
+
 /// Names the renderer defines itself; project macros don't shadow them.
 const RESERVED: &[&str] = &[
     "ref",
@@ -1455,6 +1690,7 @@ const RESERVED: &[&str] = &[
     "builtins",
     "__list",
     "__dict",
+    "__mut",
     "namespace",
     "range",
     "dict",
@@ -1485,6 +1721,21 @@ fn install_globals(env: &mut Environment<'static>, shared: &Arc<Shared>) {
                 dispatch: false,
             }),
         );
+    }
+    // dbt's own macros are global too (`{{ datediff(...) }}` without `dbt.`).
+    let defined = shared.all_macro_names();
+    for name in DBT_GLOBAL_MACROS {
+        if !defined.contains(name) {
+            env.add_global(
+                *name,
+                Value::from_object(MacroRef {
+                    shared: SharedRef(shared.clone()),
+                    ns: Some(DBT.to_string()),
+                    name: name.to_string(),
+                    dispatch: false,
+                }),
+            );
+        }
     }
     let mut namespaces: Vec<&String> = shared.macros.keys().collect();
     namespaces.sort();
@@ -1535,7 +1786,8 @@ fn install_globals(env: &mut Environment<'static>, shared: &Arc<Shared>) {
     add_fn(env, "var", move |state, args| {
         let name = arg_str(args, 0, "name").ok_or_else(|| err("var() name"))?;
         let caller = caller_package(state);
-        let Some(v) = vars.var(&name, &caller) else {
+        let model = with_state(|s| s.package.clone());
+        let Some(v) = vars.var(&name, &model, &caller) else {
             return Ok(arg(args, 1, "default").unwrap_or_default());
         };
         match v.as_str() {
@@ -1583,6 +1835,9 @@ fn install_globals(env: &mut Environment<'static>, shared: &Arc<Shared>) {
         ))
     });
     add_fn(env, "__dict", |_, args| {
+        Ok(mutify(args.first().cloned().unwrap_or_default()))
+    });
+    add_fn(env, "__mut", |_, args| {
         Ok(mutify(args.first().cloned().unwrap_or_default()))
     });
     for name in ["set", "set_strict"] {
@@ -1668,9 +1923,10 @@ fn install_globals(env: &mut Environment<'static>, shared: &Arc<Shared>) {
     env.add_global(
         "graph",
         map([
-            ("nodes", Value::from_iter(Vec::<(String, Value)>::new())),
-            ("sources", Value::from_iter(Vec::<(String, Value)>::new())),
-            ("macros", Value::from_iter(Vec::<(String, Value)>::new())),
+            // Empty maps (an iterator of pairs would be a list).
+            ("nodes", Value::from(BTreeMap::<String, Value>::new())),
+            ("sources", Value::from(BTreeMap::<String, Value>::new())),
+            ("macros", Value::from(BTreeMap::<String, Value>::new())),
         ]),
     );
     env.add_global(
@@ -1798,6 +2054,117 @@ mod tests {
     }
 
     #[test]
+    fn macros_read_vars_of_the_models_package() {
+        let dir = project(&[
+            ("dbt_project.yml", "name: p\n"),
+            (
+                "dbt_packages/shop/dbt_project.yml",
+                "name: shop\nvars:\n  flag: true\n",
+            ),
+            (
+                "dbt_packages/utils/dbt_project.yml",
+                "name: utils\nvars:\n  flag: false\n",
+            ),
+            (
+                "dbt_packages/utils/macros/on.sql",
+                "{% macro is_on(v) %}{{ return(var(v, false)) }}{% endmacro %}",
+            ),
+        ]);
+        let r = Renderer::new(dir.path(), HashMap::new()).unwrap();
+        let out = r
+            .render(
+                "select {% if utils.is_on('flag') %}a{% else %}b{% endif %} from t",
+                ModelInput {
+                    node_id: "model.shop.m",
+                    file_path: Some(Path::new("dbt_packages/shop/models/m.sql")),
+                    columns: HashMap::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(squash(&out.sql), "select a from t");
+        let dir = project(&[
+            (
+                "dbt_project.yml",
+                "name: p\nvars:\n  cols: ['a', 'b']\n  shop:\n    x: 1\n",
+            ),
+            (
+                "dbt_packages/shop/dbt_project.yml",
+                "name: shop\nvars:\n  shop:\n    y: 2\n",
+            ),
+        ]);
+        let r = Renderer::new(dir.path(), HashMap::new()).unwrap();
+        let out = r
+            .render(
+                "select {% for c in var('cols', []) -%}{{ c }}, {% endfor -%} 1 from t",
+                ModelInput {
+                    node_id: "model.shop.m",
+                    file_path: Some(Path::new("dbt_packages/shop/models/m.sql")),
+                    columns: HashMap::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(squash(&out.sql), "select a, b, 1 from t");
+    }
+
+    #[test]
+    fn dbt_macros_are_global_and_graph_maps_are_empty() {
+        let dir = project(&[("dbt_project.yml", "name: p\n")]);
+        let out = render(
+            dir.path(),
+            "select {{ datediff('a', 'b', 'day') }} as d, {{ type_string() }} as t, {{ graph.nodes.values() | list | length }} as n from t",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            squash(&out.sql),
+            "select date_diff('day', a, b) as d, varchar as t, 0 as n from t"
+        );
+    }
+
+    #[test]
+    fn query_results_are_empty() {
+        let dir = project(&[
+            ("dbt_project.yml", "name: p\n"),
+            (
+                "macros/single.sql",
+                "{% macro single(query, default=none) %}{%- call statement('q', fetch_result=True) -%}{{ query }}{%- endcall -%}{% set r = load_result('q').table.columns[0].values() %}{% if r | length == 0 %}{% set v = default %}{% else %}{% set v = r[0] %}{% endif %}{% do return(v) %}{% endmacro %}",
+            ),
+        ]);
+        let out = render(
+            dir.path(),
+            "select cast('{{ single('select max(d) from x', '2020-01-01') }}' as date) as d, {{ run_query('select 1').columns['a'].values() | length }} as n from t",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            squash(&out.sql),
+            "select cast('2020-01-01' as date) as d, 0 as n from t"
+        );
+    }
+
+    #[test]
+    fn defaults_read_earlier_parameters() {
+        let dir = project(&[
+            ("dbt_project.yml", "name: p\n"),
+            (
+                "macros/m.sql",
+                "{% macro todict(l) %}{%- set d = {} -%}{%- for c in l -%}{%- do d.update({c.name: c}) if not c.is_rename -%}{%- endfor -%}{{ return(d) }}{% endmacro %}\n{% macro cr(k, d, orig=d[k]['name'], alias=d[k]['alias'] | default(orig)) %}{{ orig }} as {{ alias }}{% endmacro %}",
+            ),
+        ]);
+        let out = render(
+            dir.path(),
+            "{% set l = [{'name': 'id'},{'name': 'Id', 'is_rename': true}] %}{% set d = todict(l) %}select {{ cr('id', d) }}, {{ cr('id', d, alias='x') }}, {{ cr('id', d, orig='y') }} from t",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(squash(&out.sql), "select id as id, id as x, y as y from t");
+        assert_eq!(
+            late_defaults("{%- macro m(a, b='a', c=a ~ b, d=[1, 2]) -%}x"),
+            "{%- macro m(a, b='a',c='__dbtl_unset__', d=[1, 2]) -%}{% if c == '__dbtl_unset__' %}{% set c = a ~ b %}{% endif -%}x"
+        );
+    }
+
+    #[test]
     fn unsupported_jinja_fails() {
         let dir = project(&[("dbt_project.yml", "name: p\n")]);
         assert!(render(dir.path(), "select {{ undefined_macro() }} from t", &[]).is_none());
@@ -1814,16 +2181,20 @@ mod tests {
     fn set_literals_become_mutable() {
         assert_eq!(
             wrap_set_literals("{% set a = [1, ']'] %}{% set b = {'k': [1]} -%}{% set c = x[0] %}"),
-            "{% set a = __list([1, ']']) %}{% set b = __dict({'k': [1]}) -%}{% set c = x[0] %}"
+            "{% set a = __list([1, ']']) %}{% set b = __dict({'k': [1]}) -%}{% set c = __mut(x[0]) %}"
+        );
+        assert_eq!(
+            wrap_set_literals("{%- set c = (['a'] + var('x', [])) if y else '%}' -%}"),
+            "{%- set c = __mut((['a'] + var('x', [])) if y else '%}') -%}"
         );
         let dir = project(&[("dbt_project.yml", "name: p\n")]);
         let out = render(
             dir.path(),
-            "{% set d = {} %}{% do d.update({'a': 1}) %}{% set l = [] %}{% do l.append('b') %}{% do l.extend(['c']) %}select {{ d['a'] }}, {{ l | join(', ') }}",
+            "{% set d = {} %}{% do d.update({'a': 1}) %}{% set l = [] %}{% do l.append('b') %}{% do l.extend(['c']) %}{% set m = (['x'] + var('none', [])) %}{% do m.append('y') %}{% set n = l %}{% do n.append('d') %}select {{ d['a'] }}, {{ l | join(', ') }}, {{ m | join(', ') }}",
             &[],
         )
         .unwrap();
-        assert_eq!(squash(&out.sql), "select 1, b, c");
+        assert_eq!(squash(&out.sql), "select 1, b, c, d, x, y");
     }
 
     #[test]
